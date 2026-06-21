@@ -236,7 +236,6 @@ export function indexFindings(input: IndexFindingsInput): string | null {
   topicEntry.findings.unshift(finding);
   topicEntry.forkCount++;
   topicEntry.lastSeen = Date.now();
-  if (topicEntry.firstSeen === 0) topicEntry.firstSeen = Date.now();
 
   // Merge file list
   const existingFiles = new Set(topicEntry.files);

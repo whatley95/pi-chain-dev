@@ -496,10 +496,10 @@ function findToolExecution(result, event) {
       updates: 0,
       activityOrder: nextActivityOrder(result),
     };
-    toolExecutions.push(tool);
-    while (toolExecutions.length > MAX_STORED_TOOL_EXECUTIONS) {
+    while (toolExecutions.length >= MAX_STORED_TOOL_EXECUTIONS) {
       toolExecutions.shift();
     }
+    toolExecutions.push(tool);
   }
 
   if (typeof event.toolName === "string") tool.toolName = event.toolName;

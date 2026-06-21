@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { buildChildEnv } from "./env.ts";
+import { buildChildEnv } from "./env.js";
 import { parseInheritedCliArgs } from "./runner-cli.js";
 import { processPiJsonLine, getForkProgressText, getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
 import type { StageProfile, ForkResult, UsageStats, AutoForkDetails } from "./types.js";
@@ -31,6 +31,99 @@ function writeTempSessionJsonl(sessionJsonl: string): { dir: string; filePath: s
   const filePath = path.join(tmpDir, "cdev.jsonl");
   fs.writeFileSync(filePath, sessionJsonl, { encoding: "utf-8", mode: 0o600 });
   return { dir: tmpDir, filePath };
+}
+
+/**
+ * Sanitize a session JSONL snapshot before passing it to a child pi process.
+ *
+ * Strips orphaned tool-result messages whose preceding assistant message
+ * (with matching tool_calls) was removed — e.g. by context truncation or
+ * stale session state after a provider switch. Without this, the child pi
+ * would send invalid conversation history to the AI API and get a 400 error:
+ * "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'."
+ *
+ * Handles both OpenAI (tool_calls array) and Anthropic (tool_use content blocks) formats.
+ * Non-message envelope entries (headers, etc.) pass through unchanged.
+ */
+function sanitizeSessionJsonl(sessionJsonl: string): { jsonl: string; stripped: number } {
+  if (!sessionJsonl || !sessionJsonl.trim()) return { jsonl: sessionJsonl, stripped: 0 };
+
+  const rawLines = sessionJsonl.trim().split("\n");
+  if (rawLines.length <= 1) return { jsonl: sessionJsonl, stripped: 0 };
+
+  // Parse each line; unwrap envelope objects that have a .message property
+  interface ParsedLine {
+    raw: string;
+    msg: Record<string, unknown> | null;
+  }
+  const parsed: ParsedLine[] = [];
+  for (const line of rawLines) {
+    try {
+      const obj = JSON.parse(line);
+      const msg =
+        obj && typeof obj === "object" && !Array.isArray(obj) && "message" in obj
+          ? (obj as Record<string, unknown>).message as Record<string, unknown>
+          : obj;
+      parsed.push({
+        raw: line,
+        msg: msg && typeof msg === "object" && !Array.isArray(msg) ? (msg as Record<string, unknown>) : null,
+      });
+    } catch {
+      parsed.push({ raw: line, msg: null });
+    }
+  }
+
+  // Collect valid tool_call_ids from all assistant messages
+  const validIds = new Set<string>();
+  for (const entry of parsed) {
+    const msg = entry.msg;
+    if (!msg) continue;
+    if (msg.role !== "assistant") continue;
+
+    // OpenAI format: tool_calls array on the message
+    if (Array.isArray(msg.tool_calls)) {
+      for (const tc of msg.tool_calls) {
+        if (tc && typeof tc === "object") {
+          const id = (tc as Record<string, unknown>).id || (tc as Record<string, unknown>).call_id;
+          if (typeof id === "string") validIds.add(id);
+        }
+      }
+    }
+    // Anthropic format: tool_use blocks inside content array
+    if (Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block && typeof block === "object" && !Array.isArray(block)) {
+          const b = block as Record<string, unknown>;
+          if (b.type === "tool_use" && typeof b.id === "string") {
+            validIds.add(b.id);
+          }
+        }
+      }
+    }
+  }
+
+  // No assistant messages with tool_calls at all → no orphan risk, return as-is
+  if (validIds.size === 0) return { jsonl: sessionJsonl, stripped: 0 };
+
+  // Filter out orphaned tool messages (tool result without matching assistant tool_calls)
+  let stripped = 0;
+  const sanitized = parsed.filter((entry) => {
+    const msg = entry.msg;
+    if (!msg) return true; // Non-message entries always pass through
+    if (msg.role !== "tool") return true; // Non-tool messages always pass through
+
+    // Check if this tool message references a valid assistant tool_calls id
+    const toolCallId = msg.tool_call_id || msg.call_id;
+    if (typeof toolCallId !== "string") return true; // No id to validate, keep it
+
+    if (validIds.has(toolCallId)) return true;
+    stripped++;
+    return false;
+  });
+
+  if (stripped === 0) return { jsonl: sessionJsonl, stripped: 0 };
+
+  return { jsonl: sanitized.map((e) => e.raw).join("\n") + "\n", stripped };
 }
 
 function cleanupTempDir(dir: string | null): void {
@@ -322,7 +415,11 @@ async function runStage(opts: RunStageOptions): Promise<ForkResult> {
     usage: emptyUsage(),
   };
 
-  const tmp = writeTempSessionJsonl(forkSessionJsonl);
+  const { jsonl: sanitizedJsonl, stripped } = sanitizeSessionJsonl(forkSessionJsonl);
+  if (stripped > 0) {
+    result.stderr += `[cdev] stripped ${stripped} orphaned tool message(s) from session snapshot\n`;
+  }
+  const tmp = writeTempSessionJsonl(sanitizedJsonl);
   const piArgs = buildPiArgs(task, tmp.filePath, extensions, stageProfile);
 
   const exitCode = await new Promise<number>((resolve) => {

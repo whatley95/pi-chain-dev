@@ -900,7 +900,7 @@ REVIEW_PROMPT:
           });
           ctx.ui.setWidget("cdev-progress", undefined);
 
-          saveSession(ctx.cwd, task, false, scanStartTime, details, result);
+          saveSession(ctx.cwd, task, false, scanStartTime, scanDetails, result);
           if (result.errorMessage) {
             logError(ctx.cwd, "deep-scan-fork", new Error(result.errorMessage));
           }
@@ -908,8 +908,8 @@ REVIEW_PROMPT:
             indexFindings({
               task,
               resultText: getFinalAssistantText(result.messages) || "",
-              stage1Model: profiles.stage1.id,
-              stage2Model: profiles.stage2.id,
+              stage1Model: scanDetails.stage1?.model ?? profiles.stage1.id,
+              stage2Model: scanDetails.stage2?.model ?? profiles.stage2.id,
               isReview: false,
               quick: false,
               cost: (result.usage?.cost ?? 0),
@@ -946,7 +946,7 @@ REVIEW_PROMPT:
           writeFileSync(projectSettingsPath, JSON.stringify(projSettings, null, 2) + "\n", "utf-8");
 
           ctx.ui.notify(
-            `Deep scan complete!\nScout: ${details.stage1?.model || "?"}\nForge: ${details.stage2?.model || "?"}\n\nPrompts saved to .pi/settings.json\nToggle: /cdev prompts on|off`,
+            `Deep scan complete!\nScout: ${scanDetails.stage1?.model || "?"}\nForge: ${scanDetails.stage2?.model || "?"}\n\nPrompts saved to .pi/settings.json\nToggle: /cdev prompts on|off`,
             "info"
           );
           updatePromptsStatus(ctx);
