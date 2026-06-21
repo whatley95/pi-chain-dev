@@ -72,7 +72,7 @@ function bg(token: string, text: string, theme: Theme, themed: boolean): string 
 // renderCall
 // ---------------------------------------------------------------------------
 
-export function renderCall(args: any, theme: Theme, _context?: any): Component {
+export function renderCall(args: any, theme: Theme, _context?: { cwd?: string }): Component {
   const fg = theme.fg.bind(theme);
   const themed = isThemed(_context?.cwd);
   const task = typeof args?.task === "string" && args.task.trim()
@@ -101,7 +101,7 @@ export function renderResult(
   toolResult: any,
   opts: { expanded: boolean },
   theme: Theme,
-  _context?: any,
+  _context?: { cwd?: string },
 ): Component {
   const fg = theme.fg.bind(theme);
   const themed = isThemed(_context?.cwd);
@@ -121,7 +121,7 @@ export function renderResult(
   const stage2Model = details?.stage2?.model ?? "";
   const modelChain = [stage1Model, stage2Model].filter(Boolean).join("→");
 
-  const costNum = typeof details?.cost === "number" ? details.cost : 0;
+  const costNum = (details?.stage1?.usage?.cost ?? 0) + (details?.stage2?.usage?.cost ?? 0);
   const costStr = fmtCost(costNum);
 
   // Build lines

@@ -277,10 +277,8 @@ export default function (pi: ExtensionAPI) {
             }
           } catch { /* svn not available */ }
         }
-        // Mark checked
-        if (warned) {
-          try { mkdirSync(join(ctx.cwd, ".pi"), { recursive: true }); writeFileSync(sentinelPath, "", "utf-8"); } catch {}
-        }
+        // Always mark checked to avoid re-scanning every session start
+        try { mkdirSync(join(ctx.cwd, ".pi"), { recursive: true }); writeFileSync(sentinelPath, "", "utf-8"); } catch {}
       }
     } catch (err) {
       logError(ctx.cwd, "session_start", err);
@@ -656,7 +654,7 @@ export default function (pi: ExtensionAPI) {
         }
         if (config.memory) {
           indexFindings({
-            task: withAuditGuard(reviewTask),
+            task: reviewTask,
             resultText: getFinalAssistantText(result.messages) || "",
             stage2Model: reviewProfile.id,
             isReview: true,
@@ -714,7 +712,8 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge synthesizing…  (${model})`)]);
         }
       };
-      onProgress("scout", profiles.stage1.id);
+      const modelStr = (p: typeof profiles.stage1) => p.thinking ? `${p.provider}:${p.id} • ${p.thinking}` : `${p.provider}:${p.id}`;
+      onProgress("scout", modelStr(profiles.stage1));
       const startTime = Date.now();
       const { result, details } = await runAutoFork({
         cwd: ctx.cwd,
@@ -877,6 +876,7 @@ SYNTHESIZE_PROMPT:
 REVIEW_PROMPT:
 <text>`;
 
+          const scanTask = withAuditGuard(task);
           const scanStartTime = Date.now();
           const onProgress = (stage: string, model: string) => {
             if (stage === "scout") {
@@ -888,7 +888,7 @@ REVIEW_PROMPT:
           onProgress("scout", profiles.stage1.id);
           const { result, details: scanDetails } = await runAutoFork({
             cwd: ctx.cwd,
-            task,
+            scanTask,
             forkSessionSnapshotJsonl: snapshot,
             stage1Profile: profiles.stage1,
             stage2Profile: profiles.stage2,
