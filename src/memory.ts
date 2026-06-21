@@ -12,7 +12,7 @@
  *   /cdev clear            — alias for memory clear
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import type { CdevMemory, CdevTopic, CdevFindingRecord } from "./types.js";
@@ -45,10 +45,14 @@ export function loadMemory(cwd: string): CdevMemory {
 function saveMemory(cwd: string, memory: CdevMemory): void {
   ensureDir(cwd);
   const path = getMemoryPath(cwd);
+  const tmpPath = path + ".tmp";
   try {
-    writeFileSync(path, JSON.stringify(memory, null, 2) + "\n", "utf-8");
+    // Atomic write: write to temp file, then rename to avoid concurrent-write corruption
+    writeFileSync(tmpPath, JSON.stringify(memory, null, 2) + "\n", "utf-8");
+    renameSync(tmpPath, path);
   } catch {
     // fail silently — don't let disk error nuke fork output
+    try { unlinkSync(tmpPath); } catch { /* ignore */ }
   }
 }
 

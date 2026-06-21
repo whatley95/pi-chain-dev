@@ -9,6 +9,7 @@ import type { Component, Theme } from "@earendil-works/pi-tui";
 import { keyHint, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { bg as themeBg } from "./theme-utils.js";
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -51,21 +52,7 @@ function isThemed(cwd?: string): boolean {
 
 /** Wrap text in theme background if themed mode is on. Falls back to ANSI if token missing. */
 function bg(token: string, text: string, theme: Theme, themed: boolean): string {
-  if (!themed) return text;
-  try {
-    const result = theme.bg(token, text);
-    // theme.bg may return the text unchanged if token doesn't exist — check
-    if (result !== text) return result;
-  } catch {}
-  // ANSI fallback
-  const ansiColors: Record<string, string> = {
-    toolPendingBg: "\x1b[43m", // yellow bg
-    toolSuccessBg: "\x1b[42m", // green bg
-    toolErrorBg: "\x1b[41m",   // red bg
-    toolStageBg: "\x1b[100m",  // dark gray bg
-  };
-  const ansi = ansiColors[token];
-  return ansi ? `${ansi} ${text} \x1b[0m` : text;
+  return themeBg(token, text, theme, themed);
 }
 
 // ---------------------------------------------------------------------------

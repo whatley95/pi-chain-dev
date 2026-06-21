@@ -21,6 +21,10 @@
     "delegation",
     "pi-package"
   ],
+  "scripts": {
+    "test": "tsx --test test/**/*.test.ts",
+    "test:watch": "tsx --test --watch test/**/*.test.ts"
+  },
   "license": "MIT",
   "peerDependencies": {
     "@earendil-works/pi-agent-core": ">=0.75.0",

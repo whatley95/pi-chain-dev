@@ -67,7 +67,7 @@ export function saveSession(
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
   const now = Date.now();
-  const id = new Date(startedAt).toISOString().replace(/[:.]/g, "-");
+  const id = new Date(startedAt).toISOString().replace(/[:.]/g, "-") + "-" + Date.now().toString(36).slice(-4);
   
   const record: SessionRecord = {
     id,

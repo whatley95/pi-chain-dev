@@ -36,6 +36,7 @@ import {
   clearErrorLog,
 } from "./memory.js";
 import { renderCall, renderResult } from "./render.js";
+import { bg } from "./theme-utils.js";
 
 // ── Constants ──────────────────────────────────────────────
 /** Regex to detect "check only", "don't change", etc. in user task text */
@@ -151,9 +152,11 @@ export default function (pi: ExtensionAPI) {
   // ── Footer cost status ──────────────────────────────────
   const FORK_COST_STATUS_KEY = "cdev-cost";
 
-  /** Package developer signature. Override with config.signature. */
-  function getSignature(): string {
-    return "whatley.xyz";
+  /** Default signature shown in /cdev status. Overridden by config.signature. */
+  const DEFAULT_SIGNATURE = "whatley.xyz";
+
+  function resolveSignature(config: AutoForkConfig): string {
+    return config.signature || DEFAULT_SIGNATURE;
   }
 
   /** Append an error record to .pi/cdev/errors.jsonl */
@@ -353,17 +356,7 @@ export default function (pi: ExtensionAPI) {
 
       // Themed background helper (graceful fallback to ANSI if token missing)
       const themedBg = (token: string, text: string): string => {
-        if (!config.themed) return text;
-        try {
-          const result = ctx.ui.theme.bg(token, text);
-          if (result !== text) return result;
-        } catch {}
-        const ansiColors: Record<string, string> = {
-          toolPendingBg: "\x1b[43m", toolSuccessBg: "\x1b[42m",
-          toolErrorBg: "\x1b[41m", toolStageBg: "\x1b[100m",
-        };
-        const ansi = ansiColors[token];
-        return ansi ? `${ansi} ${text} \x1b[0m` : text;
+        return bg(token, text, ctx.ui.theme, config.themed);
       };
 
       // ── Recall mode (no fork, just memory lookup) ──
@@ -513,14 +506,15 @@ export default function (pi: ExtensionAPI) {
             const gitResult = spawnSync("git", ["diff", diffSpec], { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
             if (gitResult.error || gitResult.status !== 0) {
               // Git failed — try SVN
-              const gitStderr = (gitResult.stderr || "").trim().slice(0, 200);
+              const gitErrMsg = gitResult.error
+                ? `git not available: ${gitResult.error.message}`
+                : `git exited ${gitResult.status}: ${(gitResult.stderr || "").trim().slice(0, 200)}`;
               const svnResult = spawnSync("svn", ["diff", "-r", diffSpec], { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
               if (svnResult.error) {
-                const svnStderr = (svnResult.stderr || "").trim().slice(0, 200);
-                const details = [
-                  gitResult.error ? `git: ${gitResult.error.message}` : (gitStderr ? `git: ${gitStderr}` : ""),
-                  svnResult.error ? `svn: ${svnResult.error.message}` : (svnStderr ? `svn: ${svnStderr}` : ""),
-                ].filter(Boolean).join("; ");
+                const svnErrMsg = svnResult.error
+                  ? `svn not available: ${svnResult.error.message}`
+                  : `svn exited ${svnResult.status}: ${(svnResult.stderr || "").trim().slice(0, 200)}`;
+                const details = [gitErrMsg, svnErrMsg].filter(Boolean).join("; ");
                 throw new Error(details || "both git and svn failed");
               }
               diffContent = svnResult.stdout || "";
@@ -1267,7 +1261,7 @@ REVIEW_PROMPT:
         const lines: string[] = [
           "── cdev status ─────────────────────────────────────",
           "",
-          `  👤 ${config.signature || getSignature()}`,
+          `  👤 ${resolveSignature(config)}`,
           "",
           `  Current model:    ${ctx.model ? ctx.model.id : "none"}`,
           `  Scout:  ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`,

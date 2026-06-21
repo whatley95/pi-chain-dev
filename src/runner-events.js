@@ -31,18 +31,23 @@ function getSeenForkToolResultSignatures(result) {
   return result.__seenForkToolResultSignatures;
 }
 
-function stableStringify(value) {
+function stableStringify(value, seen = new WeakSet()) {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
   }
 
+  if (seen.has(value)) {
+    return '"<circular>"';
+  }
+  seen.add(value);
+
   if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+    return `[${value.map((item) => stableStringify(item, seen)).join(",")}]`;
   }
 
   const entries = Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
   return `{${entries
-    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`)
+    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue, seen)}`)
     .join(",")}}`;
 }
 

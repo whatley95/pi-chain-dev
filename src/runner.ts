@@ -5,7 +5,7 @@
  * Stage 2: Spawn child pi with powerful model → structured report.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -478,7 +478,14 @@ async function runStage(opts: RunStageOptions): Promise<ForkResult> {
             try { proc.kill("SIGTERM"); } catch { /* ignore */ }
             setTimeout(() => {
               if (!settled && proc.pid) {
-                try { proc.kill("SIGKILL"); } catch { /* ignore */ }
+                // SIGKILL is not valid on Windows — use taskkill instead
+                if (process.platform === "win32") {
+                  try {
+                    spawn("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { stdio: "ignore" });
+                  } catch { /* ignore */ }
+                } else {
+                  try { proc.kill("SIGKILL"); } catch { /* ignore */ }
+                }
               }
             }, SIGKILL_TIMEOUT_MS);
           }
@@ -696,22 +703,33 @@ export async function runFileReview(opts: {
 
   // Extract file paths referenced in the report (Evidence section, backticks, etc.)
   const referencedFiles: Record<string, string> = {};
+  const MAX_REF_FILES = 15;
+  const MAX_REF_BYTES = 100_000;
   const pathPatterns = [
     /\b([\w.\-\/]+\.[a-z]{2,6})\b/gi,           // file.ext
     /`([^`]*\.[a-z]{2,6})`/gi,                       // `path/to/file.ts`
     /(?:File|Path|file|path):\s*([\w.\-\/]+\.[a-z]{2,6})/gi,  // File: path/to/file.ts
   ];
   const seen = new Set<string>();
+  let totalBytes = 0;
   for (const pattern of pathPatterns) {
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(fileContent)) !== null) {
       const candidate = match[1].replace(/^[.\/\\]+/, ""); // strip leading ./ or .\
       if (candidate && !seen.has(candidate) && candidate.length < 200) {
         seen.add(candidate);
+        if (Object.keys(referencedFiles).length >= MAX_REF_FILES) continue;
         const fullPath = path.join(cwd, candidate);
         if (fs.existsSync(fullPath)) {
           try {
-            referencedFiles[candidate] = fs.readFileSync(fullPath, "utf-8");
+            const content = fs.readFileSync(fullPath, "utf-8");
+            if (totalBytes + content.length > MAX_REF_BYTES) {
+              referencedFiles[candidate] = content.slice(0, MAX_REF_BYTES - totalBytes) + "\n\n... (truncated, file too large)";
+              totalBytes = MAX_REF_BYTES;
+            } else {
+              referencedFiles[candidate] = content;
+              totalBytes += content.length;
+            }
           } catch { /* skip unreadable files */ }
         }
       }
