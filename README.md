@@ -7,6 +7,7 @@ Two-stage development fork for Pi coding agent — cheap model explores, powerfu
 | Command | What it does |
 |---|---|
 | `/cdev <task>` | Full two-stage: cheap model gathers evidence, powerful model writes structured report |
+| `/cdev quick <task>` | Stage 1 only — cheap model returns raw findings, skip synthesis |
 | `/cdev review` | Stage 2 only — reviews recent code changes for bugs, edge cases, and improvements |
 | `/cdev auto on` | Auto-trigger mode — LLM proactively uses `cdev` for exploration tasks |
 | `/cdev auto off` | Disable auto-trigger |
@@ -19,6 +20,8 @@ Two-stage development fork for Pi coding agent — cheap model explores, powerfu
 | `/cdev history 3` | Show full detail for session #3 (models, tokens, cost) |
 
 ## How it works
+
+### Full mode (`/cdev <task>`)
 
 ```
   /cdev explore auth
@@ -38,6 +41,22 @@ Two-stage development fork for Pi coding agent — cheap model explores, powerfu
                      │ report
                      ▼
               PARENT reads report, decides, codes
+```
+
+### Quick mode (`/cdev quick <task>`)
+
+```
+  Parent: "I need to find where auth middleware is used in every module"
+       │
+       ▼
+  ┌──────────────────────────────────────────────┐
+  │  STAGE 1 only — cheap model                  │
+  │  Traces files, returns raw paths/findings    │
+  │  No synthesis — just raw data                │
+  └──────────────────┬───────────────────────────┘
+                     │ raw findings
+                     ▼
+              PARENT uses findings, continues
 ```
 
 ### Review mode (`/cdev review`)
@@ -162,6 +181,10 @@ LLM: calls cdev({ task: "explore auth module deps" })
      → Stage 2: custom synthesis prompt — ordered plan with breakage risks
 
 LLM: reads report, decides approach, writes code
+
+LLM: needs follow-up → calls cdev({ task: "trace auth middleware imports", quick: true })
+     → Stage 1 only: returns raw file paths
+     → Cheaper, faster
 
 /cdev review                               # or LLM calls cdev({ review: true })
      → Stage 2 only: custom review prompt — checks NestJS-specific issues

@@ -291,6 +291,8 @@ export interface RunAutoForkOptions {
   stage2Profile: StageProfile;
   customExplorePrompt?: string;
   customSynthesizePrompt?: string;
+  /** If true, skip stage 2 — return raw stage 1 findings only. */
+  quick?: boolean;
   extensions?: string[] | null;
   environment?: Record<string, string>;
   offline?: boolean;
@@ -303,6 +305,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 }> {
   const { cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage2Profile,
           customExplorePrompt, customSynthesizePrompt,
+          quick = false,
           extensions = null, environment = {}, offline = true, signal } = opts;
 
   const details: AutoForkDetails = { stage1: null, stage2: null };
@@ -336,6 +339,18 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
         ...stage1Result,
         task,
         errorMessage: `Exploration stage failed: ${stage1Result.errorMessage || stage1Result.stderr || "unknown error"}`,
+      },
+      details,
+    };
+  }
+
+  // Quick mode — skip stage 2, return raw findings
+  if (quick) {
+    return {
+      result: {
+        ...stage1Result,
+        task,
+        stopReason: "quick",
       },
       details,
     };

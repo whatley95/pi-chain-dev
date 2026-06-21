@@ -38,6 +38,10 @@ const AutoForkParams = Type.Object({
     description:
       "Optional reasoning depth. Affects which models are used for the two stages.",
   })),
+  quick: Type.Optional(Type.Boolean({
+    description:
+      "If true, run stage 1 only (exploration) and return raw findings. Skip the synthesis stage. Use for quick follow-up file tracing, grep-style lookups, or narrow questions.",
+  })),
 });
 
 interface SessionSnapshotSource {
@@ -271,6 +275,7 @@ export default function (pi: ExtensionAPI) {
         stage2Profile: profiles.stage2,
         customExplorePrompt: config.promptsEnabled ? config.prompts?.explore : undefined,
         customSynthesizePrompt: config.promptsEnabled ? config.prompts?.synthesize : undefined,
+        quick: params.quick ?? false,
         extensions: config.extensions,
         environment: config.environment,
         offline: config.offline,
@@ -490,9 +495,51 @@ REVIEW_PROMPT:
         return;
       }
 
+      // ── Subcommand: quick ──
+      if (trimmed.startsWith("quick ")) {
+        const quickTask = trimmed.slice(6).trim();
+        if (!quickTask) {
+          ctx.ui.notify("Usage: /cdev quick <task>", "warn");
+          return;
+        }
+        ctx.ui.notify(`Queuing quick exploration (stage 1 only)...`, "info");
+        pi.sendUserMessage(`Use cdev with quick=true to: ${quickTask}`, {
+          triggerTurn: true,
+          deliverAs: "steer",
+        });
+        return;
+      }
+
+      // ── Subcommand: status ──
+      if (trimmed === "status" || trimmed === "info") {
+        const config = loadConfig(ctx.cwd);
+        const lines: string[] = [
+          "── cdev status ─────────────────────────────────────",
+          "",
+          `  Stage 1 (explore):  ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`,
+          `  Stage 2 (synthesize): ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`,
+          `  Auto-trigger:     ${config.auto ? "⚡ ON" : "OFF"}`,
+          `  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`,
+          `  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`,
+          `  Offline mode:     ${config.offline ? "ON" : "OFF"}`,
+          `  Extensions:       ${config.extensions === null ? "inherit" : config.extensions.length === 0 ? "none" : config.extensions.join(", ")}`,
+          "",
+        ];
+        const sessions = listSessions(ctx.cwd);
+        if (sessions.length > 0) {
+          let totalCost = 0;
+          for (const s of sessions) totalCost += (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
+          lines.push(`  Sessions:         ${sessions.length} (7-day window, $${totalCost.toFixed(4)} total)`);
+        }
+        lines.push("");
+        lines.push("─────────────────────────────────────────────────────");
+        ctx.ui.notify(lines.join("\n"), "info");
+        return;
+      }
+
       // ── Default: task mode ──
       if (!trimmed) {
-        ctx.ui.notify("Usage: /cdev <task>  |  /cdev review  |  /cdev scan [deep]  |  /cdev history [n]  |  /cdev auto|prompts [on|off]", "warn");
+        ctx.ui.notify("Usage: /cdev <task>  |  /cdev quick <task>  |  /cdev review  |  /cdev scan [deep]  |  /cdev history [n]  |  /cdev status  |  /cdev auto|prompts [on|off]", "warn");
         return;
       }
       ctx.ui.notify("Queuing cdev task...", "info");

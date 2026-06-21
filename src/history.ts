@@ -34,7 +34,7 @@ export interface SessionRecord {
     cost: number;
     summary: string;
   } | null;
-  /** Stage 2 details. */
+  /** Stage 2 details (null for quick mode). */
   stage2: {
     model: string;
     exitCode: number;
@@ -42,7 +42,7 @@ export interface SessionRecord {
     outputTokens: number;
     cost: number;
     summary: string;
-  };
+  } | null;
   /** Overall status. */
   status: "success" | "failed";
   /** First 200 chars of final output. */
@@ -88,16 +88,18 @@ export function saveSession(
           summary: (details.stage1.errorMessage || details.stage1.stderr || "").slice(0, 200),
         }
       : null,
-    stage2: {
-      model: (details.stage2?.provider && details.stage2?.model)
-        ? `${details.stage2.provider}:${details.stage2.model}`
-        : details.stage2?.model ?? "unknown",
-      exitCode: details.stage2?.exitCode ?? -1,
-      inputTokens: details.stage2?.usage?.input ?? 0,
-      outputTokens: details.stage2?.usage?.output ?? 0,
-      cost: details.stage2?.usage?.cost ?? 0,
-      summary: (details.stage2?.errorMessage || details.stage2?.stderr || "").slice(0, 200),
-    },
+    stage2: details.stage2
+      ? {
+          model: (details.stage2.provider && details.stage2.model)
+            ? `${details.stage2.provider}:${details.stage2.model}`
+            : details.stage2.model ?? "unknown",
+          exitCode: details.stage2.exitCode ?? -1,
+          inputTokens: details.stage2.usage?.input ?? 0,
+          outputTokens: details.stage2.usage?.output ?? 0,
+          cost: details.stage2.usage?.cost ?? 0,
+          summary: (details.stage2.errorMessage || details.stage2.stderr || "").slice(0, 200),
+        }
+      : null,
     status: result.exitCode === 0 ? "success" : "failed",
     resultPreview: (getFinalAssistantText(result.messages) || "").slice(0, 200),
   };
@@ -186,13 +188,13 @@ export function formatHistory(sessions: SessionRecord[]): string {
     const mode = s.isReview ? "review" : "full  ";
     const status = s.status === "success" ? "✓" : "✗";
     const s1Cost = s.stage1 ? `$${s.stage1.cost.toFixed(4)}` : "";
-    const s2Cost = `$${s.stage2.cost.toFixed(4)}`;
-    const combinedCost = s.stage1 ? s.stage1.cost + s.stage2.cost : s.stage2.cost;
+    const s2Cost = s.stage2 ? `$${s.stage2.cost.toFixed(4)}` : "";
+    const combinedCost = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
     totalCost += combinedCost;
     const costStr = combinedCost > 0 ? ` $${combinedCost.toFixed(4)}`.padStart(9) : "";
     const s1Model = s.stage1 ? s.stage1.model.split(":").pop()?.slice(0, 12) ?? "?" : "—";
-    const s2Model = s.stage2.model.split(":").pop()?.slice(0, 12) ?? "?";
-    const models = s.stage1 ? `${s1Model}→${s2Model}` : s2Model;
+    const s2Model = s.stage2 ? s.stage2.model.split(":").pop()?.slice(0, 12) ?? "?" : "—";
+    const models = s.stage1 && s.stage2 ? `${s1Model}→${s2Model}` : (s.stage1 || s.stage2 ? s1Model !== "—" ? s1Model : s2Model : "?");
     const task = s.task.length > 40 ? s.task.slice(0, 40) + "…" : s.task;
 
     lines.push(
@@ -236,17 +238,19 @@ export function formatSessionRecord(s: SessionRecord): string {
     lines.push("");
   }
 
-  lines.push(`  Stage 2 (synthesize):`, ``);
-  lines.push(`    Model:      ${s.stage2.model}`);
-  lines.push(`    Exit code:  ${s.stage2.exitCode}`);
-  if (s.stage2.inputTokens || s.stage2.outputTokens) {
-    lines.push(`    Tokens:     ${s.stage2.inputTokens} in / ${s.stage2.outputTokens} out`);
-  }
-  if (s.stage2.cost > 0) {
-    lines.push(`    Cost:       $${s.stage2.cost.toFixed(4)}`);
-  }
-  if (s.stage2.summary && s.stage2.summary !== s.resultPreview) {
-    lines.push(`    Summary:    ${s.stage2.summary}`);
+  if (s.stage2) {
+    lines.push(`  Stage 2 (synthesize):`, ``);
+    lines.push(`    Model:      ${s.stage2.model}`);
+    lines.push(`    Exit code:  ${s.stage2.exitCode}`);
+    if (s.stage2.inputTokens || s.stage2.outputTokens) {
+      lines.push(`    Tokens:     ${s.stage2.inputTokens} in / ${s.stage2.outputTokens} out`);
+    }
+    if (s.stage2.cost > 0) {
+      lines.push(`    Cost:       $${s.stage2.cost.toFixed(4)}`);
+    }
+    if (s.stage2.summary && s.stage2.summary !== s.resultPreview) {
+      lines.push(`    Summary:    ${s.stage2.summary}`);
+    }
   }
 
   const totalCost = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
