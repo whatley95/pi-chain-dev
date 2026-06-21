@@ -6,7 +6,9 @@
  */
 
 import type { Component, Theme } from "@earendil-works/pi-tui";
-import { keyHint } from "@earendil-works/pi-coding-agent";
+import { keyHint, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -25,18 +27,60 @@ function fmtCost(cost: number): string {
   return `$${cost.toFixed(4)}`;
 }
 
+function readJsonSafe(p: string): Record<string, unknown> | null {
+  try {
+    return existsSync(p) ? JSON.parse(readFileSync(p, "utf-8")) : null;
+  } catch { return null; }
+}
+
+function isThemed(cwd?: string): boolean {
+  if (!cwd) return false;
+  try {
+    // Project-local settings (overrides global)
+    const proj = readJsonSafe(join(cwd, ".pi", "settings.json"));
+    const projCdev = (proj?.["pi-chain-dev"] ?? proj?.["pi-auto-fork"]) as Record<string, unknown> | undefined;
+    // Global agent settings (fallback)
+    const global = readJsonSafe(join(getAgentDir(), "settings.json"));
+    const globalCdev = global?.["pi-chain-dev"] as Record<string, unknown> | undefined;
+    // Project overrides global, default true
+    return (projCdev?.["themed"] ?? globalCdev?.["themed"]) !== false;
+  } catch {
+    return true;
+  }
+}
+
+/** Wrap text in theme background if themed mode is on. Falls back to ANSI if token missing. */
+function bg(token: string, text: string, theme: Theme, themed: boolean): string {
+  if (!themed) return text;
+  try {
+    const result = theme.bg(token, text);
+    // theme.bg may return the text unchanged if token doesn't exist — check
+    if (result !== text) return result;
+  } catch {}
+  // ANSI fallback
+  const ansiColors: Record<string, string> = {
+    toolPendingBg: "\x1b[43m", // yellow bg
+    toolSuccessBg: "\x1b[42m", // green bg
+    toolErrorBg: "\x1b[41m",   // red bg
+    toolStageBg: "\x1b[100m",  // dark gray bg
+  };
+  const ansi = ansiColors[token];
+  return ansi ? `${ansi} ${text} \x1b[0m` : text;
+}
+
 // ---------------------------------------------------------------------------
 // renderCall
 // ---------------------------------------------------------------------------
 
 export function renderCall(args: any, theme: Theme, _context?: any): Component {
   const fg = theme.fg.bind(theme);
+  const themed = isThemed(_context?.cwd);
   const task = typeof args?.task === "string" && args.task.trim()
     ? trunc(args.task.replace(/\s+/g, " ").trim(), MAX_TASK_CHARS)
     : "";
 
   let label: string;
-  if (typeof args?.recall === "string" && args.recall !== undefined) {
+  if (typeof args?.recall === "string") {
     label = args.recall ? `cdev-recall "${args.recall}"` : "cdev-recall (list)";
   } else if (args?.review) {
     label = "cdev-review";
@@ -46,7 +90,7 @@ export function renderCall(args: any, theme: Theme, _context?: any): Component {
     label = task ? `cdev "${task}"` : "cdev";
   }
 
-  return new SimpleText(fg("toolTitle", label));
+  return new SimpleText(bg("toolPendingBg", fg("toolTitle", label), theme, themed));
 }
 
 // ---------------------------------------------------------------------------
@@ -60,6 +104,7 @@ export function renderResult(
   _context?: any,
 ): Component {
   const fg = theme.fg.bind(theme);
+  const themed = isThemed(_context?.cwd);
   const result = toolResult;
   const isErr = Boolean(result?.isError);
   const content = result?.content;
@@ -82,20 +127,24 @@ export function renderResult(
   // Build lines
   const lines: string[] = [];
 
-  const statusIcon = isErr ? fg("error", "✗") : fg("success", "✓");
+  const statusIcon = isErr ? "✗" : "✓";
   const statusLabel = isErr ? "failed" : "completed";
+  const statusBgToken = isErr ? "toolErrorBg" : "toolSuccessBg";
+  const statusText = `${statusIcon} ${statusLabel}  ${modelChain}  ${costStr}`.trimEnd();
 
-  lines.push(`${statusIcon} ${fg("toolTitle", statusLabel)}  ${fg("dim", modelChain)}  ${costStr}`.trimEnd());
+  lines.push(bg(statusBgToken, fg(isErr ? "error" : "success", statusText), theme, themed));
 
   if (opts.expanded) {
     if (taskText) lines.push(fg("dim", `  task: ${taskText}`));
     if (details?.stage1?.model) {
       const s1 = details.stage1;
-      lines.push(fg("dim", `  Scout: ${s1.model} (exit ${s1.exitCode ?? "?"})`));
+      const s1Text = `  Scout: ${s1.model} (exit ${s1.exitCode ?? "?"})`;
+      lines.push(bg("toolStageBg", fg("dim", s1Text), theme, themed));
     }
     if (details?.stage2?.model) {
       const s2 = details.stage2;
-      lines.push(fg("dim", `  Forge: ${s2.model} (exit ${s2.exitCode ?? "?"})`));
+      const s2Text = `  Forge: ${s2.model} (exit ${s2.exitCode ?? "?"})`;
+      lines.push(bg("toolStageBg", fg("dim", s2Text), theme, themed));
     }
     if (isErr && textOut) {
       for (const line of textOut.split("\n").slice(0, 4)) {

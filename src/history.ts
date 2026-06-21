@@ -105,7 +105,11 @@ export function saveSession(
   };
 
   const filePath = join(dir, `${id}.json`);
-  writeFileSync(filePath, JSON.stringify(record, null, 2) + "\n", "utf-8");
+  try {
+    writeFileSync(filePath, JSON.stringify(record, null, 2) + "\n", "utf-8");
+  } catch {
+    // fail silently — don't let disk error nuke fork output
+  }
   return record;
 }
 

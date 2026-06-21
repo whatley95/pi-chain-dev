@@ -45,7 +45,11 @@ export function loadMemory(cwd: string): CdevMemory {
 function saveMemory(cwd: string, memory: CdevMemory): void {
   ensureDir(cwd);
   const path = getMemoryPath(cwd);
-  writeFileSync(path, JSON.stringify(memory, null, 2) + "\n", "utf-8");
+  try {
+    writeFileSync(path, JSON.stringify(memory, null, 2) + "\n", "utf-8");
+  } catch {
+    // fail silently — don't let disk error nuke fork output
+  }
 }
 
 // ── File fingerprinting ──────────────────────────────────

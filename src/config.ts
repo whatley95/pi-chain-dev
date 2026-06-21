@@ -28,6 +28,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   auto: false,
   promptsEnabled: true,
   memory: true,
+  themed: false,
   signature: undefined,
 };
 
@@ -95,6 +96,7 @@ export function loadConfig(cwd: string): AutoForkConfig {
     // Project-level override wins
     promptsEnabled: projectConfig.promptsEnabled ?? globalConfig.promptsEnabled ?? DEFAULT_CONFIG.promptsEnabled,
     memory: projectConfig.memory ?? globalConfig.memory ?? DEFAULT_CONFIG.memory,
+    themed: projectConfig.themed ?? globalConfig.themed ?? DEFAULT_CONFIG.themed,
     signature: projectConfig.signature ?? globalConfig.signature,
   };
 
@@ -141,6 +143,7 @@ function readNamespacedConfig(settingsPath: string): Partial<AutoForkConfig> {
     if (typeof config.auto === "boolean") parsed.auto = config.auto;
     if (typeof config.promptsEnabled === "boolean") parsed.promptsEnabled = config.promptsEnabled;
     if (typeof config.memory === "boolean") parsed.memory = config.memory;
+    if (typeof config.themed === "boolean") parsed.themed = config.themed;
     if (typeof config.signature === "string") parsed.signature = config.signature;
 
     // Parse prompts

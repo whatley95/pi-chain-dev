@@ -45,6 +45,8 @@ export interface AutoForkConfig {
   promptsEnabled: boolean;
   /** Whether project-level memory is enabled (cross-session findings). */
   memory: boolean;
+  /** Use theme.bg() for richer TUI rendering (progress, results). Default true. */
+  themed: boolean;
   /** Custom signature shown in /cdev status (e.g. name, handle). */
   signature?: string;
 }
