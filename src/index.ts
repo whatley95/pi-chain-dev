@@ -15,8 +15,9 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
+import { execSync } from "node:child_process";
 import { EFFORT_LEVELS, loadConfig, type AutoForkConfig } from "./config.js";
-import { runAutoFork, runCdevReview } from "./runner.js";
+import { runAutoFork, runCdevReview, runFileReview, runDiffReview } from "./runner.js";
 import { getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
 import type { AutoForkDetails, ForkResult, StageProfile } from "./types.js";
 import { emptyFailedResult } from "./types.js";
@@ -34,6 +35,7 @@ import {
   getErrorCount,
   clearErrorLog,
 } from "./memory.js";
+import { renderCall, renderResult } from "./render.js";
 
 const AutoForkParams = Type.Object({
   task: Type.String({
@@ -57,6 +59,14 @@ const AutoForkParams = Type.Object({
   recall: Type.Optional(Type.String({
     description:
       "Retrieve past cdev fork findings from project memory for a given topic (e.g. 'auth', 'payment'). No fork runs — returns cached knowledge. Leave empty to list all known topics. Use before exploring a topic that may have been explored before.",
+  })),
+  reviewFile: Type.Optional(Type.String({
+    description:
+      "If review is true, you can set this to a file path (relative to cwd) to review that file's content instead of the current session. Use for reviewing saved cdev reports or any artifact.",
+  })),
+  diffSpec: Type.Optional(Type.String({
+    description:
+      "If review is true, provide a git or SVN revision range to review the diff (e.g. 'HEAD~3..HEAD', 'main..feature', 'r1234:1235'). Runs git diff or svn diff and sends the output to the review model.",
   })),
 });
 
@@ -247,18 +257,24 @@ export default function (pi: ExtensionAPI) {
     name: "cdev",
     label: "Chain Dev",
     description:
-      "Two-stage development fork: first a cheap model (scout) explores and gathers evidence, then a powerful model (forge) synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for scout only (raw findings, no forge). Set recall=<topic> to retrieve past fork findings from project memory (no fork runs). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
+      "Two-stage development fork: first a cheap model (scout) explores and gathers evidence, then a powerful model (forge) synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for scout only (raw findings, no forge). Set recall=<topic> to retrieve past fork findings from project memory (no fork runs). Set reviewFile=<path> with review=true to review a specific file/artifact instead of the session. Set diffSpec=<range> to review a git/svn diff (e.g. 'HEAD~3..HEAD'). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
     promptSnippet: "Two-stage fork: scout (cheap) explores → forge (powerful) writes (or scout only with quick:true). Use recall to retrieve past findings.",
     promptGuidelines: [
       "Use cdev for any task requiring more than 3-4 file reads — cheaper than parent model reading files one-by-one.",
       "Use cdev with recall=<topic> to check project memory before exploring a topic that may have been explored before. This costs $0 and avoids duplicate work.",
       "Use cdev with recall='' (empty string) to list all known topics when starting work in a project.",
       "Use cdev with review:true after significant code changes to get a second opinion from a different model.",
+      "Use cdev with review:true and reviewFile=<path> to review a saved cdev report or any artifact file.",
+      "Use cdev with review:true and diffSpec=<range> to review changes between git or SVN revisions.",
+      "After implementing findings from a cdev report, update the report file to check off Action Items and add implementation notes.",
+      "When a /cdev review file appends findings, address the new Action Items and check them off in the report.",
       "Use cdev with quick:true for follow-up file tracing, grep-style lookups, or when raw findings suffice.",
       "Prefer cdev over bash/grep when you need to understand file relationships, not just find text matches.",
       "Tell cdev to surface ambiguities back to you — don't resolve them in the fork.",
     ],
     parameters: AutoForkParams,
+    renderCall,
+    renderResult,
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       try {
@@ -297,13 +313,175 @@ export default function (pi: ExtensionAPI) {
 
       // ── Review mode ──
       if (params.review) {
-        if (!config.stage2.provider || !config.stage2.id) {
+        const reviewProfile = config.review ?? config.stage2;
+        if (!reviewProfile.provider || !reviewProfile.id) {
           return {
-            content: [{ type: "text" as const, text: "cdev review error: Stage 2 model not configured. Use /cdev-model." }],
+            content: [{ type: "text" as const, text: "cdev review error: Review model not configured. Use /cdev-model." }],
             details: { stage1: null, stage2: null },
             isError: true,
           };
         }
+
+        // File review: review a specific artifact file
+        if (typeof params.reviewFile === "string" && params.reviewFile.trim()) {
+          const filePath = join(ctx.cwd, params.reviewFile.trim());
+          if (!existsSync(filePath)) {
+            return {
+              content: [{ type: "text" as const, text: `cdev review error: File not found: ${params.reviewFile}` }],
+              details: { stage1: null, stage2: null },
+              isError: true,
+            };
+          }
+          const fileContent = readFileSync(filePath, "utf-8");
+          const onProgress = (stage: string, model: string) => {
+            ctx.ui.setWidget("cdev-progress", [`⚒️ Forge reviewing ${params.reviewFile}…  (${model})`]);
+          };
+          onProgress("forge", reviewProfile.id);
+          const startTime = Date.now();
+          const { result, details } = await runFileReview({
+            cwd: ctx.cwd,
+            filePath: params.reviewFile,
+            fileContent,
+            stageProfile: reviewProfile,
+            onProgress,
+            extensions: config.extensions,
+            environment: config.environment,
+            offline: config.offline,
+            signal,
+          });
+          ctx.ui.setWidget("cdev-progress", undefined);
+
+          // Append review feedback to the report file
+          const reviewText = getFinalAssistantText(result.messages);
+          const reviewDate = new Date().toISOString().split("T")[0];
+          if (reviewText && !result.errorMessage) {
+            const appendText = `\n\n---\n\n## Review (${reviewDate})\n\n**Reviewer:** ${details.stage2?.model ?? "?"}\n\n${reviewText}\n`;
+            try {
+              appendFileSync(filePath, appendText, "utf-8");
+            } catch { /* disk full etc. */ }
+          }
+
+          saveSession(ctx.cwd, `review ${params.reviewFile}`, true, startTime, details, result);
+          if (result.errorMessage) {
+            logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
+          }
+          if (config.memory) {
+            indexFindings({
+              task: `review ${params.reviewFile}`,
+              resultText: getFinalAssistantText(result.messages) || "",
+              stage2Model: reviewProfile.id,
+              isReview: true,
+              quick: false,
+              cost: (result.usage?.cost ?? 0),
+              cwd: ctx.cwd,
+            });
+          }
+          const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);
+
+          // Build result text with explicit action instructions for the agent
+          const reviewOutput = formatResultContent(result, details);
+          const hasIssues = reviewText && (
+            reviewText.includes("❌ missing") ||
+            reviewText.includes("⚠️ partial") ||
+            reviewText.includes("## Bugs Found") ||
+            reviewText.includes("## Gaps")
+          );
+          const actionNote = hasIssues
+            ? `\n\n---\n⚠️  Review found issues. Read the updated report at ${params.reviewFile}\nand address the new Action Items in the ## Review section.\nCheck them off in the report file when done.`
+            : `\n\n---\n✅ Review passed. Report updated at ${params.reviewFile}`;
+
+          return {
+            content: [{ type: "text" as const, text: reviewOutput + actionNote }],
+            details,
+            isError,
+          };
+        }
+
+        // Diff review: review changes between revisions
+        if (typeof params.diffSpec === "string" && params.diffSpec.trim()) {
+          const diffSpec = params.diffSpec.trim();
+
+          // Run git diff or svn diff
+          let diffContent: string;
+          try {
+            try {
+              diffContent = execSync(`git diff ${diffSpec}`, { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
+            } catch {
+              diffContent = execSync(`svn diff -r ${diffSpec}`, { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
+            }
+            if (!diffContent.trim()) {
+              return {
+                content: [{ type: "text" as const, text: `cdev review error: Diff '${diffSpec}' produced no output. Check the revision range.` }],
+                details: { stage1: null, stage2: null },
+                isError: true,
+              };
+            }
+          } catch (err) {
+            return {
+              content: [{ type: "text" as const, text: `cdev review error: Failed to run diff for '${diffSpec}': ${err instanceof Error ? err.message : String(err)}` }],
+              details: { stage1: null, stage2: null },
+              isError: true,
+            };
+          }
+
+          const onProgress = (stage: string, model: string) => {
+            ctx.ui.setWidget("cdev-progress", [`⚒️ Forge reviewing diff ${diffSpec}…  (${model})`]);
+          };
+          onProgress("forge", reviewProfile.id);
+          const startTime = Date.now();
+          const { result, details } = await runDiffReview({
+            cwd: ctx.cwd,
+            diffSpec,
+            diffContent,
+            stageProfile: reviewProfile,
+            onProgress,
+            extensions: config.extensions,
+            environment: config.environment,
+            offline: config.offline,
+            signal,
+          });
+          ctx.ui.setWidget("cdev-progress", undefined);
+
+          // Save diff review as a report
+          const diffSlug = diffSpec.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 60);
+          const reviewText = getFinalAssistantText(result.messages);
+          const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
+          mkdirSync(reportsDir, { recursive: true });
+          const reportPath = join(reportsDir, `diff-${diffSlug}.md`);
+          const reportRelPath = `.pi/cdev/reports/diff-${diffSlug}.md`;
+          if (reviewText && !result.errorMessage) {
+            writeFileSync(reportPath, `# Diff Review: ${diffSpec}\n\n**Date:** ${new Date().toISOString().split("T")[0]}\n**Reviewer:** ${details.stage2?.model ?? "?"}\n\n${reviewText}\n`, "utf-8");
+          }
+
+          saveSession(ctx.cwd, `review diff ${diffSpec}`, true, startTime, details, result);
+          if (result.errorMessage) {
+            logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
+          }
+          if (config.memory) {
+            indexFindings({
+              task: `review diff ${diffSpec}`,
+              resultText: reviewText || "",
+              stage2Model: reviewProfile.id,
+              isReview: true,
+              quick: false,
+              cost: (result.usage?.cost ?? 0),
+              cwd: ctx.cwd,
+            });
+          }
+          const isError = result.exitCode > 0 && !reviewText;
+          const reviewOutput = formatResultContent(result, details);
+          const actionNote = isError
+            ? `\n\n---\n⚠️ Diff review found issues. Report saved at ${reportRelPath}`
+            : `\n\n---\n✅ Diff review complete. Report saved at ${reportRelPath}`;
+
+          return {
+            content: [{ type: "text" as const, text: reviewOutput + actionNote }],
+            details,
+            isError,
+          };
+        }
+
+        // Session review: review the current session
         const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager);
         if (!snapshot) {
           return {
@@ -312,17 +490,23 @@ export default function (pi: ExtensionAPI) {
             isError: true,
           };
         }
+        const onProgress = (stage: string, model: string) => {
+          ctx.ui.setWidget("cdev-progress", [`⚒️ Forge reviewing…  (${model})`]);
+        };
+        onProgress("forge", reviewProfile.id);
         const startTime = Date.now();
         const { result, details } = await runCdevReview({
           cwd: ctx.cwd,
           forkSessionSnapshotJsonl: snapshot,
-          stageProfile: config.stage2,
+          stageProfile: reviewProfile,
           customReviewPrompt: config.promptsEnabled ? config.prompts?.review : undefined,
+          onProgress,
           extensions: config.extensions,
           environment: config.environment,
           offline: config.offline,
           signal,
         });
+        ctx.ui.setWidget("cdev-progress", undefined);
         saveSession(ctx.cwd, params.task, true, startTime, details, result);
         if (result.errorMessage) {
           logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
@@ -331,7 +515,7 @@ export default function (pi: ExtensionAPI) {
           indexFindings({
             task: params.task,
             resultText: getFinalAssistantText(result.messages) || "",
-            stage2Model: config.stage2.id,
+            stage2Model: reviewProfile.id,
             isReview: true,
             quick: false,
             cost: (result.usage?.cost ?? 0),
@@ -372,6 +556,15 @@ export default function (pi: ExtensionAPI) {
       }
 
       const startTime = Date.now();
+      const quick = params.quick ?? false;
+      const onProgress = (stage: string, model: string) => {
+        if (stage === "scout") {
+          ctx.ui.setWidget("cdev-progress", [`🔍 Scout exploring…  (${model})`]);
+        } else {
+          ctx.ui.setWidget("cdev-progress", [`⚒️ Forge synthesizing…  (${model})`]);
+        }
+      };
+      onProgress("scout", profiles.stage1.id);
       const { result, details } = await runAutoFork({
         cwd: ctx.cwd,
         task: params.task,
@@ -380,14 +573,44 @@ export default function (pi: ExtensionAPI) {
         stage2Profile: profiles.stage2,
         customExplorePrompt: config.promptsEnabled ? config.prompts?.explore : undefined,
         customSynthesizePrompt: config.promptsEnabled ? config.prompts?.synthesize : undefined,
-        quick: params.quick ?? false,
+        quick,
+        onProgress,
         extensions: config.extensions,
         environment: config.environment,
         offline: config.offline,
         signal,
       });
+      ctx.ui.setWidget("cdev-progress", undefined);
 
       saveSession(ctx.cwd, params.task, false, startTime, details, result);
+
+      // Save forge report as shareable artifact
+      const slug = params.task
+        .replace(/[^a-zA-Z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .toLowerCase()
+        .slice(0, 80);
+      let reportRelPath = "";
+      if (!quick && details.stage2 && !result.errorMessage) {
+        const reportText = getFinalAssistantText(result.messages);
+        if (reportText) {
+          const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
+          mkdirSync(reportsDir, { recursive: true });
+          const reportPath = join(reportsDir, `${slug}.md`);
+          reportRelPath = `.pi/cdev/reports/${slug}.md`;
+          writeFileSync(reportPath, `# cdev report
+
+**Task:** ${params.task}
+**Scout:** ${details.stage1?.model ?? "?"}
+**Forge:** ${details.stage2?.model ?? "?"}
+**Date:** ${new Date().toISOString().split("T")[0]}
+
+---
+
+${reportText}
+`, "utf-8");
+        }
+      }
       if (result.errorMessage) {
         logError(ctx.cwd, "full-mode", new Error(result.errorMessage));
       }
@@ -406,12 +629,18 @@ export default function (pi: ExtensionAPI) {
 
       const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);
 
+      const resultText = formatResultContent(result, details);
+      const reportNote = reportRelPath
+        ? `\n\n---\n📄 Report saved: ${reportRelPath}\nAfter implementing findings, update this file to track what was done (check off items, add notes). Use /cdev review ${reportRelPath} to get a second opinion.`
+        : "";
+
       return {
-        content: [{ type: "text" as const, text: formatResultContent(result, details) }],
+        content: [{ type: "text" as const, text: resultText + reportNote }],
         details,
         isError,
       };
       } catch (err) {
+        ctx.ui.setWidget("cdev-progress", undefined);
         logError(ctx.cwd, "tool", err);
         return {
           content: [{ type: "text" as const, text: `cdev error: ${err instanceof Error ? err.message : String(err)}` }],
@@ -424,7 +653,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── Register /cdev command ───────────────────────────────
   pi.registerCommand("cdev", {
-    description: "Two-stage chain dev. Subcommands: auto on|off, review, <task>",
+    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, status, prompts on|off, history, scan [deep], recall [topic], memory on|off",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
 
@@ -490,17 +719,27 @@ REVIEW_PROMPT:
 <text>`;
 
           const scanStartTime = Date.now();
+          const onProgress = (stage: string, model: string) => {
+            if (stage === "scout") {
+              ctx.ui.setWidget("cdev-progress", [`🔍 Scout exploring…  (${model})`]);
+            } else {
+              ctx.ui.setWidget("cdev-progress", [`⚒️ Forge synthesizing…  (${model})`]);
+            }
+          };
+          onProgress("scout", profiles.stage1.id);
           const { result, details } = await runAutoFork({
             cwd: ctx.cwd,
             task,
             forkSessionSnapshotJsonl: snapshot,
             stage1Profile: profiles.stage1,
             stage2Profile: profiles.stage2,
+            onProgress,
             extensions: config.extensions,
             environment: config.environment,
             offline: config.offline,
             signal: undefined,
           });
+          ctx.ui.setWidget("cdev-progress", undefined);
 
           saveSession(ctx.cwd, task, false, scanStartTime, details, result);
           if (result.errorMessage) {
@@ -717,18 +956,47 @@ REVIEW_PROMPT:
         return;
       }
 
-      // ── Subcommand: review ──
-      if (trimmed === "review") {
+      // ── Subcommand: review [path|diff] ──
+      const reviewFileMatch = trimmed.match(/^review\s+(.+)$/);
+      if (trimmed === "review" || reviewFileMatch) {
         const config = loadConfig(ctx.cwd);
-        if (!config.stage2.provider || !config.stage2.id) {
-          ctx.ui.notify("Stage 2 model not configured. Use /cdev-model to set models.", "warn");
+        const reviewProfile = config.review ?? config.stage2;
+        if (!reviewProfile.provider || !reviewProfile.id) {
+          ctx.ui.notify("Review model not configured. Use /cdev-model to set models.", "warn");
           return;
         }
-        ctx.ui.notify("Queuing code review (stage 2 only)...", "info");
-        pi.sendUserMessage("Run a code review using the cdev tool with review=true. Review the recent changes in this session for bugs, edge cases, and improvements.", {
-          triggerTurn: true,
-          deliverAs: "steer",
-        });
+        if (reviewFileMatch) {
+          const arg = reviewFileMatch[1].trim();
+          // Detect diff spec: contains '..' (git) or matches SVN revision pattern
+          const isDiff = arg.includes("..") || /^r\d+[:\-]\d+$/.test(arg);
+          if (isDiff) {
+            // Diff review
+            ctx.ui.notify(`Reviewing diff ${arg}…`, "info");
+            pi.sendUserMessage(`Review the diff ${arg} using cdev with review=true and diffSpec="${arg}".`, {
+              triggerTurn: true,
+              deliverAs: "steer",
+            });
+          } else {
+            // File review
+            const fullPath = join(ctx.cwd, arg);
+            if (!existsSync(fullPath)) {
+              ctx.ui.notify(`File not found: ${arg}`, "error");
+              return;
+            }
+            ctx.ui.notify(`Reviewing ${arg}…`, "info");
+            pi.sendUserMessage(`Review the file ${arg} using cdev with review=true and reviewFile="${arg}".`, {
+              triggerTurn: true,
+              deliverAs: "steer",
+            });
+          }
+        } else {
+          // Session review
+          ctx.ui.notify("Queuing code review (forge only)…", "info");
+          pi.sendUserMessage("Run a code review using the cdev tool with review=true. Review the recent changes in this session for bugs, edge cases, and improvements.", {
+            triggerTurn: true,
+            deliverAs: "steer",
+          });
+        }
         return;
       }
 
@@ -758,6 +1026,7 @@ REVIEW_PROMPT:
           `  Current model:    ${ctx.model ? ctx.model.id : "none"}`,
           `  Scout:  ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`,
           `  Forge:  ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`,
+          `  Review: ${config.review ? `${config.review.provider}:${config.review.id}  •  ${config.review.thinking}` : `↳ Forge (${config.stage2.id})`}`,
           `  Auto-trigger:     ${config.auto ? "⚡ ON" : "OFF"}`,
           `  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`,
           `  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`,
@@ -807,12 +1076,16 @@ REVIEW_PROMPT:
       const config = loadConfig(ctx.cwd);
 
       // Step 1: pick stage
+      const reviewProfile = config.review ?? config.stage2;
       const stagePick = await ctx.ui.select("Pick model:", [
         `Scout (explore)  [${config.stage1.provider || "?"}/${config.stage1.id || "?"}]`,
         `Forge (synthesize)  [${config.stage2.provider || "?"}/${config.stage2.id || "?"}]`,
+        `Review  [${reviewProfile.provider || "?"}/${reviewProfile.id || "?"}]`,
       ]);
       if (!stagePick) return;
-      const stage = stagePick.startsWith("stage1") ? "stage1" : "stage2";
+      const stage = stagePick.startsWith("Scout") ? "stage1"
+        : stagePick.startsWith("Forge") ? "stage2"
+        : "review";
 
       // Step 2: show all models via select (max 50)
       const allModels = ctx.modelRegistry.getAvailable();

@@ -405,3 +405,37 @@ Forks recorded to `.pi/cdev/sessions/<id>.json`. Auto-purged after 7 days.
 ```
 
 `Current model` shows whatever `/model` is set to in your Pi session — the model that reads cdev's output and writes your code.
+
+## TUI rendering
+
+cdev registers custom renderers so the activity panel shows progress:
+
+**During call:**
+
+```
+  cdev "explore auth deps"       full mode
+  cdev-review                     review mode
+  cdev-quick "trace imports"      quick mode
+  cdev-recall "auth"              memory recall
+```
+
+**After completion (collapsed):**
+
+```
+  ✓ completed  flash→pro  $0.0040
+  JWT in middleware.ts, 12 places found
+  (expand)
+```
+
+**Expanded:**
+
+```
+  ✓ completed  flash→pro  $0.0040
+    task: explore auth module deps
+    Scout: flash (exit 0)
+    Forge: pro (exit 0)
+
+    EXPLORATION FINDINGS
+    - JWT verification in middleware.ts
+    ...
+```

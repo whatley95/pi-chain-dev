@@ -101,13 +101,21 @@ Include concrete anchors to trust/verify/continue: paths, symbols, snippets, com
 
 Extract reusable knowledge: dead ends, failed attempts, wrong assumptions, hidden coupling, source-of-truth discoveries, project mental models. Use "Learning / Evidence / Reuse when" format.
 
+## Action Items
+
+If you identified specific things that should be done, list them as checkboxes. The main agent will mark them complete after implementing.
+
+- [ ] item 1
+- [ ] item 2
+
 Assembly rules:
-- Always use exactly these four headings: Result, Output, Evidence, Learnings
+- Always use exactly these five headings: Result, Output, Evidence, Learnings, Action Items
 - Right-size each section independently
 - Do not compress away important evidence
 - Do not narrate tool calls
 - If no files changed, say "No changes made" once
-- Report what changes future decisions, trust, or behavior`;
+- Report what changes future decisions, trust, or behavior
+- Action Items should be concrete, verifiable tasks the agent can check off`;
 }
 
 // ── Review mode prompts ────────────────────────────────────
@@ -138,6 +146,109 @@ Improvements that aren't bugs: refactors, patterns, tests to add.
 Files reviewed, diff locations, edge cases verified, assumptions checked.
 
 Be direct. Flag real problems loudly. Don't praise trivial things.`;
+}
+
+function buildFileReviewPrompt(
+  filePath: string,
+  reportContent: string,
+  referencedFiles: Record<string, string>,
+): string {
+  const fileList = Object.keys(referencedFiles);
+  const filesSection = fileList.length > 0
+    ? fileList.map(f => {
+        const content = referencedFiles[f];
+        const truncated = content.length > 3000
+          ? content.slice(0, 3000) + "\n\n... (truncated, full file is longer)"
+          : content;
+        return `### ${f}\n\`\`\`\n${truncated}\n\`\`\``;
+      }).join("\n\n")
+    : "(no referenced files found in the report)";
+
+  return `Review the following report AND the actual code it references. Your job: compare what the report claims against what the code actually contains.
+
+Report: ${filePath}
+
+Instructions:
+- Compare each claim in the report against the actual file contents below
+- Find mismatches: things the report says were done but aren't in the code
+- Find bugs: issues in the actual code that the report didn't catch
+- Find gaps: report claims that lack corresponding implementation
+- Check if Action Items marked done are genuinely resolved in the code
+- Flag anything the report claims that contradicts the actual code
+
+Use this structure:
+
+## Result
+Summary: pass / needs-work / blocked. Did the implementation match the report?
+
+## Claims vs Code
+For each key claim in the report, verify against the actual files. Format:
+**Claim:** what the report says
+**Reality:** what the code actually shows
+**Verdict:** ✅ matched / ⚠️ partial / ❌ missing
+
+## Bugs Found
+Issues in the actual code (not report claims): File, Line, Severity, Description.
+
+## Gaps
+Things the report says are done but aren't reflected in code.
+
+## New Action Items
+List any new tasks surfaced by this review as checkboxes the main agent can act on.
+
+- [ ] item 1
+- [ ] item 2
+
+## What's Missing
+Considerations neither the report nor the code address.
+
+---
+
+<report>
+${reportContent}
+</report>
+
+<actual-files>
+${filesSection}
+</actual-files>`;
+}
+
+function buildDiffReviewPrompt(diffSpec: string, diffContent: string): string {
+  return `Review the following code diff thoroughly. Find bugs, edge cases, missing error handling, security concerns, and gaps.
+
+Diff: ${diffSpec}
+
+Instructions:
+- Examine every changed file and every changed line
+- Find bugs introduced by these changes
+- Check for missing error handling, null guards, edge cases
+- Look for security concerns (injection, auth bypass, data leaks)
+- Verify that changes don't break existing patterns or conventions
+- Check for dead code, unused imports, leftover debug statements
+- Suggest concrete fixes with code snippets where helpful
+
+Use this structure:
+
+## Result
+Summary: pass / needs-work / blocked. Key concerns in bullets.
+
+## Issues Found
+Each issue as: File, Line, Severity, Description, Fix suggestion.
+
+## New Action Items
+List any fixes needed as checkboxes.
+
+- [ ] item 1
+- [ ] item 2
+
+## Suggestions
+Improvements that aren't bugs: refactors, tests, patterns.
+
+---
+
+<diff>
+${diffContent}
+</diff>`;
 }
 
 // ── Stage runner ────────────────────────────────────────────
@@ -293,6 +404,8 @@ export interface RunAutoForkOptions {
   customSynthesizePrompt?: string;
   /** If true, skip stage 2 — return raw stage 1 findings only. */
   quick?: boolean;
+  /** Called when a stage starts. Lets the caller show progress. */
+  onProgress?: (stage: "scout" | "forge", model: string) => void;
   extensions?: string[] | null;
   environment?: Record<string, string>;
   offline?: boolean;
@@ -311,6 +424,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   const details: AutoForkDetails = { stage1: null, stage2: null };
 
   // ── Stage 1: Exploration with cheap model ──
+  opts.onProgress?.("scout", stage1Profile.id);
   const stage1Task = buildStage1Prompt(task, customExplorePrompt);
 
   let stage1Result: ForkResult;
@@ -357,6 +471,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   }
 
   // ── Stage 2: Synthesis with powerful model ──
+  opts.onProgress?.("forge", stage2Profile.id);
   const stage1Text = getFinalAssistantText(stage1Result.messages) ||
                      stage1Result.stderr ||
                      "(no output from exploration stage)";
@@ -418,6 +533,8 @@ export async function runCdevReview(opts: {
   forkSessionSnapshotJsonl: string;
   stageProfile: StageProfile;
   customReviewPrompt?: string;
+  /** Called when review starts. */
+  onProgress?: (stage: "scout" | "forge", model: string) => void;
   extensions?: string[] | null;
   environment?: Record<string, string>;
   offline?: boolean;
@@ -428,6 +545,7 @@ export async function runCdevReview(opts: {
           extensions = null, environment = {}, offline = true, signal } = opts;
 
   const reviewTask = buildReviewPrompt(customReviewPrompt);
+  opts.onProgress?.("forge", stageProfile.id);
 
   let result: ForkResult;
   try {
@@ -445,6 +563,129 @@ export async function runCdevReview(opts: {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     result = emptyFailedResult("review", `Review failed: ${message}`);
+  }
+
+  return {
+    result,
+    details: { stage1: null, stage2: result },
+  };
+}
+
+// ── File review (review an artifact file) ──────────────────
+
+export async function runFileReview(opts: {
+  cwd: string;
+  filePath: string;
+  fileContent: string;
+  stageProfile: StageProfile;
+  onProgress?: (stage: "scout" | "forge", model: string) => void;
+  extensions?: string[] | null;
+  environment?: Record<string, string>;
+  offline?: boolean;
+  signal?: AbortSignal;
+}): Promise<{ result: ForkResult; details: AutoForkDetails }> {
+  const { cwd, filePath, fileContent, stageProfile,
+          extensions = null, environment = {}, offline = true, signal } = opts;
+
+  // Extract file paths referenced in the report (Evidence section, backticks, etc.)
+  const referencedFiles: Record<string, string> = {};
+  const pathPatterns = [
+    /\b([\w.\-\/]+\.[a-z]{2,6})\b/gi,           // file.ext
+    /`([^`]*\.[a-z]{2,6})`/gi,                       // `path/to/file.ts`
+    /(?:File|Path|file|path):\s*([\w.\-\/]+\.[a-z]{2,6})/gi,  // File: path/to/file.ts
+  ];
+  const seen = new Set<string>();
+  for (const pattern of pathPatterns) {
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(fileContent)) !== null) {
+      const candidate = match[1].replace(/^[.\/\\]+/, ""); // strip leading ./ or .\
+      if (candidate && !seen.has(candidate) && candidate.length < 200) {
+        seen.add(candidate);
+        const fullPath = path.join(cwd, candidate);
+        if (fs.existsSync(fullPath)) {
+          try {
+            referencedFiles[candidate] = fs.readFileSync(fullPath, "utf-8");
+          } catch { /* skip unreadable files */ }
+        }
+      }
+    }
+  }
+
+  const reviewTask = buildFileReviewPrompt(filePath, fileContent, referencedFiles);
+  opts.onProgress?.("forge", stageProfile.id);
+
+  let result: ForkResult;
+  try {
+    // File review doesn't need session context — it's reviewing a standalone artifact
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-chain-dev-"));
+    const sessionPath = path.join(tmpDir, "session.jsonl");
+    fs.writeFileSync(sessionPath, JSON.stringify({}) + "\n", "utf-8");
+    try {
+      result = await runStage({
+        cwd,
+        task: reviewTask,
+        stageLabel: "review",
+        forkSessionJsonl: JSON.stringify({}) + "\n",
+        stageProfile,
+        extensions,
+        environment,
+        offline,
+        signal,
+      });
+    } finally {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    result = emptyFailedResult(filePath, `File review failed: ${message}`);
+  }
+
+  return {
+    result,
+    details: { stage1: null, stage2: result },
+  };
+}
+
+// ── Diff review (review changes between revisions) ──────────
+
+export async function runDiffReview(opts: {
+  cwd: string;
+  diffSpec: string;
+  diffContent: string;
+  stageProfile: StageProfile;
+  onProgress?: (stage: "scout" | "forge", model: string) => void;
+  extensions?: string[] | null;
+  environment?: Record<string, string>;
+  offline?: boolean;
+  signal?: AbortSignal;
+}): Promise<{ result: ForkResult; details: AutoForkDetails }> {
+  const { cwd, diffSpec, diffContent, stageProfile,
+          extensions = null, environment = {}, offline = true, signal } = opts;
+
+  const reviewTask = buildDiffReviewPrompt(diffSpec, diffContent);
+  opts.onProgress?.("forge", stageProfile.id);
+
+  let result: ForkResult;
+  try {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-chain-dev-"));
+    try {
+      result = await runStage({
+        cwd,
+        task: reviewTask,
+        stageLabel: "review",
+        forkSessionJsonl: JSON.stringify({}) + "\n",
+        stageProfile,
+        extensions,
+        environment,
+        offline,
+        signal,
+      });
+    } finally {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    result = emptyFailedResult(diffSpec, `Diff review failed: ${message}`);
   }
 
   return {

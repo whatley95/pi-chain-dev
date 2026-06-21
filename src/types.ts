@@ -27,6 +27,8 @@ export interface AutoForkConfig {
   stage1: StageProfile;
   /** Model profile for Stage 2 (expensive synthesis). */
   stage2: StageProfile;
+  /** Optional override model for review mode. Falls back to stage2 if unset. */
+  review?: StageProfile;
   /** Custom prompts for each stage. */
   prompts?: PromptsConfig;
   /** Extensions to load in child processes. null = normal, [] = none. */

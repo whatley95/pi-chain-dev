@@ -131,9 +131,11 @@ function readNamespacedConfig(settingsPath: string): Partial<AutoForkConfig> {
 
     const stage1 = parseStageProfile(config.stage1);
     const stage2 = parseStageProfile(config.stage2);
+    const review = parseStageProfile(config.review);
 
     if (stage1) parsed.stage1 = stage1;
     if (stage2) parsed.stage2 = stage2;
+    if (review) parsed.review = review;
     if (typeof config.offline === "boolean") parsed.offline = config.offline;
     if (typeof config.costFooter === "boolean") parsed.costFooter = config.costFooter;
     if (typeof config.auto === "boolean") parsed.auto = config.auto;
