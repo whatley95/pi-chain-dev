@@ -1173,14 +1173,15 @@ REVIEW_PROMPT:
       // ── Subcommand: review [path|diff] [--audit] ──
       const reviewFileMatch = trimmed.match(/^review\s+(.+)$/);
       if (trimmed === "review" || reviewFileMatch) {
-        // Check for --audit flag
-        let isAudit = trimmed.includes("--audit");
+        // Extract --audit flag and clean arg
+        let isAudit = false;
+        let cleanArg = "";
         if (reviewFileMatch) {
-          let arg = reviewFileMatch[1].trim();
-          if (arg.endsWith(" --audit")) { arg = arg.slice(0, -8).trim(); isAudit = true; }
-          else if (arg.endsWith(" -a")) { arg = arg.slice(0, -3).trim(); isAudit = true; }
-          else if (arg === "--audit" || arg === "-a") {
-            // Just --audit without a path/diff
+          cleanArg = reviewFileMatch[1].trim();
+          if (cleanArg.endsWith(" --audit")) { cleanArg = cleanArg.slice(0, -8).trim(); isAudit = true; }
+          else if (cleanArg.endsWith(" -a")) { cleanArg = cleanArg.slice(0, -3).trim(); isAudit = true; }
+          else if (cleanArg === "--audit" || cleanArg === "-a") {
+            // Just --audit without a path/diff — session audit review
             ctx.ui.notify(`Queuing audit-only code review…`, "info");
             pi.sendUserMessage(`Run a code review using the cdev tool with review=true and auditOnly=true.`, {
               triggerTurn: true,
@@ -1188,8 +1189,13 @@ REVIEW_PROMPT:
             });
             return;
           }
-          // Rebuild the match with cleaned arg
-          Object.defineProperty(reviewFileMatch, 1, { value: arg });
+          // Only set isAudit from --audit flag embedded in text (not suffix — suffix handled above)
+          if (!isAudit && /\b--audit\b|\baudit.only\b|\bcheck.only\b/i.test(cleanArg)) {
+            isAudit = true;
+            cleanArg = cleanArg.replace(/\s*--audit\b|\s*\baudit.only\b|\s*\bcheck.only\b/gi, "").trim();
+          }
+        } else if (trimmed === "review --audit" || trimmed === "review -a") {
+          isAudit = true;
         }
         const config = loadConfig(ctx.cwd);
         const reviewProfile = config.review ?? config.stage2;
@@ -1197,35 +1203,34 @@ REVIEW_PROMPT:
           ctx.ui.notify("Review model not configured. Use /cdev-model to set models.", "warn");
           return;
         }
-        if (reviewFileMatch) {
-          const arg = reviewFileMatch[1].trim();
+        if (cleanArg) {
           // Detect diff spec: contains '..' (git) or 'rN:M' (SVN)
-          const isDiff = arg.includes("..") || /^r\d+[:\-]\d+$/.test(arg);
+          const isDiff = cleanArg.includes("..") || /^r\d+[:\-]\d+$/.test(cleanArg);
           // Detect file path: contains / \ or a file extension
-          const looksLikePath = /[\\\/]/.test(arg) || /\.[a-z]{2,6}$/i.test(arg);
+          const looksLikePath = /[\\\/]/.test(cleanArg) || /\.[a-z]{2,6}$/i.test(cleanArg);
           if (isDiff) {
             // Diff review
-            ctx.ui.notify(`Reviewing diff ${arg}…`, "info");
-            pi.sendUserMessage(`Review the diff ${arg} using cdev with review=true, diffSpec="${arg}"${isAudit ? ", and auditOnly=true" : ""}.`, {
+            ctx.ui.notify(`Reviewing diff ${cleanArg}…`, "info");
+            pi.sendUserMessage(`Review the diff ${cleanArg} using cdev with review=true, diffSpec="${cleanArg}"${isAudit ? ", and auditOnly=true" : ""}.`, {
               triggerTurn: true,
               deliverAs: "steer",
             });
           } else if (looksLikePath) {
             // File review — resolve path (handle absolute paths, relative paths, and .pi/... paths)
-            const fullPath = isAbsolute(arg) ? arg : join(ctx.cwd, arg);
+            const fullPath = isAbsolute(cleanArg) ? cleanArg : join(ctx.cwd, cleanArg);
             if (!existsSync(fullPath)) {
               ctx.ui.notify(`File not found: ${fullPath}`, "error");
               return;
             }
-            ctx.ui.notify(`Reviewing ${arg}…`, "info");
-            pi.sendUserMessage(`Review the file ${arg} using cdev with review=true, reviewFile="${arg}"${isAudit ? ", and auditOnly=true" : ""}.`, {
+            ctx.ui.notify(`Reviewing ${cleanArg}…`, "info");
+            pi.sendUserMessage(`Review the file ${cleanArg} using cdev with review=true, reviewFile="${cleanArg}"${isAudit ? ", and auditOnly=true" : ""}.`, {
               triggerTurn: true,
               deliverAs: "steer",
             });
           } else {
             // Plain text — treat as session review with a custom task hint
             ctx.ui.notify(`Queuing code review…`, "info");
-            pi.sendUserMessage(`Run a code review using the cdev tool with review=true${isAudit ? " and auditOnly=true" : ""}. Focus on: ${arg}`, {
+            pi.sendUserMessage(`Run a code review using the cdev tool with review=true${isAudit ? " and auditOnly=true" : ""}. Focus on: ${cleanArg}`, {
               triggerTurn: true,
               deliverAs: "steer",
             });

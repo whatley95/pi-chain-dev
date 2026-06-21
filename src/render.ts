@@ -42,10 +42,10 @@ function isThemed(cwd?: string): boolean {
     // Global agent settings (fallback)
     const global = readJsonSafe(join(getAgentDir(), "settings.json"));
     const globalCdev = global?.["pi-chain-dev"] as Record<string, unknown> | undefined;
-    // Project overrides global, default true
-    return (projCdev?.["themed"] ?? globalCdev?.["themed"]) !== false;
+    // Project overrides global, default false
+    return (projCdev?.["themed"] ?? globalCdev?.["themed"]) === true;
   } catch {
-    return true;
+    return false;
   }
 }
 
