@@ -14,7 +14,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, isAbsolute } from "node:path";
 import { spawnSync } from "node:child_process";
 import { EFFORT_LEVELS, loadConfig, type AutoForkConfig } from "./config.js";
 import { runAutoFork, runCdevReview, runFileReview, runDiffReview } from "./runner.js";
@@ -325,7 +325,8 @@ export default function (pi: ExtensionAPI) {
 
         // File review: review a specific artifact file
         if (typeof params.reviewFile === "string" && params.reviewFile.trim()) {
-          const filePath = join(ctx.cwd, params.reviewFile.trim());
+          const arg = params.reviewFile.trim();
+          const filePath = isAbsolute(arg) ? arg : join(ctx.cwd, arg);
           if (!existsSync(filePath)) {
             return {
               content: [{ type: "text" as const, text: `cdev review error: File not found: ${params.reviewFile}` }],
@@ -666,6 +667,11 @@ ${reportText}
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
 
+      // Detect audit-only language ("check only", "don't change", etc.)
+      const auditOnlyRegex = /\b(check|audit|look|inspect|analyze)\s+only\b|\bdon'?t\s+(change|implement|modify|write|edit|touch)\b|\bno\s+(changes?|implementation|modification)\b|\bjust\s+(check|look|audit|review|inspect)\b/i;
+      const isAuditOnly = auditOnlyRegex.test(trimmed);
+      const auditGuard = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
+
       // ── Subcommand: auto on ──
       if (trimmed === "auto on" || trimmed === "auto") {
         const agentDir = getAgentDir();
@@ -988,8 +994,8 @@ REVIEW_PROMPT:
               deliverAs: "steer",
             });
           } else if (looksLikePath) {
-            // File review
-            const fullPath = join(ctx.cwd, arg);
+            // File review — resolve path (handle absolute paths, relative paths, and .pi/... paths)
+            const fullPath = isAbsolute(arg) ? arg : join(ctx.cwd, arg);
             if (!existsSync(fullPath)) {
               ctx.ui.notify(`File not found: ${arg}`, "error");
               return;
@@ -1026,7 +1032,7 @@ REVIEW_PROMPT:
           return;
         }
         ctx.ui.notify(`Queuing quick exploration (stage 1 only)...`, "info");
-        pi.sendUserMessage(`Use cdev with quick=true to: ${quickTask}`, {
+        pi.sendUserMessage(`Use cdev with quick=true to: ${quickTask}${auditOnlyRegex.test(quickTask) ? auditGuard : ""}`, {
           triggerTurn: true,
           deliverAs: "steer",
         });
@@ -1150,7 +1156,7 @@ REVIEW_PROMPT:
 
       // Not a subcommand → treat as task
       ctx.ui.notify("Queuing cdev task...", "info");
-      pi.sendUserMessage(`Use cdev to: ${trimmed}`, {
+      pi.sendUserMessage(`Use cdev to: ${trimmed}${isAuditOnly ? auditGuard : ""}`, {
         triggerTurn: true,
         deliverAs: "steer",
       });
