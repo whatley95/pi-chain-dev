@@ -13,7 +13,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
 import { spawnSync } from "node:child_process";
 import { EFFORT_LEVELS, loadConfig, type AutoForkConfig } from "./config.js";
@@ -216,6 +216,26 @@ export default function (pi: ExtensionAPI) {
     const purged = purgeOldSessions(ctx.cwd, 7);
     if (purged > 0) {
       ctx.ui.notify(`Purged ${purged} old cdev session${purged > 1 ? "s" : ""} (>7 days)`, "info");
+    }
+    // Also purge old reports (>7 days)
+    let purgedReports = 0;
+    const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
+    if (existsSync(reportsDir)) {
+      const now = Date.now();
+      const week = 7 * 24 * 60 * 60 * 1000;
+      try {
+        for (const entry of readdirSync(reportsDir)) {
+          if (!entry.endsWith(".md")) continue;
+          const age = now - statSync(join(reportsDir, entry)).mtimeMs;
+          if (age > week) {
+            unlinkSync(join(reportsDir, entry));
+            purgedReports++;
+          }
+        }
+      } catch { /* best effort */ }
+    }
+    if (purgedReports > 0) {
+      ctx.ui.notify(`Purged ${purgedReports} old cdev report${purgedReports > 1 ? "s" : ""} (>7 days)`, "info");
     }
   });
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -453,12 +473,14 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.setWidget("cdev-progress", undefined);
 
           // Save diff review as a report
-          const diffSlug = diffSpec.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 60);
+          const diffSlug = diffSpec.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 50);
+          const ts = Date.now().toString(36);
+          const reportFileName = `diff-${diffSlug}-${ts}.md`;
           const reviewText = getFinalAssistantText(result.messages);
           const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
           mkdirSync(reportsDir, { recursive: true });
-          const reportPath = join(reportsDir, `diff-${diffSlug}.md`);
-          const reportRelPath = `.pi/cdev/reports/diff-${diffSlug}.md`;
+          const reportPath = join(reportsDir, reportFileName);
+          const reportRelPath = `.pi/cdev/reports/${reportFileName}`;
           if (reviewText && !result.errorMessage) {
             writeFileSync(reportPath, `# Diff Review: ${diffSpec}\n\n**Date:** ${new Date().toISOString().split("T")[0]}\n**Reviewer:** ${details.stage2?.model ?? "?"}\n\n${reviewText}\n`, "utf-8");
           }
@@ -594,12 +616,14 @@ export default function (pi: ExtensionAPI) {
 
       saveSession(ctx.cwd, params.task, false, startTime, details, result);
 
-      // Save forge report as shareable artifact
-      const slug = params.task
+      // Save forge report as shareable artifact (timestamped slug to avoid collisions)
+      const slugBase = params.task
         .replace(/[^a-zA-Z0-9]+/g, "-")
         .replace(/^-|-$/g, "")
         .toLowerCase()
-        .slice(0, 80);
+        .slice(0, 60);
+      const ts = Date.now().toString(36);
+      const slug = `${slugBase}-${ts}`;
       let reportRelPath = "";
       if (!quick && details.stage2 && !result.errorMessage) {
         const reportText = getFinalAssistantText(result.messages);
@@ -888,7 +912,34 @@ REVIEW_PROMPT:
       // ── Subcommand: clear ──
       if (trimmed === "clear") {
         memoryClear(ctx.cwd);
-        ctx.ui.notify("Cleared all cdev project memory.", "info");
+        // Also clear old reports
+        let cleared = 0;
+        const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
+        if (existsSync(reportsDir)) {
+          for (const entry of readdirSync(reportsDir)) {
+            if (entry.endsWith(".md")) {
+              unlinkSync(join(reportsDir, entry));
+              cleared++;
+            }
+          }
+        }
+        ctx.ui.notify(`Cleared cdev project memory${cleared > 0 ? ` + ${cleared} report${cleared !== 1 ? "s" : ""}` : ""}.`, "info");
+        return;
+      }
+
+      // ── Subcommand: clear reports ──
+      if (trimmed === "clear reports") {
+        const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
+        let cleared = 0;
+        if (existsSync(reportsDir)) {
+          for (const entry of readdirSync(reportsDir)) {
+            if (entry.endsWith(".md")) {
+              unlinkSync(join(reportsDir, entry));
+              cleared++;
+            }
+          }
+        }
+        ctx.ui.notify(`Cleared ${cleared} cdev report${cleared !== 1 ? "s" : ""}.`, "info");
         return;
       }
 
