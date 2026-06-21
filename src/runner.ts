@@ -435,7 +435,6 @@ async function runStage(opts: RunStageOptions): Promise<ForkResult> {
     proc.stdin.end();
 
     let buffer = "";
-    let didClose = false;
     let settled = false;
     let abortHandler: (() => void) | undefined;
 
@@ -457,7 +456,9 @@ async function runStage(opts: RunStageOptions): Promise<ForkResult> {
     });
 
     proc.on("close", (code) => {
-      didClose = true;
+      if (abortHandler && signal) {
+        signal.removeEventListener("abort", abortHandler);
+      }
       if (buffer.trim()) flushLine(buffer);
       if (!settled) { settled = true; resolve(code ?? 0); }
     });
@@ -473,9 +474,13 @@ async function runStage(opts: RunStageOptions): Promise<ForkResult> {
     if (signal) {
       abortHandler = () => {
         if (!settled) {
-          // Try to kill on abort
           if (proc.pid) {
             try { proc.kill("SIGTERM"); } catch { /* ignore */ }
+            setTimeout(() => {
+              if (!settled && proc.pid) {
+                try { proc.kill("SIGKILL"); } catch { /* ignore */ }
+              }
+            }, SIGKILL_TIMEOUT_MS);
           }
         }
       };
