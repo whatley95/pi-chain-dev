@@ -67,13 +67,32 @@ When `/cdev auto on` is active:
 
 ## Installation
 
-Auto-discovered from `~/.pi/agent/extensions/pi-chain-dev/` — no install command needed if placed there.
-
-Manual install:
+### From GitHub (recommended)
 
 ```bash
-pi install C:/dev/Project/pi-chain-fork   # or your local path
+# Install globally (user settings)
+pi install git:github.com/whatley95/pi-chain-dev@main
+
+# Or install to project settings (share with team)
+pi install -l git:github.com/whatley95/pi-chain-dev@main
+
+# Direct HTTPS URL also works
+pi install https://github.com/whatley95/pi-chain-dev@main
+
+# Try without permanently installing
+pi -e git:github.com/whatley95/pi-chain-dev
 ```
+
+### From local path
+
+```bash
+pi install /path/to/pi-chain-fork   # absolute path
+pi install ./pi-chain-fork          # relative path
+```
+
+### Manual placement
+
+Auto-discovered from `~/.pi/agent/extensions/pi-chain-dev/` — no install command needed if placed there.
 
 ## Configuration
 
