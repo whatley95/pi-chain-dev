@@ -882,7 +882,7 @@ REVIEW_PROMPT:
           onProgress("scout", profiles.stage1.id);
           const { result, details: scanDetails } = await runAutoFork({
             cwd: ctx.cwd,
-            scanTask,
+            task: scanTask,
             forkSessionSnapshotJsonl: snapshot,
             stage1Profile: profiles.stage1,
             stage2Profile: profiles.stage2,

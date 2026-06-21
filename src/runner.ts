@@ -55,8 +55,10 @@ function redactSensitiveContent(text: string): string {
 /**
  * Recursively redact sensitive fields from a message object tree.
  */
-function redactMessageSensitive(msg: Record<string, unknown>): Record<string, unknown> {
+function redactMessageSensitive(msg: Record<string, unknown>, seen = new WeakSet<object>()): Record<string, unknown> {
   if (!msg || typeof msg !== "object") return msg;
+  if (seen.has(msg as object)) return msg;
+  seen.add(msg as object);
   const result: Record<string, unknown> = { ...msg };
   for (const key of Object.keys(result)) {
     const val = result[key];
@@ -65,11 +67,11 @@ function redactMessageSensitive(msg: Record<string, unknown>): Record<string, un
     } else if (Array.isArray(val)) {
       result[key] = val.map((item: unknown) =>
         item && typeof item === "object" && !Array.isArray(item)
-          ? redactMessageSensitive(item as Record<string, unknown>)
+          ? redactMessageSensitive(item as Record<string, unknown>, seen)
           : item
       );
     } else if (val && typeof val === "object" && !Array.isArray(val)) {
-      result[key] = redactMessageSensitive(val as Record<string, unknown>);
+      result[key] = redactMessageSensitive(val as Record<string, unknown>, seen);
     }
   }
   return result;
@@ -100,25 +102,29 @@ function sanitizeSessionJsonl(sessionJsonl: string): { jsonl: string; stripped: 
   const rawLines = sessionJsonl.trim().split("\n");
   if (rawLines.length <= 1) return { jsonl: sessionJsonl, stripped: 0 };
 
-  // Parse each line; unwrap envelope objects that have a .message property
+  // Parse each line; unwrap envelope objects that have a .message property.
+  // Caches whether the line was an envelope to avoid re-parsing in Pass 1.
   interface ParsedLine {
     raw: string;
     msg: Record<string, unknown> | null;
+    isEnvelope: boolean;
   }
   const parsed: ParsedLine[] = [];
   for (const line of rawLines) {
     try {
       const obj = JSON.parse(line);
-      const msg =
-        obj && typeof obj === "object" && !Array.isArray(obj) && "message" in obj
-          ? (obj as Record<string, unknown>).message as Record<string, unknown>
-          : obj;
+      const isEnvelope =
+        obj && typeof obj === "object" && !Array.isArray(obj) && "message" in obj;
+      const msg = isEnvelope
+        ? (obj as Record<string, unknown>).message as Record<string, unknown>
+        : obj;
       parsed.push({
         raw: line,
         msg: msg && typeof msg === "object" && !Array.isArray(msg) ? (msg as Record<string, unknown>) : null,
+        isEnvelope: Boolean(isEnvelope),
       });
     } catch {
-      parsed.push({ raw: line, msg: null });
+      parsed.push({ raw: line, msg: null, isEnvelope: false });
     }
   }
 
@@ -127,14 +133,14 @@ function sanitizeSessionJsonl(sessionJsonl: string): { jsonl: string; stripped: 
     if (!entry.msg) return entry; // Non-message entries pass through
     const redactedMsg = redactMessageSensitive(entry.msg);
     // Preserve message envelope if one existed
-    if (entry.raw !== JSON.stringify(entry.msg)) {
+    if (entry.isEnvelope) {
       try {
         const env = JSON.parse(entry.raw);
         env.message = redactedMsg;
-        return { raw: JSON.stringify(env), msg: redactedMsg };
-      } catch { return { raw: entry.raw, msg: entry.msg }; }
+        return { raw: JSON.stringify(env), msg: redactedMsg, isEnvelope: true };
+      } catch { /* fall through — can't re-wrap, treat as plain message */ }
     }
-    return { raw: JSON.stringify(redactedMsg), msg: redactedMsg };
+    return { raw: JSON.stringify(redactedMsg), msg: redactedMsg, isEnvelope: false };
   });
 
   // ── Pass 2: Collect valid tool_call_ids from all assistant messages ──
@@ -442,18 +448,21 @@ function buildPiArgs(
     args.push("--no-extensions");
   }
 
-  // Inherited fallback — only used if stage profile doesn't provide its own
+  // Inherited fallback — only used if stage profile doesn't provide its own.
+  // Tools use !stageProfile.id as proxy (no stageProfile.tools field yet).
   if (inheritedCliArgs.fallbackModel && !stageProfile.id) {
     args.push("--model", inheritedCliArgs.fallbackModel);
   }
   if (inheritedCliArgs.fallbackThinking && !stageProfile.thinking) {
     args.push("--thinking", inheritedCliArgs.fallbackThinking);
   }
-  if (inheritedCliArgs.fallbackTools) {
-    args.push("--tools", inheritedCliArgs.fallbackTools);
-  }
-  if (inheritedCliArgs.fallbackNoTools) {
-    args.push("--no-tools");
+  if (!stageProfile.id) {
+    if (inheritedCliArgs.fallbackTools) {
+      args.push("--tools", inheritedCliArgs.fallbackTools);
+    }
+    if (inheritedCliArgs.fallbackNoTools) {
+      args.push("--no-tools");
+    }
   }
 
   // Stage profile overrides

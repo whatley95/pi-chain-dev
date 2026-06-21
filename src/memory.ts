@@ -61,6 +61,7 @@ function saveMemory(cwd: string, memory: CdevMemory): void {
       try { unlinkSync(tmpPath); } catch { /* ignore */ }
     }
   }
+  _topicCountCache = null;
 }
 
 // ── File fingerprinting ──────────────────────────────────

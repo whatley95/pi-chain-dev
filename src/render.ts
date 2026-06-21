@@ -39,12 +39,13 @@ let _themedCache: { cwd: string; result: boolean; ts: number } | null = null;
 const THEMED_CACHE_TTL_MS = 5000; // 5 seconds
 
 function isThemed(cwd?: string): boolean {
+  const cacheKey = cwd ?? "";
   // Use cached result if within TTL
-  if (_themedCache && _themedCache.cwd === cwd && Date.now() - _themedCache.ts < THEMED_CACHE_TTL_MS) {
+  if (_themedCache && _themedCache.cwd === cacheKey && Date.now() - _themedCache.ts < THEMED_CACHE_TTL_MS) {
     return _themedCache.result;
   }
   let result = false;
-  if (!cwd) { _themedCache = { cwd: cwd ?? "", result: false, ts: Date.now() }; return false; }
+  if (!cwd) { _themedCache = { cwd: cacheKey, result: false, ts: Date.now() }; return false; }
   try {
     // Project-local settings (overrides global)
     const proj = readJsonSafe(join(cwd, ".pi", "settings.json"));
@@ -55,7 +56,7 @@ function isThemed(cwd?: string): boolean {
     // Project overrides global, default false
     result = (projCdev?.["themed"] ?? globalCdev?.["themed"]) === true;
   } catch { /* result stays false */ }
-  _themedCache = { cwd: cwd ?? "", result, ts: Date.now() };
+  _themedCache = { cwd: cacheKey, result, ts: Date.now() };
   return result;
 }
 

@@ -6,7 +6,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, appendFileSync, readdirSync, unlinkSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AutoForkDetails, ForkResult } from "./types.js";
 import { getFinalAssistantText } from "./runner-events.js";
