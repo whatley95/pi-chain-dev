@@ -1,0 +1,26 @@
+{
+  "id": "2026-06-21T15-11-30-513Z",
+  "task": "hello",
+  "isReview": false,
+  "startedAt": "2026-06-21T15:11:30.513Z",
+  "finishedAt": "2026-06-21T15:11:48.378Z",
+  "durationMs": 17865,
+  "stage1": {
+    "model": "opencode-go:deepseek-v4-flash",
+    "exitCode": 0,
+    "inputTokens": 69890,
+    "outputTokens": 170,
+    "cost": 0.009832200000000001,
+    "summary": ""
+  },
+  "stage2": {
+    "model": "opencode-go:deepseek-v4-flash",
+    "exitCode": 0,
+    "inputTokens": 4659,
+    "outputTokens": 385,
+    "cost": 0.0009435608,
+    "summary": ""
+  },
+  "status": "success",
+  "resultPreview": "## Result\n\n- **Status**: pass\n- **Test passed**: Fuzzy-match-then-task chain verified end-to-end\n- No issues, no findings — this was a smoke test to confirm `/cdev <unrecognised>` correctly offers sug"
+}

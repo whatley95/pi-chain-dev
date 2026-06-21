@@ -117,7 +117,7 @@ function extractFilePaths(text: string, cwd: string): string[] {
 }
 
 function extractTopicFromTask(task: string, filePaths: string[]): string | null {
-  // Strategy 1: find dominant directory from file paths (if >30% of files share it)
+  // Strategy 1: find dominant directory from file paths (requires ≥3 files, >30% share)
   if (filePaths.length > 0) {
     const dirCounts = new Map<string, number>();
     for (const fp of filePaths) {
@@ -136,8 +136,10 @@ function extractTopicFromTask(task: string, filePaths: string[]): string | null 
     for (const [dir, count] of dirCounts) {
       if (count > bestCount) { bestDir = dir; bestCount = count; }
     }
-    // Use directory only if it accounts for >30% of paths
-    if (bestDir && bestCount / filePaths.length > 0.3) return bestDir;
+    // Use directory only if we have ≥3 files and it accounts for >30% of paths
+    if (filePaths.length >= 3 && bestDir && bestCount / filePaths.length > 0.3) return bestDir;
+
+    // If 1-2 files, skip Strategy 1 entirely — fall through to Strategy 2
   }
 
   // Strategy 2: extract from task text — first noun after common verbs

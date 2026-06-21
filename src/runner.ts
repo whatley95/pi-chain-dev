@@ -214,6 +214,11 @@ ${filesSection}
 }
 
 function buildDiffReviewPrompt(diffSpec: string, diffContent: string): string {
+  const maxLen = 40000;
+  const truncated = diffContent.length > maxLen
+    ? diffContent.slice(0, maxLen) + `\n\n... (diff truncated for review — ${diffContent.length - maxLen} more chars)`
+    : diffContent;
+
   return `Review the following code diff thoroughly. Find bugs, edge cases, missing error handling, security concerns, and gaps.
 
 Diff: ${diffSpec}
@@ -247,7 +252,7 @@ Improvements that aren't bugs: refactors, tests, patterns.
 ---
 
 <diff>
-${diffContent}
+${truncated}
 </diff>`;
 }
 
@@ -616,25 +621,17 @@ export async function runFileReview(opts: {
 
   let result: ForkResult;
   try {
-    // File review doesn't need session context — it's reviewing a standalone artifact
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-chain-dev-"));
-    const sessionPath = path.join(tmpDir, "session.jsonl");
-    fs.writeFileSync(sessionPath, JSON.stringify({}) + "\n", "utf-8");
-    try {
-      result = await runStage({
-        cwd,
-        task: reviewTask,
-        stageLabel: "review",
-        forkSessionJsonl: JSON.stringify({}) + "\n",
-        stageProfile,
-        extensions,
-        environment,
-        offline,
-        signal,
-      });
-    } finally {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ }
-    }
+    result = await runStage({
+      cwd,
+      task: reviewTask,
+      stageLabel: "review",
+      forkSessionJsonl: JSON.stringify({}) + "\n",
+      stageProfile,
+      extensions,
+      environment,
+      offline,
+      signal,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     result = emptyFailedResult(filePath, `File review failed: ${message}`);
@@ -667,22 +664,17 @@ export async function runDiffReview(opts: {
 
   let result: ForkResult;
   try {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-chain-dev-"));
-    try {
-      result = await runStage({
-        cwd,
-        task: reviewTask,
-        stageLabel: "review",
-        forkSessionJsonl: JSON.stringify({}) + "\n",
-        stageProfile,
-        extensions,
-        environment,
-        offline,
-        signal,
-      });
-    } finally {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ }
-    }
+    result = await runStage({
+      cwd,
+      task: reviewTask,
+      stageLabel: "review",
+      forkSessionJsonl: JSON.stringify({}) + "\n",
+      stageProfile,
+      extensions,
+      environment,
+      offline,
+      signal,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     result = emptyFailedResult(diffSpec, `Diff review failed: ${message}`);

@@ -15,7 +15,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { EFFORT_LEVELS, loadConfig, type AutoForkConfig } from "./config.js";
 import { runAutoFork, runCdevReview, runFileReview, runDiffReview } from "./runner.js";
 import { getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
@@ -89,7 +89,7 @@ function buildSessionSnapshotJsonl(
 
 function resolveStageProfiles(
   config: AutoForkConfig,
-  requestedEffort?: string,
+  _requestedEffort?: string,
 ): { stage1: StageProfile; stage2: StageProfile; warning?: string } {
   // Use configured stage1/stage2 directly
   const stage1 = config.stage1;
@@ -221,6 +221,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async (_event, ctx) => {
     ctx.ui.setStatus(FORK_COST_STATUS_KEY, undefined);
     ctx.ui.setStatus("cdev-memory", undefined);
+    ctx.ui.setWidget("cdev-progress", undefined);
   });
 
   // ── Combined cdev status ──────────────────────────────
@@ -384,7 +385,11 @@ export default function (pi: ExtensionAPI) {
             reviewText.includes("❌ missing") ||
             reviewText.includes("⚠️ partial") ||
             reviewText.includes("## Bugs Found") ||
-            reviewText.includes("## Gaps")
+            reviewText.includes("## Gaps") ||
+            reviewText.includes("needs-work") ||
+            reviewText.includes("## Issues Found") ||
+            reviewText.includes("# Issues") ||
+            isError
           );
           const actionNote = hasIssues
             ? `\n\n---\n⚠️  Review found issues. Read the updated report at ${params.reviewFile}\nand address the new Action Items in the ## Review section.\nCheck them off in the report file when done.`
@@ -401,13 +406,17 @@ export default function (pi: ExtensionAPI) {
         if (typeof params.diffSpec === "string" && params.diffSpec.trim()) {
           const diffSpec = params.diffSpec.trim();
 
-          // Run git diff or svn diff
+          // Run git diff or svn diff (spawnSync, no shell)
           let diffContent: string;
           try {
-            try {
-              diffContent = execSync(`git diff ${diffSpec}`, { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
-            } catch {
-              diffContent = execSync(`svn diff -r ${diffSpec}`, { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
+            const gitResult = spawnSync("git", ["diff", diffSpec], { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
+            if (gitResult.error || gitResult.status !== 0) {
+              // Try SVN
+              const svnResult = spawnSync("svn", ["diff", "-r", diffSpec], { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
+              if (svnResult.error) throw svnResult.error;
+              diffContent = svnResult.stdout || "";
+            } else {
+              diffContent = gitResult.stdout || "";
             }
             if (!diffContent.trim()) {
               return {
@@ -967,8 +976,10 @@ REVIEW_PROMPT:
         }
         if (reviewFileMatch) {
           const arg = reviewFileMatch[1].trim();
-          // Detect diff spec: contains '..' (git) or matches SVN revision pattern
+          // Detect diff spec: contains '..' (git) or 'rN:M' (SVN)
           const isDiff = arg.includes("..") || /^r\d+[:\-]\d+$/.test(arg);
+          // Detect file path: contains / \ or a file extension
+          const looksLikePath = /[\\\/]/.test(arg) || /\.[a-z]{2,6}$/i.test(arg);
           if (isDiff) {
             // Diff review
             ctx.ui.notify(`Reviewing diff ${arg}…`, "info");
@@ -976,7 +987,7 @@ REVIEW_PROMPT:
               triggerTurn: true,
               deliverAs: "steer",
             });
-          } else {
+          } else if (looksLikePath) {
             // File review
             const fullPath = join(ctx.cwd, arg);
             if (!existsSync(fullPath)) {
@@ -985,6 +996,13 @@ REVIEW_PROMPT:
             }
             ctx.ui.notify(`Reviewing ${arg}…`, "info");
             pi.sendUserMessage(`Review the file ${arg} using cdev with review=true and reviewFile="${arg}".`, {
+              triggerTurn: true,
+              deliverAs: "steer",
+            });
+          } else {
+            // Plain text — treat as session review with a custom task hint
+            ctx.ui.notify(`Queuing code review…`, "info");
+            pi.sendUserMessage(`Run a code review using the cdev tool with review=true. Focus on: ${arg}`, {
               triggerTurn: true,
               deliverAs: "steer",
             });
@@ -1055,11 +1073,82 @@ REVIEW_PROMPT:
         return;
       }
 
-      // ── Default: task mode ──
-      if (!trimmed) {
-        ctx.ui.notify("Usage: /cdev <task>  |  /cdev quick <task>  |  /cdev review  |  /cdev scan [deep]  |  /cdev history [n]  |  /cdev recall [topic]  |  /cdev [memory] clear  |  /cdev memory forget <topic>  |  /cdev status  |  /cdev auto|prompts [on|off]", "warn");
+      // ── Help ──
+      if (trimmed === "help" || trimmed === "?" || trimmed === "h") {
+        await ctx.ui.select("cdev subcommands:", [
+          "/cdev <task>           Scout + Forge explore",
+          "/cdev quick <task>     Scout only (fast)",
+          "/cdev review [path]    Forge review session/file",
+          "/cdev review A..B      Review git/svn diff",
+          "/cdev scan [deep]      Generate custom prompts",
+          "/cdev history [n]      Past session details",
+          "/cdev recall [topic]   Check project memory",
+          "/cdev status           Config overview",
+          "/cdev memory on|off    Toggle project memory",
+          "/cdev prompts on|off   Toggle custom prompts",
+          "/cdev auto on|off      Toggle auto-trigger",
+        ]);
         return;
       }
+
+      // ── Default: task mode ──
+      if (!trimmed) {
+        await ctx.ui.select("cdev — Model-chained development fork", [
+          "Usage: /cdev <task>",
+          "",
+          "Scout (cheap) explores → Forge (powerful) writes",
+          "",
+          "Subcommands:",
+          "  quick <task>     Scout only (fast findings)",
+          "  review [path]    Forge review session, file, or diff",
+          "  scan [deep]      Generate custom prompts",
+          "  history [n]      Past fork sessions",
+          "  recall [topic]   Check project memory",
+          "  status           Full config overview",
+          "  memory on|off    Toggle memory",
+          "  prompts on|off   Toggle custom prompts",
+          "  auto on|off      Toggle auto-trigger",
+          "",
+          "More: /cdev-help  /cdev-model",
+        ]);
+        return;
+      }
+
+      // ── Fuzzy match: suggest if close to a subcommand (single-word only) ──
+      const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "help", "clear"];
+      const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
+      const isSingleWord = !trimmed.includes(" ");
+      const fuzzy = subcommands.find(cmd => {
+        if (cmd === firstWord) return false;
+        // Prefix match (e.g. "hist" → "history", "sta" → "status")
+        if (cmd.startsWith(firstWord) || firstWord.startsWith(cmd)) return true;
+        // 1-char typo check
+        if (firstWord.length >= 3 && cmd.length >= 3) {
+          let diffs = 0;
+          const shorter = firstWord.length < cmd.length ? firstWord : cmd;
+          for (let i = 0; i < shorter.length; i++) {
+            if (firstWord[i] !== cmd[i]) diffs++;
+          }
+          if (diffs <= 1) return true;
+        }
+        return false;
+      });
+      if (fuzzy && isSingleWord) {
+        const choice = await ctx.ui.select(
+          `Unknown: /cdev ${firstWord}`,
+          [
+            `→ /cdev ${fuzzy}        (suggested)`,
+            `Run as task: /cdev ${firstWord}`,
+          ]
+        );
+        if (!choice) return;
+        if (choice.startsWith("→")) {
+          return; // acknowledged; user will type the correct command next time
+        }
+        // User chose "Run as task" — fall through to task queue
+      }
+
+      // Not a subcommand → treat as task
       ctx.ui.notify("Queuing cdev task...", "info");
       pi.sendUserMessage(`Use cdev to: ${trimmed}`, {
         triggerTurn: true,
@@ -1128,6 +1217,30 @@ REVIEW_PROMPT:
         logError(ctx.cwd, "cdev-model", err);
         ctx.ui.notify(`Error: ${err instanceof Error ? err.message : String(err)}`, "error");
       }
+    },
+  });
+
+  // ── Register /cdev-help command ──────────────────────────
+  pi.registerCommand("cdev-help", {
+    description: "Show cdev subcommands",
+    handler: async (_args, ctx) => {
+      await ctx.ui.select("cdev subcommands:", [
+        "──────────────────────────────────────",
+        "/cdev <task>           Scout + Forge explore",
+        "/cdev quick <task>     Scout only (fast)",
+        "/cdev review [path]    Forge review session/file",
+        "/cdev review A..B      Review git/svn diff",
+        "/cdev scan [deep]      Generate custom prompts",
+        "/cdev history [n]      Past session details",
+        "/cdev recall [topic]   Check project memory",
+        "/cdev status           Config overview",
+        "/cdev memory on|off    Toggle project memory",
+        "/cdev prompts on|off   Toggle custom prompts",
+        "/cdev auto on|off      Toggle auto-trigger",
+        "──────────────────────────────────────",
+        "/cdev-model            Pick scout/forge models",
+        "/cdev-help             This help",
+      ]);
     },
   });
 }
