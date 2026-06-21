@@ -1267,7 +1267,7 @@ REVIEW_PROMPT:
           `  Scout:  ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`,
           `  Forge:  ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`,
           `  Review: ${config.review ? `${config.review.provider}:${config.review.id}  •  ${config.review.thinking}` : `↳ Forge (${config.stage2.id})`}`,
-          `  Auto-trigger:     ${config.auto ? "⚡ ON" : "OFF"}`,
+          `  Auto-trigger:     ${config.auto ? "⚡ ON (sends steer every 3 turns to prompt cdev use)" : "OFF (agent uses cdev only when asked or it decides)"}`,
           `  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`,
           `  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`,
           `  Project memory:   ${config.memory ? "ON" : "OFF"}`,
