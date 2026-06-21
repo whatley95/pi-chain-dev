@@ -12,7 +12,7 @@
  *   /cdev clear            — alias for memory clear
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import type { CdevMemory, CdevTopic, CdevFindingRecord } from "./types.js";
@@ -45,14 +45,21 @@ export function loadMemory(cwd: string): CdevMemory {
 function saveMemory(cwd: string, memory: CdevMemory): void {
   ensureDir(cwd);
   const path = getMemoryPath(cwd);
-  const tmpPath = path + ".tmp";
-  try {
-    // Atomic write: write to temp file, then rename to avoid concurrent-write corruption
-    writeFileSync(tmpPath, JSON.stringify(memory, null, 2) + "\n", "utf-8");
-    renameSync(tmpPath, path);
-  } catch {
-    // fail silently — don't let disk error nuke fork output
-    try { unlinkSync(tmpPath); } catch { /* ignore */ }
+  const content = JSON.stringify(memory, null, 2) + "\n";
+  // Atomic write via temp + rename; fall back to direct write on Windows
+  // (renameSync can fail on Win32 when target has open handles)
+  if (process.platform === "win32") {
+    try { writeFileSync(path, content, "utf-8"); } catch { /* ignore */ }
+  } else {
+    const tmpPath = path + ".tmp";
+    try {
+      writeFileSync(tmpPath, content, "utf-8");
+      renameSync(tmpPath, path);
+    } catch {
+      // Rename failed — fall back to direct write so we don't lose data
+      try { writeFileSync(path, content, "utf-8"); } catch { /* ignore */ }
+      try { unlinkSync(tmpPath); } catch { /* ignore */ }
+    }
   }
 }
 
@@ -74,8 +81,10 @@ export function extractFilePaths(text: string, cwd: string): string[] {
     /(?:^|\s|[`'"([{<])(\.{0,2}[/\\])?([\w@.\-]+(?:[/\\][\w@.\-]+)+(?:\.\w{1,8}))(?:[:"',)}\]>\s]|$)/gm,
     // Paths after common markers: "in file X", "at path X", "the file X"
     /(?:file|path|module|package|class)\s+[`'"]?(\.{0,2}[/\\])?([\w@.\-]+(?:[/\\][\w@.\-]+)+(?:\.\w{1,8}))[`'"]?/gi,
-    // Backtick-enclosed paths (common in markdown): `src/foo/bar.ts`
+    // Backtick-enclosed paths with directory: `src/foo/bar.ts`
     /`(\.{0,2}[/\\])?([\w@.\-]+(?:[/\\][\w@.\-]+)+(?:\.\w{1,8}))`/g,
+    // Backtick-enclosed bare filenames with extension: `config.ts`
+    /`([\w@.\-]+\.\w{1,8})`/g,
     // JSON-like paths: "path/to/file.ts"
     /"([\w@.\-]+(?:[/\\][\w@.\-]+)+(?:\.\w{1,8}))"/g,
   ];
@@ -158,7 +167,8 @@ export function extractTopicFromTask(task: string, filePaths: string[]): string 
     if (idx >= 0) {
       const after = task.slice(idx + verb.length).trim();
       // Try to capture multi-word noun phrase (auth flow, payment gateway, etc.)
-      const phraseMatch = after.match(/^([\w-]+(?:\s+[\w-]+)?)/);
+      // Skip leading articles (the, a, an)
+      const phraseMatch = after.match(/^(?:the |a |an )?([\w-]+(?:\s+[\w-]+)?)/);
       if (phraseMatch && phraseMatch[1].length > 1) {
         return phraseMatch[1].toLowerCase().replace(/\s+/g, "-");
       }
@@ -252,6 +262,7 @@ export function indexFindings(input: IndexFindingsInput): string | null {
   }
 
   saveMemory(cwd, memory);
+  _topicCountCache = null;
   return topic;
 }
 
@@ -426,6 +437,7 @@ function formatTimeAgo(ts: number): string {
 
 export function memoryClear(cwd: string): void {
   saveMemory(cwd, { version: 1, topics: {} });
+  _topicCountCache = null;
 }
 
 export function memoryForget(cwd: string, topic: string): boolean {
@@ -433,6 +445,7 @@ export function memoryForget(cwd: string, topic: string): boolean {
   if (!memory.topics[topic]) return false;
   delete memory.topics[topic];
   saveMemory(cwd, memory);
+  _topicCountCache = null;
   return true;
 }
 
@@ -446,9 +459,29 @@ export function memoryGetTopics(cwd: string): CdevTopic[] {
   return Object.values(memory.topics).sort((a, b) => b.lastSeen - a.lastSeen);
 }
 
+/** In-memory cache for topic count (invalidated on write). */
+let _topicCountCache: { cwd: string; count: number; mtime: number } | null = null;
+
 export function memoryTopicCount(cwd: string): number {
+  const memoryPath = getMemoryPath(cwd);
+  // Use file mtime to detect changes; skip re-parse if unchanged
+  if (_topicCountCache && _topicCountCache.cwd === cwd) {
+    try {
+      if (existsSync(memoryPath)) {
+        const mtime = statSync(memoryPath).mtimeMs;
+        if (mtime === _topicCountCache.mtime) return _topicCountCache.count;
+      } else if (_topicCountCache.count === 0) {
+        return 0;
+      }
+    } catch { /* fall through to reload */ }
+  }
   const memory = loadMemory(cwd);
-  return Object.keys(memory.topics).length;
+  const count = Object.keys(memory.topics).length;
+  try {
+    const mtime = existsSync(memoryPath) ? statSync(memoryPath).mtimeMs : 0;
+    _topicCountCache = { cwd, count, mtime };
+  } catch { /* ignore */ }
+  return count;
 }
 
 // ── Error log helpers ─────────────────────────────────────

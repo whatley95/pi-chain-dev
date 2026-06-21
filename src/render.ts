@@ -34,8 +34,17 @@ function readJsonSafe(p: string): Record<string, unknown> | null {
   } catch { return null; }
 }
 
+/** TTL cache for isThemed() to avoid disk reads on every render call. */
+let _themedCache: { cwd: string; result: boolean; ts: number } | null = null;
+const THEMED_CACHE_TTL_MS = 5000; // 5 seconds
+
 function isThemed(cwd?: string): boolean {
-  if (!cwd) return false;
+  // Use cached result if within TTL
+  if (_themedCache && _themedCache.cwd === cwd && Date.now() - _themedCache.ts < THEMED_CACHE_TTL_MS) {
+    return _themedCache.result;
+  }
+  let result = false;
+  if (!cwd) { _themedCache = { cwd: cwd ?? "", result: false, ts: Date.now() }; return false; }
   try {
     // Project-local settings (overrides global)
     const proj = readJsonSafe(join(cwd, ".pi", "settings.json"));
@@ -44,10 +53,10 @@ function isThemed(cwd?: string): boolean {
     const global = readJsonSafe(join(getAgentDir(), "settings.json"));
     const globalCdev = global?.["pi-chain-dev"] as Record<string, unknown> | undefined;
     // Project overrides global, default false
-    return (projCdev?.["themed"] ?? globalCdev?.["themed"]) === true;
-  } catch {
-    return false;
-  }
+    result = (projCdev?.["themed"] ?? globalCdev?.["themed"]) === true;
+  } catch { /* result stays false */ }
+  _themedCache = { cwd: cwd ?? "", result, ts: Date.now() };
+  return result;
 }
 
 /** Wrap text in theme background if themed mode is on. Falls back to ANSI if token missing. */

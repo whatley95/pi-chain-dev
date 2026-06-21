@@ -10,6 +10,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { buildChildEnv } from "./env.js";
+import { extractFilePaths } from "./memory.js";
 import { parseInheritedCliArgs } from "./runner-cli.js";
 import { processPiJsonLine, getForkProgressText, getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
 import type { StageProfile, ForkResult, UsageStats, AutoForkDetails } from "./types.js";
@@ -34,7 +35,55 @@ function writeTempSessionJsonl(sessionJsonl: string): { dir: string; filePath: s
 }
 
 /**
+ * Redact sensitive content (API keys, tokens) from strings before
+ * forwarding them to child processes that may use different AI providers.
+ */
+function redactSensitiveContent(text: string): string {
+  if (!text) return text;
+  let redacted = text;
+  // OpenAI / Anthropic common patterns (sk-..., sk-ant-..., etc.)
+  redacted = redacted.replace(/\b(sk-[a-zA-Z0-9_\-]{20,})\b/g, "[REDACTED_API_KEY]");
+  // Generic hex key patterns (40+ chars)
+  redacted = redacted.replace(/\b([a-f0-9]{40,})\b/gi, "[REDACTED_HEX_KEY]");
+  // Base64-looking API keys
+  redacted = redacted.replace(/\b([A-Za-z0-9+/]{40,}={0,2})\b/g, "[REDACTED_B64_KEY]");
+  // --api-key value patterns
+  redacted = redacted.replace(/(--api-key\s+)\S+/gi, "$1[REDACTED]");
+  return redacted;
+}
+
+/**
+ * Recursively redact sensitive fields from a message object tree.
+ */
+function redactMessageSensitive(msg: Record<string, unknown>): Record<string, unknown> {
+  if (!msg || typeof msg !== "object") return msg;
+  const result: Record<string, unknown> = { ...msg };
+  for (const key of Object.keys(result)) {
+    const val = result[key];
+    if (typeof val === "string") {
+      result[key] = redactSensitiveContent(val);
+    } else if (Array.isArray(val)) {
+      result[key] = val.map((item: unknown) =>
+        item && typeof item === "object" && !Array.isArray(item)
+          ? redactMessageSensitive(item as Record<string, unknown>)
+          : item
+      );
+    } else if (val && typeof val === "object" && !Array.isArray(val)) {
+      result[key] = redactMessageSensitive(val as Record<string, unknown>);
+    }
+  }
+  return result;
+}
+
+/**
  * Sanitize a session JSONL snapshot before passing it to a child pi process.
+ *
+ * 1. Redacts API keys and other sensitive content from ALL message payloads
+ * 2. Strips orphaned tool-result messages (matching assistant tool_calls removed)
+ * 3. Removes system messages that may contain provider-specific configuration
+ *
+ * Redaction runs unconditionally on every message — regardless of whether
+ * stripping occurs. This prevents API key leaks even in clean sessions.
  *
  * Strips orphaned tool-result messages whose preceding assistant message
  * (with matching tool_calls) was removed — e.g. by context truncation or
@@ -73,9 +122,24 @@ function sanitizeSessionJsonl(sessionJsonl: string): { jsonl: string; stripped: 
     }
   }
 
-  // Collect valid tool_call_ids from all assistant messages
+  // ── Pass 1: Always redact sensitive content from ALL message payloads ──
+  const redacted = parsed.map((entry) => {
+    if (!entry.msg) return entry; // Non-message entries pass through
+    const redactedMsg = redactMessageSensitive(entry.msg);
+    // Preserve message envelope if one existed
+    if (entry.raw !== JSON.stringify(entry.msg)) {
+      try {
+        const env = JSON.parse(entry.raw);
+        env.message = redactedMsg;
+        return { raw: JSON.stringify(env), msg: redactedMsg };
+      } catch { return { raw: entry.raw, msg: entry.msg }; }
+    }
+    return { raw: JSON.stringify(redactedMsg), msg: redactedMsg };
+  });
+
+  // ── Pass 2: Collect valid tool_call_ids from all assistant messages ──
   const validIds = new Set<string>();
-  for (const entry of parsed) {
+  for (const entry of redacted) {
     const msg = entry.msg;
     if (!msg) continue;
     if (msg.role !== "assistant") continue;
@@ -102,12 +166,17 @@ function sanitizeSessionJsonl(sessionJsonl: string): { jsonl: string; stripped: 
     }
   }
 
-  // No assistant messages with tool_calls at all → no orphan risk, return as-is
-  if (validIds.size === 0) return { jsonl: sessionJsonl, stripped: 0 };
+  // ── Pass 3: Strip system messages ──
+  let systemStripped = 0;
+  const noSystem = redacted.filter((entry) => {
+    const msg = entry.msg;
+    if (msg && msg.role === "system") { systemStripped++; return false; }
+    return true;
+  });
 
-  // Filter out orphaned tool messages (tool result without matching assistant tool_calls)
-  let stripped = 0;
-  const sanitized = parsed.filter((entry) => {
+  // ── Pass 4: Filter out orphaned tool messages ──
+  let orphanStripped = 0;
+  const sanitized = noSystem.filter((entry) => {
     const msg = entry.msg;
     if (!msg) return true; // Non-message entries always pass through
     if (msg.role !== "tool") return true; // Non-tool messages always pass through
@@ -117,13 +186,16 @@ function sanitizeSessionJsonl(sessionJsonl: string): { jsonl: string; stripped: 
     if (typeof toolCallId !== "string") return true; // No id to validate, keep it
 
     if (validIds.has(toolCallId)) return true;
-    stripped++;
+    orphanStripped++;
     return false;
   });
 
-  if (stripped === 0) return { jsonl: sessionJsonl, stripped: 0 };
+  const totalStripped = systemStripped + orphanStripped;
 
-  return { jsonl: sanitized.map((e) => e.raw).join("\n") + "\n", stripped };
+  return {
+    jsonl: sanitized.map((e) => e.raw).join("\n") + "\n",
+    stripped: totalStripped,
+  };
 }
 
 function cleanupTempDir(dir: string | null): void {
@@ -370,10 +442,18 @@ function buildPiArgs(
     args.push("--no-extensions");
   }
 
-  if (inheritedCliArgs.fallbackModel && inheritedCliArgs.fallbackModel !== stageProfile.id) {
-    // Skip — stage profile overrides fallback
-  } else if (inheritedCliArgs.fallbackModel && !stageProfile.id) {
+  // Inherited fallback — only used if stage profile doesn't provide its own
+  if (inheritedCliArgs.fallbackModel && !stageProfile.id) {
     args.push("--model", inheritedCliArgs.fallbackModel);
+  }
+  if (inheritedCliArgs.fallbackThinking && !stageProfile.thinking) {
+    args.push("--thinking", inheritedCliArgs.fallbackThinking);
+  }
+  if (inheritedCliArgs.fallbackTools) {
+    args.push("--tools", inheritedCliArgs.fallbackTools);
+  }
+  if (inheritedCliArgs.fallbackNoTools) {
+    args.push("--no-tools");
   }
 
   // Stage profile overrides
@@ -629,7 +709,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     task,
     exitCode: stage2Result.exitCode > 0 ? stage2Result.exitCode : 0,
     messages: stage2Result.messages,
-    stderr: stage2Result.stderr,
+    stderr: [stage1Result.stderr, stage2Result.stderr].filter(Boolean).join("\n"),
     usage: combinedUsage,
     provider: stage2Result.provider || stage2Profile.provider,
     model: stage2Result.model || stage2Profile.id,
@@ -701,39 +781,25 @@ export async function runFileReview(opts: {
   const { cwd, filePath, fileContent, stageProfile,
           extensions = null, environment = {}, offline = true, signal } = opts;
 
-  // Extract file paths referenced in the report (Evidence section, backticks, etc.)
+  // Extract paths using shared extractor from memory.ts
+  const filePaths = extractFilePaths(fileContent, cwd);
   const referencedFiles: Record<string, string> = {};
   const MAX_REF_FILES = 15;
   const MAX_REF_BYTES = 100_000;
-  const pathPatterns = [
-    /\b([\w.\-\/]+\.[a-z]{2,6})\b/gi,           // file.ext
-    /`([^`]*\.[a-z]{2,6})`/gi,                       // `path/to/file.ts`
-    /(?:File|Path|file|path):\s*([\w.\-\/]+\.[a-z]{2,6})/gi,  // File: path/to/file.ts
-  ];
-  const seen = new Set<string>();
   let totalBytes = 0;
-  for (const pattern of pathPatterns) {
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(fileContent)) !== null) {
-      const candidate = match[1].replace(/^[.\/\\]+/, ""); // strip leading ./ or .\
-      if (candidate && !seen.has(candidate) && candidate.length < 200) {
-        seen.add(candidate);
-        if (Object.keys(referencedFiles).length >= MAX_REF_FILES) continue;
-        const fullPath = path.join(cwd, candidate);
-        if (fs.existsSync(fullPath)) {
-          try {
-            const content = fs.readFileSync(fullPath, "utf-8");
-            if (totalBytes + content.length > MAX_REF_BYTES) {
-              referencedFiles[candidate] = content.slice(0, MAX_REF_BYTES - totalBytes) + "\n\n... (truncated, file too large)";
-              totalBytes = MAX_REF_BYTES;
-            } else {
-              referencedFiles[candidate] = content;
-              totalBytes += content.length;
-            }
-          } catch { /* skip unreadable files */ }
-        }
+  for (const candidate of filePaths.slice(0, MAX_REF_FILES)) {
+    if (totalBytes >= MAX_REF_BYTES) break;
+    const fullPath = path.join(cwd, candidate);
+    try {
+      const content = fs.readFileSync(fullPath, "utf-8");
+      if (totalBytes + content.length > MAX_REF_BYTES) {
+        referencedFiles[candidate] = content.slice(0, MAX_REF_BYTES - totalBytes) + "\n\n... (truncated, file too large)";
+        totalBytes = MAX_REF_BYTES;
+      } else {
+        referencedFiles[candidate] = content;
+        totalBytes += content.length;
       }
-    }
+    } catch { /* skip unreadable files */ }
   }
 
   const reviewTask = buildFileReviewPrompt(filePath, fileContent, referencedFiles);

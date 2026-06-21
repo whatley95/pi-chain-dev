@@ -16,7 +16,7 @@ import { Type } from "@sinclair/typebox";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
 import { spawnSync } from "node:child_process";
-import { EFFORT_LEVELS, loadConfig, type AutoForkConfig } from "./config.js";
+import { loadConfig, type AutoForkConfig } from "./config.js";
 import { runAutoFork, runCdevReview, runFileReview, runDiffReview } from "./runner.js";
 import { getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
 import type { AutoForkDetails, ForkResult, StageProfile } from "./types.js";
@@ -51,12 +51,7 @@ const AutoForkParams = Type.Object({
     description:
       "If true, run review-only mode: skip scout (exploration) and go straight to forge (powerful model) for code review. Use for reviewing recent changes, finding bugs, or second opinions.",
   })),
-  effort: Type.Optional(Type.Unsafe<string>({
-    type: "string",
-    enum: [...EFFORT_LEVELS],
-    description:
-      "Optional reasoning depth. Affects which models are used for the two stages.",
-  })),
+
   quick: Type.Optional(Type.Boolean({
     description:
       "If true, run scout only (exploration) and return raw findings. Skip the forge (synthesis). Use for quick follow-up file tracing, grep-style lookups, or narrow questions.",
@@ -98,7 +93,6 @@ function buildSessionSnapshotJsonl(
 
 function resolveStageProfiles(
   config: AutoForkConfig,
-  _requestedEffort?: string,
 ): { stage1: StageProfile; stage2: StageProfile; warning?: string } {
   // Use configured stage1/stage2 directly
   const stage1 = config.stage1;
@@ -125,7 +119,8 @@ function formatResultContent(result: ForkResult, details: AutoForkDetails): stri
     const forgeInfo = details.stage2
       ? ` | Forge: ${details.stage2.model || "?"} (exit ${details.stage2.exitCode})`
       : "";
-    return `cdev failed: ${result.errorMessage}${scoutInfo}${forgeInfo}`;
+    const costInfo = (result.usage?.cost ?? 0) > 0 ? ` — cost: $${(result.usage?.cost ?? 0).toFixed(4)}` : "";
+    return `cdev failed: ${result.errorMessage}${scoutInfo}${forgeInfo}${costInfo}`;
   }
 
   const summary = finalText || getResultSummaryText(result);
@@ -298,10 +293,13 @@ export default function (pi: ExtensionAPI) {
     } catch { /* best effort */ }
   });
   // Auto-trigger counter: inject steer every 3 turns when enabled
+  let autoTurnCounter = 0;
   function updateAutoStatus(ctx: ExtensionContext): void {
     updateForkCostStatus(ctx);
   }
-  let autoTurnCounter = 0;
+  function resetAutoTurnCounter(): void {
+    autoTurnCounter = 0;
+  }
   pi.on("turn_start", async (_event, ctx) => {
     updateAutoStatus(ctx);
     const config = loadConfig(ctx.cwd);
@@ -674,7 +672,7 @@ export default function (pi: ExtensionAPI) {
           isError: true,
         };
       }
-      const profiles = resolveStageProfiles(config, params.effort);
+      const profiles = resolveStageProfiles(config);
 
       if (profiles.warning) {
         const result = emptyFailedResult(params.task, profiles.warning);
@@ -821,6 +819,7 @@ ${reportText}
         (settings["pi-chain-dev"] as Record<string, unknown>).auto = true;
         writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
         ctx.ui.notify("cdev auto mode ON — LLM will proactively use cdev for exploration", "info");
+        resetAutoTurnCounter();
         updateAutoStatus(ctx);
         return;
       }
@@ -837,6 +836,7 @@ ${reportText}
         (settings["pi-chain-dev"] as Record<string, unknown>).auto = false;
         writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
         ctx.ui.notify("cdev auto mode OFF", "info");
+        resetAutoTurnCounter();
         updateAutoStatus(ctx);
         return;
       }

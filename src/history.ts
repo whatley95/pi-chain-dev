@@ -108,8 +108,17 @@ export function saveSession(
   const filePath = join(dir, `${id}.json`);
   try {
     writeFileSync(filePath, JSON.stringify(record, null, 2) + "\n", "utf-8");
-  } catch {
-    // fail silently — don't let disk error nuke fork output
+  } catch (err) {
+    // Don't let disk error nuke fork output, but log to error trail
+    try {
+      const cdevDir = join(cwd, ".pi", "cdev");
+      mkdirSync(cdevDir, { recursive: true });
+      appendFileSync(join(cdevDir, "errors.jsonl"), JSON.stringify({
+        ts: new Date().toISOString(),
+        context: "saveSession",
+        message: err instanceof Error ? err.message : String(err),
+      }) + "\n", "utf-8");
+    } catch { /* can't even log — give up */ }
   }
   return record;
 }
