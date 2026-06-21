@@ -25,6 +25,8 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   costFooter: true,
   auto: false,
   promptsEnabled: true,
+  memory: true,
+  signature: undefined,
 };
 
 function isThinkingLevel(value: unknown): value is ForkThinkingLevel {
@@ -90,6 +92,8 @@ export function loadConfig(cwd: string): AutoForkConfig {
     },
     // Project-level override wins
     promptsEnabled: projectConfig.promptsEnabled ?? globalConfig.promptsEnabled ?? DEFAULT_CONFIG.promptsEnabled,
+    memory: projectConfig.memory ?? globalConfig.memory ?? DEFAULT_CONFIG.memory,
+    signature: projectConfig.signature ?? globalConfig.signature,
   };
 
   // If no stage profiles configured, try falling back to pi-fork effort profiles
@@ -132,6 +136,8 @@ function readNamespacedConfig(settingsPath: string): Partial<AutoForkConfig> {
     if (typeof config.costFooter === "boolean") parsed.costFooter = config.costFooter;
     if (typeof config.auto === "boolean") parsed.auto = config.auto;
     if (typeof config.promptsEnabled === "boolean") parsed.promptsEnabled = config.promptsEnabled;
+    if (typeof config.memory === "boolean") parsed.memory = config.memory;
+    if (typeof config.signature === "string") parsed.signature = config.signature;
 
     // Parse prompts
     if (config.prompts && typeof config.prompts === "object") {

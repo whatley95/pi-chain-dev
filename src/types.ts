@@ -1,5 +1,7 @@
 /** Type definitions for pi-chain-dev. */
 
+// ── Fork types ──
+
 export type ForkEffort = "fast" | "balanced" | "deep";
 export type ForkThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
@@ -39,6 +41,10 @@ export interface AutoForkConfig {
   auto: boolean;
   /** Whether custom prompts are active (toggle off to use generic). */
   promptsEnabled: boolean;
+  /** Whether project-level memory is enabled (cross-session findings). */
+  memory: boolean;
+  /** Custom signature shown in /cdev status (e.g. name, handle). */
+  signature?: string;
 }
 
 export interface UsageStats {
@@ -87,4 +93,41 @@ export function emptyFailedResult(task: string, message: string): ForkResult {
     stopReason: "error",
     errorMessage: message,
   };
+}
+
+// ── Project-level memory types ──
+
+export interface CdevMemory {
+  version: 1;
+  topics: Record<string, CdevTopic>;
+}
+
+export interface CdevTopic {
+  /** Topic key (e.g. "auth", "payment-gateway"). */
+  name: string;
+  /** All findings for this topic, newest first. */
+  findings: CdevFindingRecord[];
+  /** Total number of forks on this topic. */
+  forkCount: number;
+  /** Timestamp when this topic was first explored. */
+  firstSeen: number;
+  /** Timestamp of most recent fork. */
+  lastSeen: number;
+  /** All file paths ever referenced across findings. */
+  files: string[];
+}
+
+export interface CdevFindingRecord {
+  /** One-line finding text. */
+  text: string;
+  /** Timestamp when the fork ran. */
+  timestamp: number;
+  /** Which stage produced this finding. */
+  stage: "stage1" | "stage2" | "review";
+  /** Model chain used (e.g. "flash→pro" or "pro" for review). */
+  models: string;
+  /** Cost of the fork that produced this finding. */
+  cost: number;
+  /** SHA256 hashes of files that support this finding (path → hash). */
+  fileFingerprints?: Record<string, string>;
 }
