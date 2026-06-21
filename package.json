@@ -1,0 +1,35 @@
+{
+  "name": "pi-dev",
+  "version": "0.1.0",
+  "description": "Two-stage development fork for Pi coding agent. Exploration with cheap model, synthesis with powerful model.",
+  "type": "module",
+  "main": "src/index.ts",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "keywords": [
+    "pi",
+    "fork",
+    "dev",
+    "two-stage",
+    "delegation",
+    "pi-package"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": ">=0.75.0",
+    "@earendil-works/pi-coding-agent": ">=0.75.0",
+    "@sinclair/typebox": ">=0.34.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    }
+  }
+}

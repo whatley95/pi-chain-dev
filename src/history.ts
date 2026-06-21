@@ -1,0 +1,267 @@
+/**
+ * cdev session history — local telemetry, auto-purged after 7 days.
+ *
+ * Records stored in .pi/cdev/sessions/ as individual JSON files.
+ * Not committed to git (pi dirs are gitignored).
+ */
+
+import { existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync, mkdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import type { AutoForkDetails, ForkResult } from "./types.js";
+import { getFinalAssistantText } from "./runner-events.js";
+
+// ── Types ──────────────────────────────────────────────
+
+export interface SessionRecord {
+  /** Unique ID for this session (timestamp-based). */
+  id: string;
+  /** What the user asked / the task string. */
+  task: string;
+  /** Whether this was review-only mode. */
+  isReview: boolean;
+  /** ISO timestamp when it started. */
+  startedAt: string;
+  /** ISO timestamp when it finished. */
+  finishedAt: string;
+  /** Duration in ms. */
+  durationMs: number;
+  /** Stage 1 details (null for review mode). */
+  stage1: {
+    model: string;
+    exitCode: number;
+    inputTokens: number;
+    outputTokens: number;
+    cost: number;
+    summary: string;
+  } | null;
+  /** Stage 2 details. */
+  stage2: {
+    model: string;
+    exitCode: number;
+    inputTokens: number;
+    outputTokens: number;
+    cost: number;
+    summary: string;
+  };
+  /** Overall status. */
+  status: "success" | "failed";
+  /** First 200 chars of final output. */
+  resultPreview: string;
+}
+
+// ── Storage ────────────────────────────────────────────
+
+function getSessionsDir(cwd: string): string {
+  return join(cwd, ".pi", "cdev", "sessions");
+}
+
+export function saveSession(
+  cwd: string,
+  task: string,
+  isReview: boolean,
+  startedAt: number,
+  details: AutoForkDetails,
+  result: ForkResult,
+): SessionRecord {
+  const dir = getSessionsDir(cwd);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+  const now = Date.now();
+  const id = new Date(startedAt).toISOString().replace(/[:.]/g, "-");
+  
+  const record: SessionRecord = {
+    id,
+    task: task.slice(0, 500),
+    isReview,
+    startedAt: new Date(startedAt).toISOString(),
+    finishedAt: new Date(now).toISOString(),
+    durationMs: now - startedAt,
+    stage1: details.stage1
+      ? {
+          model: (details.stage1.provider && details.stage1.model)
+            ? `${details.stage1.provider}:${details.stage1.model}`
+            : details.stage1.model ?? "unknown",
+          exitCode: details.stage1.exitCode ?? -1,
+          inputTokens: details.stage1.usage?.input ?? 0,
+          outputTokens: details.stage1.usage?.output ?? 0,
+          cost: details.stage1.usage?.cost ?? 0,
+          summary: (details.stage1.errorMessage || details.stage1.stderr || "").slice(0, 200),
+        }
+      : null,
+    stage2: {
+      model: (details.stage2?.provider && details.stage2?.model)
+        ? `${details.stage2.provider}:${details.stage2.model}`
+        : details.stage2?.model ?? "unknown",
+      exitCode: details.stage2?.exitCode ?? -1,
+      inputTokens: details.stage2?.usage?.input ?? 0,
+      outputTokens: details.stage2?.usage?.output ?? 0,
+      cost: details.stage2?.usage?.cost ?? 0,
+      summary: (details.stage2?.errorMessage || details.stage2?.stderr || "").slice(0, 200),
+    },
+    status: result.exitCode === 0 ? "success" : "failed",
+    resultPreview: (getFinalAssistantText(result.messages) || "").slice(0, 200),
+  };
+
+  const filePath = join(dir, `${id}.json`);
+  writeFileSync(filePath, JSON.stringify(record, null, 2) + "\n", "utf-8");
+  return record;
+}
+
+// ── Load & List ────────────────────────────────────────
+
+export function listSessions(cwd: string): SessionRecord[] {
+  const dir = getSessionsDir(cwd);
+  if (!existsSync(dir)) return [];
+
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .sort()
+    .reverse(); // newest first
+
+  const records: SessionRecord[] = [];
+  for (const file of files) {
+    try {
+      const raw = JSON.parse(readFileSync(join(dir, file), "utf-8"));
+      records.push(raw as SessionRecord);
+    } catch {
+      // Skip corrupted files
+    }
+  }
+  return records;
+}
+
+export function getSession(cwd: string, index: number): SessionRecord | null {
+  const sessions = listSessions(cwd);
+  if (index < 1 || index > sessions.length) return null;
+  return sessions[index - 1]; // 1-indexed for user display
+}
+
+// ── Purge old sessions ─────────────────────────────────
+
+export function purgeOldSessions(cwd: string, maxAgeDays = 7): number {
+  const dir = getSessionsDir(cwd);
+  if (!existsSync(dir)) return 0;
+
+  const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  let purged = 0;
+
+  try {
+    const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+    for (const file of files) {
+      const filePath = join(dir, file);
+      try {
+        const mtime = statSync(filePath).mtimeMs;
+        if (mtime < cutoff) {
+          unlinkSync(filePath);
+          purged++;
+        }
+      } catch {
+        // Skip if can't delete
+      }
+    }
+  } catch {
+    // Directory may not exist
+  }
+
+  return purged;
+}
+
+// ── Formatting ─────────────────────────────────────────
+
+export function formatHistory(sessions: SessionRecord[]): string {
+  if (sessions.length === 0) return "No cdev sessions recorded yet.";
+
+  const lines: string[] = ["── cdev sessions ───────────────────────────────────────────"];
+  
+  let totalCost = 0;
+  for (let i = 0; i < sessions.length; i++) {
+    const s = sessions[i];
+    const date = new Date(s.startedAt).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const duration = (s.durationMs / 1000).toFixed(1) + "s";
+    const mode = s.isReview ? "review" : "full  ";
+    const status = s.status === "success" ? "✓" : "✗";
+    const s1Cost = s.stage1 ? `$${s.stage1.cost.toFixed(4)}` : "";
+    const s2Cost = `$${s.stage2.cost.toFixed(4)}`;
+    const combinedCost = s.stage1 ? s.stage1.cost + s.stage2.cost : s.stage2.cost;
+    totalCost += combinedCost;
+    const costStr = combinedCost > 0 ? ` $${combinedCost.toFixed(4)}`.padStart(9) : "";
+    const s1Model = s.stage1 ? s.stage1.model.split(":").pop()?.slice(0, 12) ?? "?" : "—";
+    const s2Model = s.stage2.model.split(":").pop()?.slice(0, 12) ?? "?";
+    const models = s.stage1 ? `${s1Model}→${s2Model}` : s2Model;
+    const task = s.task.length > 40 ? s.task.slice(0, 40) + "…" : s.task;
+
+    lines.push(
+      `  ${String(i + 1).padStart(2, " ")}. ${status} ${mode} ${date} ${duration.padStart(6)}${costStr} ${models.padEnd(22)} ${task}`,
+    );
+  }
+
+  lines.push("─────────────────────────────────────────────────────");
+  if (totalCost > 0) {
+    lines.push(`  Total cost: $${totalCost.toFixed(4)} across ${sessions.length} session${sessions.length > 1 ? "s" : ""}`);
+  }
+  lines.push(`  /cdev history <n> to see full report`);
+  lines.push(`  Sessions auto-purged after 7 days`);
+
+  return lines.join("\n");
+}
+
+export function formatSessionRecord(s: SessionRecord): string {
+  const lines: string[] = [
+    "── cdev session detail ──────────────────────────────",
+    "",
+    `  Task:       ${s.task}`,
+    `  Started:    ${new Date(s.startedAt).toLocaleString()}`,
+    `  Duration:   ${(s.durationMs / 1000).toFixed(1)}s`,
+    `  Mode:       ${s.isReview ? "review only" : "full (stage 1 → stage 2)"}`,
+    `  Status:     ${s.status === "success" ? "✅ success" : "❌ failed"}`,
+    "",
+  ];
+
+  if (s.stage1) {
+    lines.push(`  Stage 1 (explore):`, ``);
+    lines.push(`    Model:      ${s.stage1.model}`);
+    lines.push(`    Exit code:  ${s.stage1.exitCode}`);
+    if (s.stage1.inputTokens || s.stage1.outputTokens) {
+      lines.push(`    Tokens:     ${s.stage1.inputTokens} in / ${s.stage1.outputTokens} out`);
+    }
+    if (s.stage1.cost > 0) {
+      lines.push(`    Cost:       $${s.stage1.cost.toFixed(4)}`);
+    }
+    if (s.stage1.summary) lines.push(`    Summary:    ${s.stage1.summary}`);
+    lines.push("");
+  }
+
+  lines.push(`  Stage 2 (synthesize):`, ``);
+  lines.push(`    Model:      ${s.stage2.model}`);
+  lines.push(`    Exit code:  ${s.stage2.exitCode}`);
+  if (s.stage2.inputTokens || s.stage2.outputTokens) {
+    lines.push(`    Tokens:     ${s.stage2.inputTokens} in / ${s.stage2.outputTokens} out`);
+  }
+  if (s.stage2.cost > 0) {
+    lines.push(`    Cost:       $${s.stage2.cost.toFixed(4)}`);
+  }
+  if (s.stage2.summary && s.stage2.summary !== s.resultPreview) {
+    lines.push(`    Summary:    ${s.stage2.summary}`);
+  }
+
+  const totalCost = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
+  if (totalCost > 0) {
+    lines.push("");
+    lines.push(`  Total cost:  $${totalCost.toFixed(4)}`);
+  }
+  lines.push("");
+
+  if (s.resultPreview) {
+    lines.push(`  Result preview:`, ``);
+    lines.push(`    ${s.resultPreview.slice(0, 300)}`);
+    lines.push("");
+  }
+
+  lines.push("──────────────────────────────────────────────────────");
+  return lines.join("\n");
+}
