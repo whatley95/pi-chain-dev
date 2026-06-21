@@ -7,59 +7,27 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { join, relative } from "node:path";
-import { existsSync } from "node:fs";
+
+// ── memory.ts imports ──────────────────────────────────
+import { extractFilePaths, extractTopicFromTask } from "../src/memory.js";
+
+// ── env.ts imports ─────────────────────────────────────
+import { buildChildEnv } from "../src/env.js";
+
+// ── runner-events.js imports ───────────────────────────
+import { stableStringify } from "../src/runner-events.js";
+
+// ── types.ts imports ──────────────────────────────────
+import { emptyUsage, emptyFailedResult } from "../src/types.js";
 
 // ── memory.ts: extractFilePaths ───────────────────────────
-
-// We test the function by reimplementing the logic in isolation
-// since importing from .ts requires a compiled .js file.
-
-function extractFilePaths(text: string, cwd: string): string[] {
-  const patterns = [
-    /(?:^|\s|[`'"([{<])(\.{0,2}[/\\])?([\w@.\-]+(?:[/\\][\w@.\-]+)+(?:\.\w{1,8}))(?:[:"',)}\]>\s]|$)/gm,
-    /(?:file|path|module|package|class)\s+[`'"]?(\.{0,2}[/\\])?([\w@.\-]+(?:[/\\][\w@.\-]+)+(?:\.\w{1,8}))[`'"]?/gi,
-    /`(\.{0,2}[/\\])?([\w@.\-]+(?:[/\\][\w@.\-]+)+(?:\.\w{1,8}))`/g,
-    /"([\w@.\-]+(?:[/\\][\w@.\-]+)+(?:\.\w{1,8}))"/g,
-  ];
-
-  const paths: string[] = [];
-  const seen = new Set<string>();
-
-  for (const pattern of patterns) {
-    let match: RegExpExecArray | null;
-    pattern.lastIndex = 0;
-    while ((match = pattern.exec(text)) !== null) {
-      let raw: string;
-      if (match.length === 4) {
-        raw = (match[2] || "") + match[3];
-      } else if (match.length === 3) {
-        raw = (match[1] || "") + match[2];
-      } else {
-        raw = match[1];
-      }
-      if (!raw) continue;
-      raw = raw.replace(/\\/g, "/");
-      raw = raw.replace(/:\d+(?::\d+)?$/, "");
-      raw = raw.replace(/[,;.]+$/, "");
-      const resolved = join(cwd, raw);
-      if (!seen.has(resolved)) {
-        seen.add(resolved);
-        if (existsSync(resolved)) {
-          paths.push(relative(cwd, resolved).replace(/\\/g, "/"));
-        }
-      }
-    }
-  }
-  return [...new Set(paths)];
-}
 
 describe("extractFilePaths (memory.ts)", () => {
   it("extracts backtick-enclosed paths", () => {
     const text = "See `src/foo/bar.ts` for details.";
     const result = extractFilePaths(text, "/project");
-    // The resolved path would be checked against actual filesystem, which won't exist
-    // So we mainly verify the regex doesn't crash
+    // Resolved path won't exist on filesystem, so result is empty at runtime.
+    // But we verify the regex runs without throwing and returns an array.
     assert.ok(Array.isArray(result));
   });
 
@@ -67,6 +35,23 @@ describe("extractFilePaths (memory.ts)", () => {
     const text = "in file config.ts we found the issue.";
     const result = extractFilePaths(text, "/project");
     assert.ok(Array.isArray(result));
+  });
+
+  it("returns actual file paths for files that exist on disk", () => {
+    // Use files we know exist in the project (require at least one / in path)
+    const text = "See `src/types.ts` and `test/unit.test.ts` for details.";
+    const cwd = process.cwd();
+    const result = extractFilePaths(text, cwd);
+    // Both files exist, so they should be extracted
+    assert.ok(result.includes("src/types.ts"));
+    assert.ok(result.includes("test/unit.test.ts"));
+  });
+
+  it("extracts paths from double-quoted strings", () => {
+    const text = 'The config is at \"src/config.ts\" and types at \"src/types.ts\".';
+    const cwd = process.cwd();
+    const result = extractFilePaths(text, cwd);
+    assert.ok(result.includes("src/types.ts"));
   });
 
   it("handles empty text", () => {
@@ -84,49 +69,6 @@ describe("extractFilePaths (memory.ts)", () => {
 });
 
 // ── memory.ts: extractTopicFromTask ───────────────────────
-
-function extractTopicFromTask(task: string, filePaths: string[]): string | null {
-  // Strategy 1: dominant directory from file paths
-  if (filePaths.length > 0) {
-    const dirCounts = new Map<string, number>();
-    for (const fp of filePaths) {
-      const parts = fp.split("/");
-      let topDir = parts[0];
-      if (parts.length > 1 && /^(src|app|lib|pkg|internal|cmd|components|pages|utils?)$/.test(topDir)) {
-        topDir = parts[1];
-      }
-      if (topDir && topDir.length > 1 && !/^\./.test(topDir)) {
-        dirCounts.set(topDir, (dirCounts.get(topDir) ?? 0) + 1);
-      }
-    }
-    let bestDir = "";
-    let bestCount = 0;
-    for (const [dir, count] of dirCounts) {
-      if (count > bestCount) { bestDir = dir; bestCount = count; }
-    }
-    if (filePaths.length >= 3 && bestDir && bestCount / filePaths.length > 0.3) return bestDir;
-  }
-
-  // Strategy 2: first noun after common verbs
-  const taskVerbs = ["explore", "trace", "review", "check", "audit", "scan", "analyze", "investigate", "refactor", "fix", "debug", "test", "document", "migrate", "upgrade"];
-  const lower = task.toLowerCase();
-  for (const verb of taskVerbs) {
-    const idx = lower.indexOf(verb);
-    if (idx >= 0) {
-      const after = task.slice(idx + verb.length).trim();
-      const phraseMatch = after.match(/^([\w-]+(?:\s+[\w-]+)?)/);
-      if (phraseMatch && phraseMatch[1].length > 1) {
-        return phraseMatch[1].toLowerCase().replace(/\s+/g, "-");
-      }
-    }
-  }
-
-  // Strategy 3: first 2 words of task, skip articles
-  const words = task.split(/\s+/);
-  const filtered = words.filter(w => !/^(the|a|an|is|are|was|were|that|this|for|with|about|from|into)$/i.test(w));
-  const topic = filtered.slice(0, 2).join(" ").toLowerCase();
-  return topic.length > 2 ? topic.replace(/\s+/g, "-") : null;
-}
 
 describe("extractTopicFromTask (memory.ts)", () => {
   it("extracts topic from 'explore auth module'", () => {
@@ -167,49 +109,6 @@ describe("extractTopicFromTask (memory.ts)", () => {
 });
 
 // ── env.ts: buildChildEnv ─────────────────────────────────
-
-interface MockEnv {
-  [key: string]: string | undefined;
-}
-
-function buildChildEnv(
-  environment: Record<string, string>,
-  parentEnv: MockEnv,
-  platform: string,
-  offline: boolean,
-): MockEnv {
-  const env: MockEnv = {};
-  for (const [key, value] of Object.entries(parentEnv)) {
-    env[key] = value;
-  }
-  for (const [key, value] of Object.entries(environment)) {
-    if (platform === "win32") {
-      const normalizedKey = key.toLowerCase();
-      for (const existingKey of Object.keys(env)) {
-        if (existingKey.toLowerCase() === normalizedKey) delete env[existingKey];
-      }
-    }
-    env[key] = value;
-  }
-  if (offline) {
-    if (platform === "win32") {
-      const normalizedKey = "PI_OFFLINE".toLowerCase();
-      for (const existingKey of Object.keys(env)) {
-        if (existingKey.toLowerCase() === normalizedKey) delete env[existingKey];
-      }
-    }
-    env["PI_OFFLINE"] = "1";
-  } else {
-    if (platform === "win32") {
-      const normalizedKey = "PI_OFFLINE".toLowerCase();
-      for (const existingKey of Object.keys(env)) {
-        if (existingKey.toLowerCase() === normalizedKey) delete env[existingKey];
-      }
-    }
-    delete env["PI_OFFLINE"];
-  }
-  return env;
-}
 
 describe("buildChildEnv (env.ts)", () => {
   it("inherits parent environment", () => {
@@ -255,29 +154,11 @@ describe("buildChildEnv (env.ts)", () => {
 
 // ── runner-events.js: stableStringify ─────────────────────
 
-// Re-implement the fixed version for testing
-function stableStringify(value: unknown, seen?: WeakSet<object>): string {
-  const visited = seen ?? new WeakSet<object>();
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-
-  if (visited.has(value as object)) {
-    return '"<circular>"';
-  }
-  visited.add(value as object);
-
-  if (Array.isArray(value)) {
-    return `[${(value as unknown[]).map((item) => stableStringify(item, visited)).join(",")}]`;
-  }
-
-  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
-  return `{${entries
-    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue, visited)}`)
-    .join(",")}}`;
-}
-
 describe("stableStringify (runner-events.js)", () => {
+  it("stringifies undefined", () => {
+    assert.equal(stableStringify(undefined), "undefined");
+  });
+
   it("stringifies null", () => {
     assert.equal(stableStringify(null), "null");
   });
@@ -373,14 +254,13 @@ describe("Thinking level validation", () => {
 
 describe("emptyUsage()", () => {
   it("returns all zeros", () => {
-    const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 };
-    assert.deepEqual(usage, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 });
+    assert.deepEqual(emptyUsage(), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 });
   });
 });
 
 describe("emptyFailedResult()", () => {
   it("creates a failed result with the given message", () => {
-    const result = { task: "test", exitCode: 1, messages: [], stderr: "something went wrong", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 }, stopReason: "error", errorMessage: "something went wrong" };
+    const result = emptyFailedResult("test", "something went wrong");
     assert.equal(result.exitCode, 1);
     assert.equal(result.errorMessage, "something went wrong");
     assert.equal(result.stopReason, "error");

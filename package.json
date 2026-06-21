@@ -35,5 +35,8 @@
     "@earendil-works/pi-agent-core": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0"
   }
 }

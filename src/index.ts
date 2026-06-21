@@ -510,7 +510,7 @@ export default function (pi: ExtensionAPI) {
                 ? `git not available: ${gitResult.error.message}`
                 : `git exited ${gitResult.status}: ${(gitResult.stderr || "").trim().slice(0, 200)}`;
               const svnResult = spawnSync("svn", ["diff", "-r", diffSpec], { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
-              if (svnResult.error) {
+              if (svnResult.error || svnResult.status !== 0) {
                 const svnErrMsg = svnResult.error
                   ? `svn not available: ${svnResult.error.message}`
                   : `svn exited ${svnResult.status}: ${(svnResult.stderr || "").trim().slice(0, 200)}`;

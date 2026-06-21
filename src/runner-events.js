@@ -31,7 +31,8 @@ function getSeenForkToolResultSignatures(result) {
   return result.__seenForkToolResultSignatures;
 }
 
-function stableStringify(value, seen = new WeakSet()) {
+export function stableStringify(value, seen = new WeakSet()) {
+  if (value === undefined) return "undefined";
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
   }

@@ -481,7 +481,7 @@ async function runStage(opts: RunStageOptions): Promise<ForkResult> {
                 // SIGKILL is not valid on Windows — use taskkill instead
                 if (process.platform === "win32") {
                   try {
-                    spawn("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { stdio: "ignore" });
+                    spawn("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { stdio: "ignore" }).unref();
                   } catch { /* ignore */ }
                 } else {
                   try { proc.kill("SIGKILL"); } catch { /* ignore */ }

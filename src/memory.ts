@@ -67,7 +67,7 @@ function fileFingerprint(filePath: string): string | null {
   }
 }
 
-function extractFilePaths(text: string, cwd: string): string[] {
+export function extractFilePaths(text: string, cwd: string): string[] {
   // Multiple patterns to catch different path representations
   const patterns = [
     // Explicit paths: src/foo/bar.ts, app/models/user.rb
@@ -124,7 +124,7 @@ function extractFilePaths(text: string, cwd: string): string[] {
   return [...new Set(paths)];
 }
 
-function extractTopicFromTask(task: string, filePaths: string[]): string | null {
+export function extractTopicFromTask(task: string, filePaths: string[]): string | null {
   // Strategy 1: find dominant directory from file paths (requires ≥3 files, >30% share)
   if (filePaths.length > 0) {
     const dirCounts = new Map<string, number>();

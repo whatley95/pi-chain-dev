@@ -5,6 +5,7 @@
  * Not committed to git (pi dirs are gitignored).
  */
 
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AutoForkDetails, ForkResult } from "./types.js";
@@ -13,7 +14,7 @@ import { getFinalAssistantText } from "./runner-events.js";
 // ── Types ──────────────────────────────────────────────
 
 export interface SessionRecord {
-  /** Unique ID for this session (timestamp-based). */
+  /** Unique ID for this session (ISO timestamp + random hex suffix). */
   id: string;
   /** What the user asked / the task string. */
   task: string;
@@ -32,7 +33,7 @@ export interface SessionRecord {
     inputTokens: number;
     outputTokens: number;
     cost: number;
-    summary: string;
+    errorDetails: string;
   } | null;
   /** Stage 2 details (null for quick mode). */
   stage2: {
@@ -41,7 +42,7 @@ export interface SessionRecord {
     inputTokens: number;
     outputTokens: number;
     cost: number;
-    summary: string;
+    errorDetails: string;
   } | null;
   /** Overall status. */
   status: "success" | "failed";
@@ -67,7 +68,7 @@ export function saveSession(
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
   const now = Date.now();
-  const id = new Date(startedAt).toISOString().replace(/[:.]/g, "-") + "-" + Date.now().toString(36).slice(-4);
+  const id = new Date(startedAt).toISOString().replace(/[:.]/g, "-") + "-" + randomBytes(3).toString("hex");
   
   const record: SessionRecord = {
     id,
@@ -85,7 +86,7 @@ export function saveSession(
           inputTokens: details.stage1.usage?.input ?? 0,
           outputTokens: details.stage1.usage?.output ?? 0,
           cost: details.stage1.usage?.cost ?? 0,
-          summary: (details.stage1.errorMessage || details.stage1.stderr || "").slice(0, 200),
+          errorDetails: (details.stage1.errorMessage || details.stage1.stderr || "").slice(0, 200),
         }
       : null,
     stage2: details.stage2
@@ -97,7 +98,7 @@ export function saveSession(
           inputTokens: details.stage2.usage?.input ?? 0,
           outputTokens: details.stage2.usage?.output ?? 0,
           cost: details.stage2.usage?.cost ?? 0,
-          summary: (details.stage2.errorMessage || details.stage2.stderr || "").slice(0, 200),
+          errorDetails: (details.stage2.errorMessage || details.stage2.stderr || "").slice(0, 200),
         }
       : null,
     status: result.exitCode === 0 ? "success" : "failed",
@@ -238,7 +239,7 @@ export function formatSessionRecord(s: SessionRecord): string {
     if (s.stage1.cost > 0) {
       lines.push(`    Cost:       $${s.stage1.cost.toFixed(4)}`);
     }
-    if (s.stage1.summary) lines.push(`    Summary:    ${s.stage1.summary}`);
+    if (s.stage1.errorDetails) lines.push(`    Error:      ${s.stage1.errorDetails}`);
     lines.push("");
   }
 
@@ -252,8 +253,8 @@ export function formatSessionRecord(s: SessionRecord): string {
     if (s.stage2.cost > 0) {
       lines.push(`    Cost:       $${s.stage2.cost.toFixed(4)}`);
     }
-    if (s.stage2.summary && s.stage2.summary !== s.resultPreview) {
-      lines.push(`    Summary:    ${s.stage2.summary}`);
+    if (s.stage2.errorDetails && s.stage2.errorDetails !== s.resultPreview) {
+      lines.push(`    Error:      ${s.stage2.errorDetails}`);
     }
   }
 
