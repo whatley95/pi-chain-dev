@@ -1,23 +1,136 @@
 # pi-chain-dev
 
-Two-stage development fork for Pi coding agent — cheap model explores, powerful model synthesizes.
+> Extension for **pi** — the Pi coding agent CLI.
+
+Model-chained development — cheap model explores, powerful model synthesizes, memory remembers.
+
+## Use case
+
+> *Refactor the auth module to use middleware.*
+>
+> `cdev({ task: "explore auth module deps", recall: "auth" })`
+>
+> 🧠 memory hit — 3 previous forks already found JWT in middleware.ts, oauth.ts unused, rate‑limit bypass in login.ts. $0. No re‑exploration needed.
+>
+> With those findings, the LLM writes a plan, refactors the code, then:
+>
+> `cdev({ review: true })` — powerful model checks the diff, catches a broken import.
+>
+> Shipped in 2 turns. Total cost: $0.008.
+
+Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re‑discovers everything, misses the broken import. 8 turns. $0.035.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `/cdev <task>` | Full two-stage: cheap model gathers evidence, powerful model writes structured report |
-| `/cdev quick <task>` | Stage 1 only — cheap model returns raw findings, skip synthesis |
-| `/cdev review` | Stage 2 only — reviews recent code changes for bugs, edge cases, and improvements |
+| `/cdev quick <task>` | Scout only — cheap model returns raw findings, skip forge (synthesis) |
+| `/cdev review` | Forge only — reviews recent code changes for bugs, edge cases, and improvements |
 | `/cdev auto on` | Auto-trigger mode — LLM proactively uses `cdev` for exploration tasks |
 | `/cdev auto off` | Disable auto-trigger |
-| `/cdev-model` | Interactive model picker — choose stage1/stage2 models from configured providers |
+| `/cdev-model` | Interactive model picker — choose scout/forge models from configured providers |
 | `/cdev scan` | Instant template scan — detects stack from package.json, generates prompts (free, no LLM) |
-| `/cdev scan deep` | LLM-powered scan — reads actual codebase, writes truly custom prompts (uses stage 1 → stage 2) |
+| `/cdev scan deep` | LLM-powered scan — reads actual codebase, writes truly custom prompts (scout → forge) |
 | `/cdev prompts on` | Enable custom prompts (after scanning) |
 | `/cdev prompts off` | Disable custom prompts — use generic ones instead |
-| `/cdev history` | List recent cdev sessions (date, task, cost, status) |
+| `/cdev history` | List recent cdev sessions (date, task, cost, status, model chain) |
 | `/cdev history 3` | Show full detail for session #3 (models, tokens, cost) |
+| `/cdev status` | Show full config overview — models, auto, prompts, memory, errors, cost |
+| `/cdev info` | Alias for `/cdev status` |
+| `/cdev recall` | List all memory topics with fork counts, file counts, age |
+| `/cdev recall auth` | Show all findings for "auth" with freshness (✅ fresh / ⚠️ stale / ❓ unverified) |
+| `/cdev view` | Alias for `/cdev recall` |
+| `/cdev view auth` | Alias for `/cdev recall auth` |
+| `/cdev clear` | Wipe all project memory |
+| `/cdev memory clear` | Same as `/cdev clear` |
+| `/cdev memory forget auth` | Remove one topic from memory |
+| `/cdev memory on` | Enable project memory |
+| `/cdev memory off` | Disable project memory (stops indexing + recall) |
+| `/cdev clear error` | Wipe error log |
+
+### Agent tool
+
+The LLM can also call `cdev` via a registered tool — no typing commands:
+
+| Param | Type | What it does |
+|---|---|---|
+| `task` | string | Full two-stage fork |
+| `quick` | boolean | Scout only (raw findings, skip forge) |
+| `review` | boolean | Forge only (code review, skip scout) |
+| `recall` | string | Retrieve past findings from project memory (e.g. `"auth"`) — $0, no fork |
+| `recall` | `""` (empty) | List all known topics |
+| `effort` | `"fast"` \| `"balanced"` \| `"deep"` | Override model selection for this fork |
+
+Auto-trigger mode tells the LLM to use the tool proactively. The agent also receives prompt guidelines:
+- Use `recall=<topic>` before re-exploring — costs $0, avoids duplicate work
+- Use `recall=""` to list all known topics when starting in a project
+- Use `review:true` after significant code changes
+- Use `quick:true` for quick file tracing
+- Prefer cdev over bash/grep for understanding relationships
+
+## Project memory
+
+After every fork, findings are indexed to `.pi/cdev/memory.json`. Cross-session — survives restarts.
+
+### How it works
+
+```
+Fork completes
+     │
+     ├──► history.ts: saveSession()       → .pi/cdev/sessions/ (per-fork, 7-day purge)
+     │
+     └──► memory.ts: indexFindings()      → .pi/cdev/memory.json (permanent)
+          │
+          ├── extracts file paths from fork result (regex, 4 patterns)
+          ├── computes SHA256 fingerprints for each referenced file
+          ├── derives topic from task + file paths (heuristic, no LLM)
+          └── upserts finding with fingerprints
+```
+
+### Staleness detection
+
+Findings stored with file fingerprints. On recall, each referenced file is re-hashed:
+
+```
+  ✅ JWT in middleware.ts           → middleware.ts hash matches → fresh
+  ⚠️ oauth.ts unused                → oauth.ts deleted → stale
+  ❓ auth flow uses 3 providers     → no file snapshot → unverified
+```
+
+Memory output includes an explicit trust header the agent can't ignore:
+
+```
+── cdev memory: auth ──────────────
+
+    🚦 MIXED: 1 stale — VERIFY before using | 2 fresh — trustworthy
+
+  ✅ Jun 18  scout  flash→pro      $0.0120
+     JWT in middleware.ts, verifySession in 12 places
+  ⚠️ Jun 15  forge  flash           $0.0032
+     oauth.ts is unused, 450 lines
+     ↳ stale: src/auth/oauth.ts (deleted)
+```
+
+### Config
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `memory` | boolean | `true` | Enable/disable project memory |
+
+Memory can be toggled: `/cdev memory on` / `/cdev memory off`. When off, no indexing occurs and recall returns disabled. Existing memory files are untouched.
+
+## Error logging
+
+All cdev errors are appended to `.pi/cdev/errors.jsonl` (JSONL, one record per line):
+
+```jsonl
+{"ts":"2026-06-21T15:30:00.000Z","context":"review-stage2","message":"Stage 2 failed: timeout","stack":"..."}
+```
+
+Logged for: tool crashes, review failures, full-mode failures, deep-scan failures, scan failures.
+
+`/cdev status` shows error count if any exist. `/cdev clear error` wipes the log.
 
 ## How it works
 
@@ -28,13 +141,13 @@ Two-stage development fork for Pi coding agent — cheap model explores, powerfu
        │
        ▼
   ┌──────────────────────────────────────────────┐
-  │  STAGE 1 — cheap model (deepseek-v4-flash)   │
+  │  SCOUT — cheap model (deepseek-v4-flash)     │
   │  Reads files, traces deps, gathers evidence  │
   │  Returns raw unfiltered findings             │
   └──────────────────┬───────────────────────────┘
                      │ raw findings
   ┌──────────────────▼───────────────────────────┐
-  │  STAGE 2 — powerful model (deepseek-v4-pro)  │
+  │  FORGE — powerful model (deepseek-v4-pro)    │
   │  Synthesizes into structured report          │
   │  Result / Output / Evidence / Learnings      │
   └──────────────────┬───────────────────────────┘
@@ -50,9 +163,9 @@ Two-stage development fork for Pi coding agent — cheap model explores, powerfu
        │
        ▼
   ┌──────────────────────────────────────────────┐
-  │  STAGE 1 only — cheap model                  │
+  │  SCOUT only — cheap model                    │
   │  Traces files, returns raw paths/findings    │
-  │  No synthesis — just raw data                │
+  │  No forge — just raw data                    │
   └──────────────────┬───────────────────────────┘
                      │ raw findings
                      ▼
@@ -66,7 +179,7 @@ Two-stage development fork for Pi coding agent — cheap model explores, powerfu
        │
        ▼
   ┌──────────────────────────────────────────────┐
-  │  REVIEW — powerful model only (no stage 1)   │
+  │  REVIEW — forge model only (no scout)        │
   │  Examines diff + session context             │
   │  Finds bugs, edge cases, style issues        │
   │  Returns review: pass / needs-work / blocked │
@@ -131,6 +244,8 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
       "thinking": "xhigh"
     },
     "auto": false,
+    "promptsEnabled": true,
+    "memory": true,
     "offline": true,
     "costFooter": true
   }
@@ -141,23 +256,25 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `stage1.provider` | string | _required_ | Provider for exploration |
-| `stage1.id` | string | _required_ | Model ID for exploration |
-| `stage1.thinking` | `off` — `xhigh` | `minimal` | Thinking level for exploration |
-| `stage2.provider` | string | _required_ | Provider for synthesis / review |
-| `stage2.id` | string | _required_ | Model ID for synthesis / review |
-| `stage2.thinking` | `off` — `xhigh` | `xhigh` | Thinking level for synthesis / review |
+| `stage1.provider` | string | _required_ | Provider for scout (exploration) |
+| `stage1.id` | string | _required_ | Model ID for scout |
+| `stage1.thinking` | `off` — `xhigh` | `minimal` | Thinking level for scout |
+| `stage2.provider` | string | _required_ | Provider for forge (synthesis/review) |
+| `stage2.id` | string | _required_ | Model ID for forge |
+| `stage2.thinking` | `off` — `xhigh` | `xhigh` | Thinking level for forge |
 | `auto` | boolean | `false` | Auto-trigger mode (LLM proactively uses cdev) |
 | `promptsEnabled` | boolean | `true` | Enable/disable custom prompts |
-| `prompts.explore` | string | — | Custom Stage 1 exploration prompt |
-| `prompts.synthesize` | string | — | Custom Stage 2 synthesis prompt |
+| `prompts.explore` | string | — | Custom scout exploration prompt |
+| `prompts.synthesize` | string | — | Custom forge synthesis prompt |
 | `prompts.review` | string | — | Custom review prompt |
+| `memory` | boolean | `true` | Enable/disable project-level memory |
+| `signature` | string | `"whatley.xyz"` | Override status signature |
 | `offline` | boolean | `true` | Force `PI_OFFLINE=1` for child processes |
 | `costFooter` | boolean | `true` | Show cdev cost in footer |
 
 ## Recommended model pairing
 
-| Stage 1 (explore) | Stage 2 (synthesize / review) |
+| Scout (explore) | Forge (synthesize / review) |
 |---|---|
 | `deepseek-v4-flash` | `deepseek-v4-pro` |
 | `gpt-5-mini` | `claude-sonnet-4-5` |
@@ -177,17 +294,17 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 Ask: "Refactor the auth module to use middleware"
 
 LLM: calls cdev({ task: "explore auth module deps" })
-     → Stage 1: custom NestJS+Prisma prompt — only traces guards, modules, queries
-     → Stage 2: custom synthesis prompt — ordered plan with breakage risks
+     → Scout: custom NestJS+Prisma prompt — only traces guards, modules, queries
+     → Forge: custom synthesis prompt — ordered plan with breakage risks
 
 LLM: reads report, decides approach, writes code
 
 LLM: needs follow-up → calls cdev({ task: "trace auth middleware imports", quick: true })
-     → Stage 1 only: returns raw file paths
+     → Scout only: returns raw file paths
      → Cheaper, faster
 
 /cdev review                               # or LLM calls cdev({ review: true })
-     → Stage 2 only: custom review prompt — checks NestJS-specific issues
+     → Forge only: custom review prompt — checks NestJS-specific issues
      → Pass / needs-work / blocked, specific issues
 
 LLM / you: fix issues, re-review if needed
@@ -215,16 +332,16 @@ Generates stack-specific, focused prompts automatically. Accuracy: ~90% stack de
 ### `/cdev scan deep` — LLM (paid, ~30s)
 
 Uses the full two-stage pipeline to read your actual codebase and write prompts tailored to YOUR conventions, naming patterns, and architecture:
-- Stage 1 (cheap model): explores source files, maps patterns, gathers evidence
-- Stage 2 (powerful model): synthesizes findings into truly custom prompts
+- Scout (cheap model): explores source files, maps patterns, gathers evidence
+- Forge (powerful model): synthesizes findings into truly custom prompts
 - Accuracy: ~99% stack detection, ~85% prompt relevance
 
 Edit `.pi/settings.json` anytime to tune prompts from either scan.
 
 ## Fallback to pi-fork
 
-If `stage1`/`stage2` aren't configured, pi-chain-dev falls back to `pi-fork`'s effort profiles:
-- `fast` → stage1, `deep` → stage2
+If scout/forge aren't configured, pi-chain-dev falls back to `pi-fork`'s effort profiles:
+- `fast` → scout, `deep` → forge
 
 ## Project structure
 
@@ -233,6 +350,7 @@ pi-chain-dev/
 ├── index.ts          # Extension entry point — registers cdev tool + commands
 ├── runner.ts         # Two-stage fork runner + review mode
 ├── history.ts        # Session telemetry — save, list, purge (7 days)
+├── memory.ts         # Project memory — cross-session findings, file fingerprinting, staleness
 ├── scan.ts           # Project scanner — stack detection + prompt generator
 ├── types.ts          # Type definitions
 ├── config.ts         # Configuration loading
@@ -240,4 +358,50 @@ pi-chain-dev/
 ├── runner-events.js  # JSON line parsing from child processes
 └── runner-cli.js     # CLI arg inheritance
 ```
-# pi-chain-dev
+
+## Status footer
+
+When `costFooter: true`, the status bar shows a combined compact line:
+
+```
+  ⚡ cdev  📋  +$0.0040          ← auto on, prompts on, total cost
+  cdev                           ← everything off, no cost
+  ⚡ cdev  📋✕  +$0.0020         ← auto on, prompts off, cost
+  🧠 3 topics  /cdev recall      ← memory has 3 topics
+```
+
+All managed via single key `"cdev-cost"`. Shows cost across current session.
+
+## Session history
+
+Forks recorded to `.pi/cdev/sessions/<id>.json`. Auto-purged after 7 days.
+
+`/cdev history` lists all sessions with date, cost, mode, and model chain (e.g. `flash→pro`).
+
+`/cdev history <n>` shows full detail: task, models, tokens, cost, exit codes, error messages.
+
+## /cdev status output
+
+```
+── cdev status ─────────────────────────────────────
+
+  👤 whatley.xyz
+
+  Current model:    opencode-go:deepseek-v4-pro     ← your Pi /model
+  Scout:  opencode-go:deepseek-v4-flash  •  minimal   ← exploration
+  Forge:  opencode-go:deepseek-v4-pro   •  xhigh     ← synthesis + review
+  Auto-trigger:     OFF
+  Custom prompts:   — (none)
+  Cost footer:      ON
+  Project memory:   ON
+  Offline mode:     ON
+  Extensions:       inherit
+
+  Sessions:         3 (7-day window, $0.0452 total)
+  Project memory:   2 topics  /cdev recall
+  Error log:        1 error  /cdev clear error to wipe
+
+─────────────────────────────────────────────────────
+```
+
+`Current model` shows whatever `/model` is set to in your Pi session — the model that reads cdev's output and writes your code.

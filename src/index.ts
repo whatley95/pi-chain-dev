@@ -6,8 +6,8 @@
  * Provides command: /cdev-model
  *
  * Two-stage fork:
- *   Stage 1: Spawn child with cheap model → raw exploration findings.
- *   Stage 2: Spawn child with powerful model → structured report.
+ *   Scout (cheap model): raw exploration findings.
+ *   Forge (powerful model): structured report.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -42,7 +42,7 @@ const AutoForkParams = Type.Object({
   }),
   review: Type.Optional(Type.Boolean({
     description:
-      "If true, run review-only mode: skip stage 1 (exploration) and go straight to stage 2 (powerful model) for code review. Use for reviewing recent changes, finding bugs, or second opinions.",
+      "If true, run review-only mode: skip scout (exploration) and go straight to forge (powerful model) for code review. Use for reviewing recent changes, finding bugs, or second opinions.",
   })),
   effort: Type.Optional(Type.Unsafe<string>({
     type: "string",
@@ -52,7 +52,7 @@ const AutoForkParams = Type.Object({
   })),
   quick: Type.Optional(Type.Boolean({
     description:
-      "If true, run stage 1 only (exploration) and return raw findings. Skip the synthesis stage. Use for quick follow-up file tracing, grep-style lookups, or narrow questions.",
+      "If true, run scout only (exploration) and return raw findings. Skip the forge (synthesis). Use for quick follow-up file tracing, grep-style lookups, or narrow questions.",
   })),
   recall: Type.Optional(Type.String({
     description:
@@ -135,7 +135,7 @@ export default function (pi: ExtensionAPI) {
 
   /** Package developer signature. Override with config.signature. */
   function getSignature(_cwd: string): string {
-    return "Whatley";
+    return "whatley.xyz";
   }
 
   /** Append an error record to .pi/cdev/errors.jsonl */
@@ -247,8 +247,8 @@ export default function (pi: ExtensionAPI) {
     name: "cdev",
     label: "Chain Dev",
     description:
-      "Two-stage development fork: first a cheap model explores and gathers evidence, then a powerful model synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for stage 1 only (raw findings, no synthesis). Set recall=<topic> to retrieve past fork findings from project memory (no fork runs). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
-    promptSnippet: "Two-stage fork: cheap explores → powerful writes (or stage 1 only with quick:true). Use recall to retrieve past findings.",
+      "Two-stage development fork: first a cheap model (scout) explores and gathers evidence, then a powerful model (forge) synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for scout only (raw findings, no forge). Set recall=<topic> to retrieve past fork findings from project memory (no fork runs). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
+    promptSnippet: "Two-stage fork: scout (cheap) explores → forge (powerful) writes (or scout only with quick:true). Use recall to retrieve past findings.",
     promptGuidelines: [
       "Use cdev for any task requiring more than 3-4 file reads — cheaper than parent model reading files one-by-one.",
       "Use cdev with recall=<topic> to check project memory before exploring a topic that may have been explored before. This costs $0 and avoids duplicate work.",
@@ -261,6 +261,7 @@ export default function (pi: ExtensionAPI) {
     parameters: AutoForkParams,
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      try {
       const config = loadConfig(ctx.cwd);
 
       // ── Recall mode (no fork, just memory lookup) ──
@@ -410,6 +411,14 @@ export default function (pi: ExtensionAPI) {
         details,
         isError,
       };
+      } catch (err) {
+        logError(ctx.cwd, "tool", err);
+        return {
+          content: [{ type: "text" as const, text: `cdev error: ${err instanceof Error ? err.message : String(err)}` }],
+          details: { stage1: null, stage2: null },
+          isError: true,
+        };
+      }
     },
   });
 
@@ -746,8 +755,9 @@ REVIEW_PROMPT:
           "",
           `  👤 ${config.signature || getSignature(ctx.cwd)}`,
           "",
-          `  Stage 1 (explore):  ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`,
-          `  Stage 2 (synthesize): ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`,
+          `  Current model:    ${ctx.model ? ctx.model.id : "none"}`,
+          `  Scout:  ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`,
+          `  Forge:  ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`,
           `  Auto-trigger:     ${config.auto ? "⚡ ON" : "OFF"}`,
           `  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`,
           `  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`,
@@ -791,15 +801,15 @@ REVIEW_PROMPT:
 
   // ── Register /cdev-model command ─────────────────────────
   pi.registerCommand("cdev-model", {
-    description: "Pick stage1/stage2 models for cdev tool",
+    description: "Pick scout/forge models for cdev tool",
     handler: async (_args, ctx) => {
       try {
       const config = loadConfig(ctx.cwd);
 
       // Step 1: pick stage
-      const stagePick = await ctx.ui.select("Pick stage:", [
-        `stage1 (explore)  [${config.stage1.provider || "?"}/${config.stage1.id || "?"}]`,
-        `stage2 (synthesize)  [${config.stage2.provider || "?"}/${config.stage2.id || "?"}]`,
+      const stagePick = await ctx.ui.select("Pick model:", [
+        `Scout (explore)  [${config.stage1.provider || "?"}/${config.stage1.id || "?"}]`,
+        `Forge (synthesize)  [${config.stage2.provider || "?"}/${config.stage2.id || "?"}]`,
       ]);
       if (!stagePick) return;
       const stage = stagePick.startsWith("stage1") ? "stage1" : "stage2";
@@ -842,7 +852,7 @@ REVIEW_PROMPT:
 
       ctx.ui.notify(`Set ${stage} to ${provider}/${modelId} (${thinkingPick}). /reload to apply.`, "info");
       } catch (err) {
-        logError(ctx.cwd, "tool", err);
+        logError(ctx.cwd, "cdev-model", err);
         ctx.ui.notify(`Error: ${err instanceof Error ? err.message : String(err)}`, "error");
       }
     },

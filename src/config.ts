@@ -16,6 +16,8 @@ export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhig
 const SETTINGS_KEY = "pi-chain-dev";
 const FALLBACK_KEY = "pi-fork"; // fall back to pi-fork's effort profiles if ours aren't set
 
+export type { AutoForkConfig };
+
 export const DEFAULT_CONFIG: AutoForkConfig = {
   stage1: { provider: "", id: "", thinking: "minimal" },
   stage2: { provider: "", id: "", thinking: "xhigh" },
