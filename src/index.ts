@@ -198,7 +198,15 @@ export default function (pi: ExtensionAPI) {
     name: "cdev",
     label: "Chain Dev",
     description:
-      "Two-stage development fork: first a cheap model explores and gathers evidence, then a powerful model synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
+      "Two-stage development fork: first a cheap model explores and gathers evidence, then a powerful model synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for stage 1 only (raw findings, no synthesis). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
+    promptSnippet: "Two-stage fork: cheap explores → powerful writes (or stage 1 only with quick:true)",
+    promptGuidelines: [
+      "Use cdev for any task requiring more than 3-4 file reads — cheaper than parent model reading files one-by-one.",
+      "Use cdev with review:true after significant code changes to get a second opinion from a different model.",
+      "Use cdev with quick:true for follow-up file tracing, grep-style lookups, or when raw findings suffice.",
+      "Prefer cdev over bash/grep when you need to understand file relationships, not just find text matches.",
+      "Tell cdev to surface ambiguities back to you — don't resolve them in the fork.",
+    ],
     parameters: AutoForkParams,
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
