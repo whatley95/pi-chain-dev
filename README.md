@@ -226,6 +226,25 @@ pi install ./pi-chain-fork          # relative path
 
 Auto-discovered from `~/.pi/agent/extensions/pi-chain-dev/` — no install command needed if placed there.
 
+### .gitignore / svn:ignore
+
+Add `.pi/` to your project's ignore rules:
+
+**Git:** add to `.gitignore`
+```gitignore
+.pi/
+```
+
+**SVN:** set on project root
+```bash
+svn propset svn:ignore '.pi' .
+svn commit -m "Ignore cdev data"
+```
+
+Contains: sessions (`.pi/cdev/sessions/`), reports (`.pi/cdev/reports/`), memory (`.pi/cdev/memory.json`), error logs (`.pi/cdev/errors.jsonl`).
+
+On `session_start`, cdev warns if `.gitignore`/`svn:ignore` is set up but `.pi/` is missing.
+
 ## Configuration
 
 Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:

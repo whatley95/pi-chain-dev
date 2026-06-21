@@ -429,7 +429,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   const details: AutoForkDetails = { stage1: null, stage2: null };
 
   // ── Stage 1: Exploration with cheap model ──
-  opts.onProgress?.("scout", stage1Profile.id);
+  opts.onProgress?.("scout", stage1Profile.thinking ? `${stage1Profile.id} • ${stage1Profile.thinking}` : stage1Profile.id);
   const stage1Task = buildStage1Prompt(task, customExplorePrompt);
 
   let stage1Result: ForkResult;
@@ -476,7 +476,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   }
 
   // ── Stage 2: Synthesis with powerful model ──
-  opts.onProgress?.("forge", stage2Profile.id);
+  opts.onProgress?.("forge", stage2Profile.thinking ? `${stage2Profile.id} • ${stage2Profile.thinking}` : stage2Profile.id);
   const stage1Text = getFinalAssistantText(stage1Result.messages) ||
                      stage1Result.stderr ||
                      "(no output from exploration stage)";
@@ -550,7 +550,7 @@ export async function runCdevReview(opts: {
           extensions = null, environment = {}, offline = true, signal } = opts;
 
   const reviewTask = buildReviewPrompt(customReviewPrompt);
-  opts.onProgress?.("forge", stageProfile.id);
+  opts.onProgress?.("forge", stageProfile.thinking ? `${stageProfile.id} • ${stageProfile.thinking}` : stageProfile.id);
 
   let result: ForkResult;
   try {
@@ -617,7 +617,7 @@ export async function runFileReview(opts: {
   }
 
   const reviewTask = buildFileReviewPrompt(filePath, fileContent, referencedFiles);
-  opts.onProgress?.("forge", stageProfile.id);
+  opts.onProgress?.("forge", stageProfile.thinking ? `${stageProfile.id} • ${stageProfile.thinking}` : stageProfile.id);
 
   let result: ForkResult;
   try {
@@ -660,7 +660,7 @@ export async function runDiffReview(opts: {
           extensions = null, environment = {}, offline = true, signal } = opts;
 
   const reviewTask = buildDiffReviewPrompt(diffSpec, diffContent);
-  opts.onProgress?.("forge", stageProfile.id);
+  opts.onProgress?.("forge", stageProfile.thinking ? `${stageProfile.id} • ${stageProfile.thinking}` : stageProfile.id);
 
   let result: ForkResult;
   try {

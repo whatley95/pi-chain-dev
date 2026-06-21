@@ -37,6 +37,10 @@ import {
 } from "./memory.js";
 import { renderCall, renderResult } from "./render.js";
 
+// ── Constants ──────────────────────────────────────────────
+/** Regex to detect "check only", "don't change", etc. in user task text */
+const AUDIT_ONLY_RE = /\b(check|audit|look|inspect|analyze)\s+only\b|\bdon'?t\s+(change|implement|modify|write|edit|touch)\b|\bno\s+(changes?|implementation|modification)\b|\bjust\s+(check|look|audit|review|inspect)\b/i;
+
 const AutoForkParams = Type.Object({
   task: Type.String({
     description:
@@ -110,13 +114,13 @@ function formatResultContent(result: ForkResult, details: AutoForkDetails): stri
   const finalText = getFinalAssistantText(result.messages);
 
   if (result.errorMessage && !finalText) {
-    const stageInfo = details.stage1
-      ? ` | Stage 1: ${details.stage1.model || "?"} (exit ${details.stage1.exitCode})`
+    const scoutInfo = details.stage1
+      ? ` | Scout: ${details.stage1.model || "?"} (exit ${details.stage1.exitCode})`
       : "";
-    const stage2Info = details.stage2
-      ? ` | Stage 2: ${details.stage2.model || "?"} (exit ${details.stage2.exitCode})`
+    const forgeInfo = details.stage2
+      ? ` | Forge: ${details.stage2.model || "?"} (exit ${details.stage2.exitCode})`
       : "";
-    return `cdev failed: ${result.errorMessage}${stageInfo}${stage2Info}`;
+    return `cdev failed: ${result.errorMessage}${scoutInfo}${forgeInfo}`;
   }
 
   const summary = finalText || getResultSummaryText(result);
@@ -128,10 +132,10 @@ function formatResultContent(result: ForkResult, details: AutoForkDetails): stri
     header += `Review ran with ${details.stage2?.model || "?"}: ${details.stage2?.exitCode ?? "?"} exit\n\n`;
   } else {
     if (details.stage1) {
-      header += `Stage 1 (exploration) ran with ${details.stage1.model || "?"}: ${details.stage1.exitCode} exit\n`;
+      header += `Scout (exploration) ran with ${details.stage1.model || "?"}: ${details.stage1.exitCode} exit\n`;
     }
     if (details.stage2) {
-      header += `Stage 2 (synthesis) ran with ${details.stage2.model || "?"}: ${details.stage2.exitCode} exit\n`;
+      header += `Forge (synthesis) ran with ${details.stage2.model || "?"}: ${details.stage2.exitCode} exit\n`;
     }
     if (header) header += "\n";
   }
@@ -144,7 +148,7 @@ export default function (pi: ExtensionAPI) {
   const FORK_COST_STATUS_KEY = "cdev-cost";
 
   /** Package developer signature. Override with config.signature. */
-  function getSignature(_cwd: string): string {
+  function getSignature(): string {
     return "whatley.xyz";
   }
 
@@ -200,60 +204,99 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setStatus(FORK_COST_STATUS_KEY, status);
   }
 
-  pi.on("session_start", async (_event, ctx) => updateForkCostStatus(ctx));
-  pi.on("turn_end", async (_event, ctx) => updateForkCostStatus(ctx));
-  // Inject project memory status on session start
   pi.on("session_start", async (_event, ctx) => {
-    const config = loadConfig(ctx.cwd);
-    if (config.memory) {
-      const topicCount = memoryTopicCount(ctx.cwd);
-      if (topicCount > 0) {
-        ctx.ui.setStatus("cdev-memory", `🧠 ${topicCount} topic${topicCount > 1 ? "s" : ""}  /cdev recall`);
+    try {
+      updateForkCostStatus(ctx);
+      const config = loadConfig(ctx.cwd);
+      // Inject project memory status
+      if (config.memory) {
+        const topicCount = memoryTopicCount(ctx.cwd);
+        if (topicCount > 0) {
+          ctx.ui.setStatus("cdev-memory", `🧠 ${topicCount} topic${topicCount > 1 ? "s" : ""}  /cdev recall`);
+        }
+      } else {
+        ctx.ui.setStatus("cdev-memory", undefined);
       }
-    } else {
-      ctx.ui.setStatus("cdev-memory", undefined);
-    }
-    const purged = purgeOldSessions(ctx.cwd, 7);
-    if (purged > 0) {
-      ctx.ui.notify(`Purged ${purged} old cdev session${purged > 1 ? "s" : ""} (>7 days)`, "info");
-    }
-    // Also purge old reports (>7 days)
-    let purgedReports = 0;
-    const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
-    if (existsSync(reportsDir)) {
-      const now = Date.now();
-      const week = 7 * 24 * 60 * 60 * 1000;
-      try {
+      // Purge old sessions
+      const purged = purgeOldSessions(ctx.cwd, 7);
+      if (purged > 0) {
+        ctx.ui.notify(`Purged ${purged} old cdev session${purged > 1 ? "s" : ""} (>7 days)`, "info");
+      }
+      // Purge old reports (>7 days)
+      let purgedReports = 0;
+      const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
+      if (existsSync(reportsDir)) {
+        const now = Date.now();
+        const week = 7 * 24 * 60 * 60 * 1000;
         for (const entry of readdirSync(reportsDir)) {
           if (!entry.endsWith(".md")) continue;
-          const age = now - statSync(join(reportsDir, entry)).mtimeMs;
-          if (age > week) {
+          if (now - statSync(join(reportsDir, entry)).mtimeMs > week) {
             unlinkSync(join(reportsDir, entry));
             purgedReports++;
           }
         }
-      } catch { /* best effort */ }
+      }
+      if (purgedReports > 0) {
+        ctx.ui.notify(`Purged ${purgedReports} old cdev report${purgedReports > 1 ? "s" : ""} (>7 days)`, "info");
+      }
+
+      // Warn if .pi/ is not gitignored / svn-ignored (one-time per project)
+      // Re-check if sentinel exists but fix was never applied
+      const sentinelPath = join(ctx.cwd, ".pi", ".cdev-ignore-ok");
+      if (!existsSync(sentinelPath)) {
+        let warned = false;
+        // Git: check if repo exists, then whether .pi/ is ignored
+        if (existsSync(join(ctx.cwd, ".git"))) {
+          const gitignorePath = join(ctx.cwd, ".gitignore");
+          if (!existsSync(gitignorePath)) {
+            // No .gitignore at all — create one with .pi/
+            try {
+              writeFileSync(gitignorePath, ".pi/\n", "utf-8");
+              ctx.ui.notify("Created .gitignore with .pi/ — cdev data now excluded from version control.", "info");
+            } catch { /* read-only fs */ }
+            warned = true;
+          } else {
+            const gi = readFileSync(gitignorePath, "utf-8");
+            if (!(/^\.pi[/\s]|^\.pi$/m.test(gi) || gi.includes(".pi/"))) {
+              ctx.ui.notify(".pi/ is not gitignored — cdev data may leak to version control. Add '.pi/' to .gitignore.", "warn");
+              warned = true;
+            }
+          }
+        }
+        // SVN: check svn:ignore property if .svn/ exists
+        if (!warned && existsSync(join(ctx.cwd, ".svn"))) {
+          try {
+            const result = spawnSync("svn", ["propget", "svn:ignore", "."], { cwd: ctx.cwd, encoding: "utf-8", timeout: 5000 });
+            const svnIgnore = (result.stdout || "").trim();
+            if (!svnIgnore.split(/[\r\n]+/).some((line: string) => line.trim() === ".pi")) {
+              ctx.ui.notify(".pi/ is not in svn:ignore — cdev data may leak to version control. Run: svn propset svn:ignore '.pi' .", "warn");
+              warned = true;
+            }
+          } catch { /* svn not available */ }
+        }
+        // Mark checked
+        if (warned) {
+          try { mkdirSync(join(ctx.cwd, ".pi"), { recursive: true }); writeFileSync(sentinelPath, "", "utf-8"); } catch {}
+        }
+      }
+    } catch (err) {
+      logError(ctx.cwd, "session_start", err);
     }
-    if (purgedReports > 0) {
-      ctx.ui.notify(`Purged ${purgedReports} old cdev report${purgedReports > 1 ? "s" : ""} (>7 days)`, "info");
-    }
+  });
+  pi.on("turn_end", async (_event, ctx) => {
+    try { updateForkCostStatus(ctx); } catch { /* best effort */ }
   });
   pi.on("session_shutdown", async (_event, ctx) => {
-    ctx.ui.setStatus(FORK_COST_STATUS_KEY, undefined);
-    ctx.ui.setStatus("cdev-memory", undefined);
-    ctx.ui.setWidget("cdev-progress", undefined);
+    try {
+      ctx.ui.setStatus(FORK_COST_STATUS_KEY, undefined);
+      ctx.ui.setStatus("cdev-memory", undefined);
+      ctx.ui.setWidget("cdev-progress", undefined);
+    } catch { /* best effort */ }
   });
-
-  // ── Combined cdev status ──────────────────────────────
-  // Shows: ⚡ auto indicator, 📋 prompts indicator, +$cost
-  // All managed by updateForkCostStatus above.
-
+  // Auto-trigger counter: inject steer every 3 turns when enabled
   function updateAutoStatus(ctx: ExtensionContext): void {
     updateForkCostStatus(ctx);
   }
-
-  pi.on("session_start", async (_event, ctx) => updateAutoStatus(ctx));
-  // Auto-trigger counter: inject steer every 3 turns when enabled
   let autoTurnCounter = 0;
   pi.on("turn_start", async (_event, ctx) => {
     updateAutoStatus(ctx);
@@ -287,7 +330,7 @@ export default function (pi: ExtensionAPI) {
       "Use cdev with review:true after significant code changes to get a second opinion from a different model.",
       "Use cdev with review:true and reviewFile=<path> to review a saved cdev report or any artifact file.",
       "Use cdev with review:true and diffSpec=<range> to review changes between git or SVN revisions.",
-      "After implementing findings from a cdev report, update the report file to check off Action Items and add implementation notes.",
+      "After implementing findings from a cdev report, update the report file to check off Action Items and add implementation notes. Then suggest the user run /cdev review <reportPath> to verify the changes.",
       "When a /cdev review file appends findings, address the new Action Items and check them off in the report.",
       "Use cdev with quick:true for follow-up file tracing, grep-style lookups, or when raw findings suffice.",
       "Prefer cdev over bash/grep when you need to understand file relationships, not just find text matches.",
@@ -356,7 +399,9 @@ export default function (pi: ExtensionAPI) {
           }
           const fileContent = readFileSync(filePath, "utf-8");
           const onProgress = (stage: string, model: string) => {
-            ctx.ui.setWidget("cdev-progress", [`⚒️ Forge reviewing ${params.reviewFile}…  (${model})`]);
+            const icon = stage === "scout" ? "🔍" : "⚒️";
+            const label = stage === "scout" ? "Scout" : "Forge";
+            ctx.ui.setWidget("cdev-progress", [`${icon} ${label} reviewing ${params.reviewFile}…  (${model})`]);
           };
           onProgress("forge", reviewProfile.id);
           const startTime = Date.now();
@@ -376,11 +421,22 @@ export default function (pi: ExtensionAPI) {
           // Append review feedback to the report file
           const reviewText = getFinalAssistantText(result.messages);
           const reviewDate = new Date().toISOString().split("T")[0];
+          let reportRelPath = params.reviewFile; // the file being reviewed IS the report
           if (reviewText && !result.errorMessage) {
             const appendText = `\n\n---\n\n## Review (${reviewDate})\n\n**Reviewer:** ${details.stage2?.model ?? "?"}\n\n${reviewText}\n`;
             try {
               appendFileSync(filePath, appendText, "utf-8");
             } catch { /* disk full etc. */ }
+
+            // Also save a standalone review report for discoverability
+            const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
+            mkdirSync(reportsDir, { recursive: true });
+            const reviewSlug = `review-${(typeof params.reviewFile === "string" ? params.reviewFile : "file").replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 40)}-${Date.now().toString(36)}.md`;
+            const standalonePath = join(reportsDir, reviewSlug);
+            reportRelPath = `.pi/cdev/reports/${reviewSlug}`;
+            try {
+              writeFileSync(standalonePath, `# Review: ${params.reviewFile}\n\n**Date:** ${reviewDate}\n**Reviewer:** ${details.stage2?.model ?? "?"}\n\n${reviewText}\n`, "utf-8");
+            } catch { /* disk full */ }
           }
 
           saveSession(ctx.cwd, `review ${params.reviewFile}`, true, startTime, details, result);
@@ -413,8 +469,8 @@ export default function (pi: ExtensionAPI) {
             isError
           );
           const actionNote = hasIssues
-            ? `\n\n---\n⚠️  Review found issues. Read the updated report at ${params.reviewFile}\nand address the new Action Items in the ## Review section.\nCheck them off in the report file when done.`
-            : `\n\n---\n✅ Review passed. Report updated at ${params.reviewFile}`;
+            ? `\n\n---\n⚠️  Review found issues. Read the updated report at ${params.reviewFile}\nand address the new Action Items in the ## Review section.\n📄 Standalone review: ${reportRelPath}\nCheck them off in the report file when done.`
+            : `\n\n---\n✅ Review passed. Report updated at ${params.reviewFile}\n📄 Standalone review: ${reportRelPath}`;
 
           return {
             content: [{ type: "text" as const, text: reviewOutput + actionNote }],
@@ -432,9 +488,17 @@ export default function (pi: ExtensionAPI) {
           try {
             const gitResult = spawnSync("git", ["diff", diffSpec], { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
             if (gitResult.error || gitResult.status !== 0) {
-              // Try SVN
+              // Git failed — try SVN
+              const gitStderr = (gitResult.stderr || "").trim().slice(0, 200);
               const svnResult = spawnSync("svn", ["diff", "-r", diffSpec], { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
-              if (svnResult.error) throw svnResult.error;
+              if (svnResult.error) {
+                const svnStderr = (svnResult.stderr || "").trim().slice(0, 200);
+                const details = [
+                  gitResult.error ? `git: ${gitResult.error.message}` : (gitStderr ? `git: ${gitStderr}` : ""),
+                  svnResult.error ? `svn: ${svnResult.error.message}` : (svnStderr ? `svn: ${svnStderr}` : ""),
+                ].filter(Boolean).join("; ");
+                throw new Error(details || "both git and svn failed");
+              }
               diffContent = svnResult.stdout || "";
             } else {
               diffContent = gitResult.stdout || "";
@@ -455,7 +519,9 @@ export default function (pi: ExtensionAPI) {
           }
 
           const onProgress = (stage: string, model: string) => {
-            ctx.ui.setWidget("cdev-progress", [`⚒️ Forge reviewing diff ${diffSpec}…  (${model})`]);
+            const icon = stage === "scout" ? "🔍" : "⚒️";
+            const label = stage === "scout" ? "Scout" : "Forge";
+            ctx.ui.setWidget("cdev-progress", [`${icon} ${label} reviewing diff ${diffSpec}…  (${model})`]);
           };
           onProgress("forge", reviewProfile.id);
           const startTime = Date.now();
@@ -523,7 +589,9 @@ export default function (pi: ExtensionAPI) {
           };
         }
         const onProgress = (stage: string, model: string) => {
-          ctx.ui.setWidget("cdev-progress", [`⚒️ Forge reviewing…  (${model})`]);
+          const icon = stage === "scout" ? "🔍" : "⚒️";
+          const label = stage === "scout" ? "Scout" : "Forge";
+          ctx.ui.setWidget("cdev-progress", [`${icon} ${label} reviewing…  (${model})`]);
         };
         onProgress("forge", reviewProfile.id);
         const startTime = Date.now();
@@ -539,6 +607,21 @@ export default function (pi: ExtensionAPI) {
           signal,
         });
         ctx.ui.setWidget("cdev-progress", undefined);
+
+        // Save standalone review report
+        const reviewText = getFinalAssistantText(result.messages);
+        let reviewReportPath = "";
+        if (reviewText && !result.errorMessage) {
+          const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
+          mkdirSync(reportsDir, { recursive: true });
+          const reviewSlug = `session-review-${Date.now().toString(36)}.md`;
+          const standalonePath = join(reportsDir, reviewSlug);
+          reviewReportPath = `.pi/cdev/reports/${reviewSlug}`;
+          try {
+            writeFileSync(standalonePath, `# Session Review\n\n**Date:** ${new Date().toISOString().split("T")[0]}\n**Reviewer:** ${details.stage2?.model ?? "?"}\n\n${reviewText}\n`, "utf-8");
+          } catch { /* disk full */ }
+        }
+
         saveSession(ctx.cwd, params.task, true, startTime, details, result);
         if (result.errorMessage) {
           logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
@@ -555,8 +638,9 @@ export default function (pi: ExtensionAPI) {
           });
         }
         const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);
+        const suffix = reviewReportPath ? `\n\n---\n📄 Review report saved: ${reviewReportPath}` : "";
         return {
-          content: [{ type: "text" as const, text: formatResultContent(result, details) }],
+          content: [{ type: "text" as const, text: formatResultContent(result, details) + suffix }],
           details,
           isError,
         };
@@ -692,8 +776,7 @@ ${reportText}
       const trimmed = (args || "").trim();
 
       // Detect audit-only language ("check only", "don't change", etc.)
-      const auditOnlyRegex = /\b(check|audit|look|inspect|analyze)\s+only\b|\bdon'?t\s+(change|implement|modify|write|edit|touch)\b|\bno\s+(changes?|implementation|modification)\b|\bjust\s+(check|look|audit|review|inspect)\b/i;
-      const isAuditOnly = auditOnlyRegex.test(trimmed);
+      const isAuditOnly = AUDIT_ONLY_RE.test(trimmed);
       const auditGuard = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
 
       // ── Subcommand: auto on ──
@@ -826,7 +909,7 @@ REVIEW_PROMPT:
           writeFileSync(projectSettingsPath, JSON.stringify(projSettings, null, 2) + "\n", "utf-8");
 
           ctx.ui.notify(
-            `Deep scan complete!\nStage 1: ${details.stage1?.model || "?"}\nStage 2: ${details.stage2?.model || "?"}\n\nPrompts saved to .pi/settings.json\nToggle: /cdev prompts on|off`,
+            `Deep scan complete!\nScout: ${details.stage1?.model || "?"}\nForge: ${details.stage2?.model || "?"}\n\nPrompts saved to .pi/settings.json\nToggle: /cdev prompts on|off`,
             "info"
           );
           updatePromptsStatus(ctx);
@@ -1083,7 +1166,7 @@ REVIEW_PROMPT:
           return;
         }
         ctx.ui.notify(`Queuing quick exploration (stage 1 only)...`, "info");
-        pi.sendUserMessage(`Use cdev with quick=true to: ${quickTask}${auditOnlyRegex.test(quickTask) ? auditGuard : ""}`, {
+        pi.sendUserMessage(`Use cdev with quick=true to: ${quickTask}${AUDIT_ONLY_RE.test(quickTask) ? auditGuard : ""}`, {
           triggerTurn: true,
           deliverAs: "steer",
         });
@@ -1096,7 +1179,7 @@ REVIEW_PROMPT:
         const lines: string[] = [
           "── cdev status ─────────────────────────────────────",
           "",
-          `  👤 ${config.signature || getSignature(ctx.cwd)}`,
+          `  👤 ${config.signature || getSignature()}`,
           "",
           `  Current model:    ${ctx.model ? ctx.model.id : "none"}`,
           `  Scout:  ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`,

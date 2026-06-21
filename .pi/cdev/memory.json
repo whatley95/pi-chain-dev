@@ -5,6 +5,13 @@
       "name": "all-code",
       "findings": [
         {
+          "text": "## Review — fixes applied  | # | Severity | Issue | Fix | |---|----------|-------|-----| | 1 | 🟡 | Triple `session_start` handlers | **Merged into 1** — cost, memory, purge all in one handler | | 2 | 🟡 | `session_start` crash silently | **Wrapped in try/catch** — errors logged, doesn't break Pi | | 3 | 🟡 | `session_shutdown` crash | **Wrapped in try/catch** — best-effort cleanup | | 4 | 🟡 | \"Stage 1/2\" in output (not \"Scout/Forge\") | **Fixed** — `formatResultContent` now says Scout/Forge | |",
+          "timestamp": 1782056140861,
+          "stage": "review",
+          "models": "deepseek-v4-pro",
+          "cost": 0.032810832
+        },
+        {
           "text": "## Result  **needs-work** — 4 issues found, 1 suggestion. Core logic is solid, but there are bugs and risk areas.  ## Issues Found  ### 1. 🔴 Dead code + leaked tmp dirs in `runFileReview` / `runDiffReview`  **File:** `runner.ts`, lines ~610 and ~666 **Severity:** Medium — unnecessary disk I/O, potential leak if finally fails  Both functions create a tmp dir, write a file to it, then **never pass the file path** to `runStage` — they pass `JSON.stringify({})` directly. `runStage` internally calls",
           "timestamp": 1782053078252,
           "stage": "review",
@@ -12,9 +19,9 @@
           "cost": 0.05558256
         }
       ],
-      "forkCount": 1,
+      "forkCount": 2,
       "firstSeen": 1782053078252,
-      "lastSeen": 1782053078252,
+      "lastSeen": 1782056140861,
       "files": []
     },
     "hello": {
@@ -47,6 +54,54 @@
       "forkCount": 1,
       "firstSeen": 1782054856826,
       "lastSeen": 1782054856826,
+      "files": []
+    },
+    "-only-guard": {
+      "name": "-only-guard",
+      "findings": [
+        {
+          "text": "Now let me compile my findings:  ## Result  **Needs-work** — 3 bugs (1 critical, 2 moderate), 4 issues, 2 style problems.  ---  ## Issues Found  ### 🔴 1. Triple `session_start` handler — `updateForkCostStatus` runs 3× per session start  **File:** `index.ts:169, 172, 186` **Severity:** Low (wasteful, not broken) **What:** Three separate `pi.on(\"session_start\", ...)` registrations all call `updateForkCostStatus` (directly or via `updateAutoStatus`). The first sets cost, the second sets memory + p",
+          "timestamp": 1782056081101,
+          "stage": "stage1",
+          "models": "deepseek-v4-flash",
+          "cost": 0.010279914400000003
+        }
+      ],
+      "forkCount": 1,
+      "firstSeen": 1782056081101,
+      "lastSeen": 1782056081101,
+      "files": []
+    },
+    "of-the": {
+      "name": "of-the",
+      "findings": [
+        {
+          "text": "All issues resolved:  | # | Issue | Status | |---|-------|--------| | 1 | Triple `session_start` handlers | ✅ Already merged | | 2 | `session_start` crash silently | ✅ Already try/catch wrapped | | 3 | `session_shutdown` crash | ✅ Already try/catch wrapped | | 4 | \"Stage 1/2\" in output → \"Scout/Forge\" | ✅ Just fixed (3 occurrences) | | 5 | `getSignature(_cwd)` dead param | ✅ Already removed |  **Remaining low-priority** (not worth fixing now): - `spawnSync` git→SVN fallback is coarse — functiona",
+          "timestamp": 1782056188698,
+          "stage": "review",
+          "models": "deepseek-v4-pro",
+          "cost": 0.02157832
+        }
+      ],
+      "forkCount": 1,
+      "firstSeen": 1782056188698,
+      "lastSeen": 1782056188698,
+      "files": []
+    },
+    "if-the": {
+      "name": "if-the",
+      "findings": [
+        {
+          "text": "All 3 fixed. Summary:  | Item | Before | After | |------|--------|-------| | ① SVN fallback error | `throw svnResult.error` → cryptic `ENOENT` | Includes git's stderr + svn's error in one message: `git: not a git repository; svn: spawn ENOENT` | | ② `auditOnlyRegex` recreated per command | `const auditOnlyRegex = /.../` inside handler (every `/cdev`) | `const AUDIT_ONLY_RE = /.../` at module scope (compiled once) | | ③ onProgress ignores `stage` param | `⚒️ Forge reviewing…` always | `stage === ",
+          "timestamp": 1782056448637,
+          "stage": "stage2",
+          "models": "deepseek-v4-flash→deepseek-v4-flash",
+          "cost": 0.0091177912
+        }
+      ],
+      "forkCount": 1,
+      "firstSeen": 1782056448637,
+      "lastSeen": 1782056448637,
       "files": []
     }
   }
