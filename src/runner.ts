@@ -76,6 +76,24 @@ function writeTempSessionJsonl(sessionJsonl: string): { dir: string; filePath: s
   return { dir: tmpDir, filePath };
 }
 
+function appendTaskToSessionJsonl(sessionJsonl: string, task: string): string {
+  const lines = sessionJsonl.trim().split("\n").filter(Boolean);
+  lines.push(JSON.stringify({
+    type: "message",
+    role: "user",
+    content: [{ type: "text", text: task }],
+  }));
+  return lines.join("\n") + "\n";
+}
+
+function estimateCommandLineLength(command: string, args: string[]): number {
+  // Windows CreateProcess limit is 32,767 Unicode chars; cmd.exe is much lower.
+  // Leave headroom for quoting/escaping. Unix limits are much larger.
+  return command.length + args.reduce((sum, arg) => sum + arg.length + 1, 0) + 1;
+}
+
+const MAX_COMMAND_LINE_LENGTH = process.platform === "win32" ? 30000 : 200000;
+
 /**
  * Redact sensitive content (API keys, tokens) from strings before
  * forwarding them to child processes that may use different AI providers.
@@ -547,6 +565,13 @@ function buildFileReviewPrompt(
       }).join("\n\n")
     : "(no referenced files found in the report)";
 
+  // Keep the inline report small enough that it does not blow up the CLI
+  // argument list before the session-file guard has a chance to offload it.
+  const MAX_REPORT_INLINE_CHARS = 12000;
+  const normalizedReport = reportContent.length > MAX_REPORT_INLINE_CHARS
+    ? reportContent.slice(0, MAX_REPORT_INLINE_CHARS) + `\n\n... (truncated from ${reportContent.length} chars; read the full file for complete context)`
+    : reportContent;
+
   return `Review the following report AND the actual code it references. Your job: compare what the report claims against what the code actually contains.
 
 Report: ${filePath}
@@ -588,7 +613,7 @@ Considerations neither the report nor the code address.
 ---
 
 <report>
-${reportContent}
+${normalizedReport}
 </report>
 
 <actual-files>
@@ -649,7 +674,6 @@ function buildPiArgs(
   extensions: string[] | null,
   stageProfile: StageProfile,
   noTools = false,
-  temperature?: number,
 ): string[] {
   const args: string[] = [
     "--mode", "json",
@@ -686,10 +710,6 @@ function buildPiArgs(
   args.push("--model", stageProfile.id);
   args.push("--thinking", stageProfile.thinking);
 
-  if (typeof temperature === "number") {
-    args.push("--temperature", String(temperature));
-  }
-
   if (extensions !== null && extensions.length > 0) {
     for (const extension of extensions) {
       args.push("--extension", extension);
@@ -721,8 +741,6 @@ export interface RunStageOptions {
   sanitizedSessionJsonl?: { jsonl: string; stripped: number };
   /** Number of retries on spawn/early-exit failures. */
   retries?: number;
-  /** Optional sampling temperature for the stage model. */
-  temperature?: number;
   /**
    * Optional callback invoked when a JSON event line is parsed during the stage.
    * Allows callers to show live progress.
@@ -763,7 +781,7 @@ async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResult> {
 async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
   const { cwd, task, stageLabel, forkSessionJsonl, stageProfile, extensions,
           environment, offline, signal, noTools = false, stageTimeoutMs = 0,
-          sanitizedSessionJsonl, temperature, onUpdate } = opts;
+          sanitizedSessionJsonl, onUpdate } = opts;
 
   const result: ForkResult = {
     task,
@@ -778,10 +796,25 @@ async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
     result.stderr += `[cdev] stripped ${sanitized.stripped} orphaned tool message(s) from session snapshot\n`;
   }
   const tmp = writeTempSessionJsonl(sanitized.jsonl);
-  const piArgs = buildPiArgs(task, tmp.filePath, extensions, stageProfile, noTools, temperature);
+  let sessionFilePath = tmp.filePath;
+  let taskArg = task;
+
+  const { command, prefixArgs } = resolvePiSpawn();
+
+  // Test-build args to check command-line length. If the task is so large that
+  // it would exceed OS spawn limits, offload the task into the session file as
+  // a user message and pass a minimal task argument instead.
+  const testArgs = buildPiArgs(taskArg, sessionFilePath, extensions, stageProfile, noTools);
+  if (estimateCommandLineLength(command, [...prefixArgs, ...testArgs]) > MAX_COMMAND_LINE_LENGTH) {
+    const combinedJsonl = appendTaskToSessionJsonl(sanitized.jsonl, task);
+    fs.writeFileSync(sessionFilePath, combinedJsonl, { encoding: "utf-8", mode: 0o600 });
+    taskArg = "respond to the task above";
+    result.stderr += `[cdev] task offloaded to session file to avoid command-line length limit\n`;
+  }
+
+  const piArgs = buildPiArgs(taskArg, sessionFilePath, extensions, stageProfile, noTools);
 
   const exitCode = await new Promise<number>((resolve) => {
-    const { command, prefixArgs } = resolvePiSpawn();
     const proc = spawn(command, [...prefixArgs, ...piArgs], {
       cwd,
       shell: false,
@@ -899,7 +932,7 @@ export interface RunAutoForkOptions {
   customSynthesizePrompt?: string;
   /** If true, skip stage 2 — return raw stage 1 findings only. */
   quick?: boolean;
-  /** If true, run stage 1 twice with different temperatures and merge findings before stage 2. */
+  /** If true, run stage 1 twice and merge findings before stage 2. */
   verify?: boolean;
   /** Called when a stage starts. Lets the caller show progress. */
   onProgress?: (stage: "scout" | "forge", model: string) => void;
@@ -937,7 +970,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   let stage1Findings: Stage1Findings | null = null;
   const onUpdate = opts.onUpdate;
 
-  async function runStage1Run(label: string, temperature?: number): Promise<ForkResult> {
+  async function runStage1Run(label: string): Promise<ForkResult> {
     return runStageWithRetry({
       cwd,
       task: stage1Task,
@@ -951,16 +984,17 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       stageTimeoutMs: 300_000,
       sanitizedSessionJsonl: sanitizedSnapshot,
       retries: 1,
-      temperature,
       onUpdate,
     });
   }
 
   if (verify) {
-    // Self-consistency: run stage 1 twice concurrently with different temperatures
+    // Self-consistency: run stage 1 twice concurrently. The two independent
+    // samples are merged before forge. We no longer pass --temperature because
+    // the Pi CLI does not support it across all providers.
     const [runA, runB] = await Promise.all([
-      runStage1Run("exploration A", 0.2),
-      runStage1Run("exploration B", 0.7),
+      runStage1Run("exploration A"),
+      runStage1Run("exploration B"),
     ]);
 
     // Combine usage from both runs into the primary stage1 result

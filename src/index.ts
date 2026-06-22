@@ -86,7 +86,7 @@ export default function (pi: ExtensionAPI) {
     name: "cdev",
     label: "Chain Dev",
     description:
-      "Two-stage development fork: first a cheap model (scout) explores and gathers evidence, then a powerful model (forge) synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for scout only (raw findings, no forge). Set verify=true to run scout twice with different temperatures and merge findings before forge (better accuracy, slower, costs ~2x stage 1). Set recall=<topic> to retrieve past fork findings from project memory (no fork runs). Set reviewFile=<path> with review=true to review a specific file/artifact instead of the session. Set diffSpec=<range> to review a git/svn diff (e.g. 'HEAD~3..HEAD'). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
+      "Two-stage development fork: first a cheap model (scout) explores and gathers evidence, then a powerful model (forge) synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for scout only (raw findings, no forge). Set verify=true to run the scout stage twice and merge the findings before forge (better accuracy, slower, costs ~2x stage 1). Set recall=<topic> to retrieve past fork findings from project memory (no fork runs). Set reviewFile=<path> with review=true to review a specific file/artifact instead of the session. Set diffSpec=<range> to review a git/svn diff (e.g. 'HEAD~3..HEAD'). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
     promptSnippet: "Two-stage fork: scout (cheap) explores → forge (powerful) writes (or scout only with quick:true). Use recall to retrieve past findings.",
     promptGuidelines: [
       "Use cdev for any task requiring more than 3-4 file reads — cheaper than parent model reading files one-by-one.",
@@ -130,7 +130,7 @@ export default function (pi: ExtensionAPI) {
       })),
       verify: Type.Optional(Type.Boolean({
         description:
-          "If true, run the scout stage twice with different sampling temperatures and merge the findings before sending them to the forge stage. Improves accuracy and coverage for high-stakes tasks at ~2x stage 1 cost and slower speed.",
+          "If true, run the scout stage twice and merge the findings before sending them to the forge stage. The two independent runs increase coverage for high-stakes tasks at ~2x stage 1 cost and slower speed.",
       })),
     }),
     renderCall,

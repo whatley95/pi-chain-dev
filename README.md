@@ -26,7 +26,7 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 |---|---|
 | `/cdev <task>` | Full two-stage: cheap model gathers evidence, powerful model writes structured report |
 | `/cdev quick <task>` | Scout only — cheap model returns raw findings, skip forge (synthesis) |
-| `/cdev verify <task>` | Scout ×2 with different temperatures + forge — higher accuracy, ~2× stage 1 cost |
+| `/cdev verify <task>` | Scout ×2 + forge — higher accuracy, ~2× stage 1 cost |
 | `/cdev review` | Forge only — reviews recent code changes for bugs, edge cases, and improvements |
 | `/cdev auto on` | Auto-trigger mode — LLM proactively uses `cdev` for exploration tasks |
 | `/cdev auto off` | Disable auto-trigger |
@@ -187,12 +187,12 @@ If stage 1 output is invalid or empty, cdev retries the scout stage once automat
        │
        ▼
   ┌──────────────────────────────────────────────┐
-  │  SCOUT A — cheap model  (temperature 0.2)    │
+  │  SCOUT A — cheap model                       │
   │  Returns structured findings                 │
   └──────────────────┬───────────────────────────┘
                      │
   ┌──────────────────┼───────────────────────────┐
-  │  SCOUT B — same model (temperature 0.7)      │
+  │  SCOUT B — same model                        │
   │  Returns structured findings                 │
   └──────────────────┬───────────────────────────┘
                      │ merge unique / deduplicate
@@ -206,7 +206,7 @@ If stage 1 output is invalid or empty, cdev retries the scout stage once automat
               PARENT reads report, decides, codes
 ```
 
-If one scout run produces invalid findings, cdev uses the valid run. If both are invalid, cdev falls back to the raw text from the first run.
+If one scout run produces invalid findings, cdev uses the valid run. If both are invalid, cdev falls back to the raw text from the first run. The two runs are independent samples; results are merged for broader coverage.
 
 ### Review mode (`/cdev review`)
 
@@ -222,8 +222,10 @@ If one scout run produces invalid findings, cdev uses the valid run. If both are
   └──────────────────┬───────────────────────────┘
                      │
                      ▼
-              PARENT fixes issues
+               PARENT fixes issues
 ```
+
+If the file or diff is too large to fit on the command line, cdev automatically offloads the review prompt into the session snapshot file and passes only a short continuation prompt to the child Pi process. Very large files are also truncated with a clear notice so the review stays within model context limits.
 
 ### Auto-trigger mode
 
