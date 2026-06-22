@@ -76,20 +76,31 @@ function writeTempSessionJsonl(sessionJsonl: string): { dir: string; filePath: s
   return { dir: tmpDir, filePath };
 }
 
-function appendTaskToSessionJsonl(sessionJsonl: string, task: string): string {
+export function appendTaskToSessionJsonl(sessionJsonl: string, task: string): string {
   const lines = sessionJsonl.trim().split("\n").filter(Boolean);
+  // Use a system instruction entry so the child sees the task as context rather
+  // than an additional user turn. This avoids creating a dangling user message
+  // after the snapshot's last assistant response.
+  lines.push(JSON.stringify({
+    type: "message",
+    role: "system",
+    name: "cdev-task",
+    content: [{ type: "text", text: `cdev task for this fork: ${task}` }],
+  }));
+  // Add a minimal user message that the child should respond to.
   lines.push(JSON.stringify({
     type: "message",
     role: "user",
-    content: [{ type: "text", text: task }],
+    content: [{ type: "text", text: "Respond to the cdev task above." }],
   }));
   return lines.join("\n") + "\n";
 }
 
-function estimateCommandLineLength(command: string, args: string[]): number {
+export function estimateCommandLineLength(command: string, args: string[]): number {
   // Windows CreateProcess limit is 32,767 Unicode chars; cmd.exe is much lower.
-  // Leave headroom for quoting/escaping. Unix limits are much larger.
-  return command.length + args.reduce((sum, arg) => sum + arg.length + 1, 0) + 1;
+  // Leave generous headroom for quoting/escaping. Unix limits are much larger.
+  const overhead = args.length * 2; // quotes/spaces per arg
+  return command.length + args.reduce((sum, arg) => sum + arg.length + 1, 0) + overhead + 1;
 }
 
 const MAX_COMMAND_LINE_LENGTH = process.platform === "win32" ? 30000 : 200000;
@@ -548,7 +559,7 @@ Files reviewed, diff locations, edge cases verified, assumptions checked.
 Be direct. Flag real problems loudly. Don't praise trivial things.${STAGE_AUDIT_GUARD}`;
 }
 
-function buildFileReviewPrompt(
+export function buildFileReviewPrompt(
   filePath: string,
   reportContent: string,
   referencedFiles: Record<string, string>,
@@ -668,7 +679,7 @@ ${truncated}
 
 const inheritedCliArgs = parseInheritedCliArgs(process.argv);
 
-function buildPiArgs(
+export function buildPiArgs(
   task: string,
   forkSessionPath: string,
   extensions: string[] | null,

@@ -206,7 +206,7 @@ If stage 1 output is invalid or empty, cdev retries the scout stage once automat
               PARENT reads report, decides, codes
 ```
 
-If one scout run produces invalid findings, cdev uses the valid run. If both are invalid, cdev falls back to the raw text from the first run. The two runs are independent samples; results are merged for broader coverage.
+If one scout run produces invalid findings, cdev uses the valid run. If both are invalid, cdev falls back to the raw text from the first run. The two runs use the same model configuration; their independence (different random samples) gives broader coverage without relying on unsupported CLI flags.
 
 ### Review mode (`/cdev review`)
 

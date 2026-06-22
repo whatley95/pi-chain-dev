@@ -238,6 +238,77 @@ describe("memory refresh integration", () => {
   });
 });
 
+// ── runner.ts command-line guard helpers ─────────────────
+
+import { estimateCommandLineLength, appendTaskToSessionJsonl, buildFileReviewPrompt } from "../src/runner.js";
+
+describe("estimateCommandLineLength (runner.ts)", () => {
+  it("counts command and args", () => {
+    const len = estimateCommandLineLength("node", ["--mode", "json", "task"]);
+    assert.ok(len > "node".length + "--mode".length + "json".length + "task".length);
+  });
+
+  it("grows with argument length", () => {
+    const base = estimateCommandLineLength("node", ["a"]);
+    const long = estimateCommandLineLength("node", ["a".repeat(1000)]);
+    assert.ok(long > base + 900);
+  });
+});
+
+describe("appendTaskToSessionJsonl (runner.ts)", () => {
+  it("appends system task instruction and user prompt", () => {
+    const out = appendTaskToSessionJsonl(JSON.stringify({ type: "header" }), "explore auth");
+    const lines = out.trim().split("\n");
+    assert.strictEqual(lines.length, 3);
+    const system = JSON.parse(lines[1]);
+    assert.strictEqual(system.role, "system");
+    assert.ok(system.content[0].text.includes("explore auth"));
+    const user = JSON.parse(lines[2]);
+    assert.strictEqual(user.role, "user");
+  });
+});
+
+describe("buildFileReviewPrompt (runner.ts)", () => {
+  it("truncates very long report content", () => {
+    const longReport = "x".repeat(20000);
+    const prompt = buildFileReviewPrompt("report.md", longReport, {});
+    assert.ok(prompt.length < longReport.length + 5000);
+    assert.ok(prompt.includes("truncated from 20000 chars"));
+  });
+
+  it("includes referenced files", () => {
+    const prompt = buildFileReviewPrompt("report.md", "claim", { "src/a.ts": "const a = 1;" });
+    assert.ok(prompt.includes("src/a.ts"));
+    assert.ok(prompt.includes("const a = 1;"));
+  });
+});
+
+// ── runner.ts: buildPiArgs no longer emits --temperature ───
+
+import { buildPiArgs } from "../src/runner.js";
+
+describe("buildPiArgs (runner.ts)", () => {
+  it("does not include --temperature", () => {
+    const args = buildPiArgs("explore auth", "/tmp/session.jsonl", null, {
+      provider: "openai",
+      id: "gpt-4",
+      thinking: "minimal",
+    });
+    assert.ok(!args.includes("--temperature"));
+  });
+
+  it("includes stage profile and task", () => {
+    const args = buildPiArgs("explore auth", "/tmp/session.jsonl", null, {
+      provider: "openai",
+      id: "gpt-4",
+      thinking: "minimal",
+    });
+    assert.ok(args.includes("--provider"));
+    assert.ok(args.includes("openai"));
+    assert.ok(args.includes("explore auth"));
+  });
+});
+
 // ── Structured stage 1 findings ──────────────────────────
 
 import { isStage1Findings } from "../src/types.js";
