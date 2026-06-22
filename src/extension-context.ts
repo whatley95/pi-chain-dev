@@ -13,6 +13,36 @@ export const AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, 
 export const DEFAULT_SIGNATURE = "whatley.xyz";
 export const FORK_COST_STATUS_KEY = "cdev-cost";
 
+// ── Session cost tracking ──────────────────────────────────
+
+const _sessionCostCache = new Map<string, number>();
+
+export function recordForkCost(cwd: string, cost: number): void {
+  const current = _sessionCostCache.get(cwd) || 0;
+  _sessionCostCache.set(cwd, current + cost);
+}
+
+export function getSessionForkCost(cwd: string): number {
+  return _sessionCostCache.get(cwd) || 0;
+}
+
+export function resetSessionForkCost(cwd: string): void {
+  _sessionCostCache.delete(cwd);
+}
+
+export function checkCostBudget(config: AutoForkConfig, cwd: string, forkCost: number): { allowed: boolean; reason?: string } {
+  const maxForkCost = config.maxForkCost ?? 0;
+  const maxSessionCost = config.maxSessionCost ?? 0;
+  if (maxForkCost > 0 && forkCost > maxForkCost) {
+    return { allowed: false, reason: `fork cost $${forkCost.toFixed(4)} exceeds maxForkCost $${maxForkCost.toFixed(4)}` };
+  }
+  const sessionCost = getSessionForkCost(cwd);
+  if (maxSessionCost > 0 && sessionCost + forkCost > maxSessionCost) {
+    return { allowed: false, reason: `session cost would reach $${(sessionCost + forkCost).toFixed(4)}, exceeding maxSessionCost $${maxSessionCost.toFixed(4)}` };
+  }
+  return { allowed: true };
+}
+
 // ── Cost footer cache ──────────────────────────────────────
 
 interface CostCache {

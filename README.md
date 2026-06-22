@@ -325,6 +325,8 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `signature` | string | `"whatley.xyz"` | Override status signature |
 | `offline` | boolean | `true` | Force `PI_OFFLINE=1` for child processes |
 | `costFooter` | boolean | `true` | Show cdev cost in footer |
+| `maxForkCost` | number | `0` | Max cost (USD) for a single fork. `0` = unlimited |
+| `maxSessionCost` | number | `0` | Max total cost (USD) for cdev in the current session. `0` = unlimited |
 
 ## Recommended model pairing
 
@@ -456,6 +458,38 @@ Stage 1 now returns structured JSON findings. This makes stage 2 synthesis more 
 ```
 
 Each finding has an optional `file`, `evidence`, and `confidence` (`high`/`medium`/`low`).
+
+## Cost budgeting
+
+Set per-fork and per-session cost limits in settings:
+
+```json
+{
+  "pi-chain-dev": {
+    "maxForkCost": 0.05,
+    "maxSessionCost": 0.50
+  }
+}
+```
+
+- `maxForkCost` blocks a single fork if its estimated cost would exceed the limit.
+- `maxSessionCost` blocks a fork if the running session total + estimated cost would exceed the limit.
+- `0` means unlimited (default).
+
+When a limit is hit, cdev returns an error immediately without spawning models.
+
+## Streaming progress
+
+Long-running forks now emit live activity updates. The progress widget shows the current stage and latest activity, e.g.:
+
+```
+🔍 Scout exploration…  bash: running
+🔍 Scout exploration…  read src/auth/middleware.ts
+🔍 Scout exploration…  usage: 1,240 tokens, $0.0004
+⚒️ Forge synthesis…    assistant responding...
+```
+
+This is automatic — no config needed.
 
 ## Session history
 

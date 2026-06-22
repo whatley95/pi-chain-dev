@@ -49,6 +49,10 @@ export interface AutoForkConfig {
   themed: boolean;
   /** Custom signature shown in /cdev status (e.g. name, handle). */
   signature?: string;
+  /** Maximum cost (USD) for a single fork. 0 = unlimited. */
+  maxForkCost?: number;
+  /** Maximum total cost (USD) for cdev in the current session. 0 = unlimited. */
+  maxSessionCost?: number;
 }
 
 export interface UsageStats {

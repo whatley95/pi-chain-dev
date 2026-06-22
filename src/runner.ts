@@ -12,7 +12,7 @@ import * as path from "node:path";
 import { buildChildEnv } from "./env.js";
 import { extractFilePaths } from "./memory.js";
 import { parseInheritedCliArgs } from "./runner-cli.js";
-import { processPiJsonLine, getFinalAssistantText } from "./runner-events.js";
+import { processPiJsonLine, getFinalAssistantText, summarizePiEvent } from "./runner-events.js";
 import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings } from "./types.js";
 import { emptyUsage, emptyFailedResult, isStage1Findings } from "./types.js";
 
@@ -689,6 +689,11 @@ export interface RunStageOptions {
   retries?: number;
   /** Optional sampling temperature for the stage model. */
   temperature?: number;
+  /**
+   * Optional callback invoked when a JSON event line is parsed during the stage.
+   * Allows callers to show live progress.
+   */
+  onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
 }
 
 async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResult> {
@@ -716,7 +721,7 @@ async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResult> {
 async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
   const { cwd, task, stageLabel, forkSessionJsonl, stageProfile, extensions,
           environment, offline, signal, noTools = false, stageTimeoutMs = 0,
-          sanitizedSessionJsonl, temperature } = opts;
+          sanitizedSessionJsonl, temperature, onUpdate } = opts;
 
   const result: ForkResult = {
     task,
@@ -777,7 +782,20 @@ async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
     };
 
     const flushLine = (line: string) => {
-      if (processPiJsonLine(line, result)) { /* progress parsed */ }
+      const parsed = processPiJsonLine(line, result);
+      if (parsed && onUpdate) {
+        let event: { type?: string; [key: string]: unknown };
+        try {
+          event = JSON.parse(line) as { type?: string; [key: string]: unknown };
+        } catch {
+          return parsed;
+        }
+        const summary = summarizePiEvent(event as { type: string; [key: string]: unknown });
+        if (summary) {
+          onUpdate({ stage: stageLabel, activity: summary, cost: result.usage?.cost, tokens: result.usage?.contextTokens });
+        }
+      }
+      return parsed;
     };
 
     const onStdoutData = (chunk: Buffer) => {
@@ -843,6 +861,11 @@ export interface RunAutoForkOptions {
   verify?: boolean;
   /** Called when a stage starts. Lets the caller show progress. */
   onProgress?: (stage: "scout" | "forge", model: string) => void;
+  /**
+   * Called when a stage emits a live activity update.
+   * Allows callers to show streaming progress in the UI.
+   */
+  onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
   extensions?: string[] | null;
   environment?: Record<string, string>;
   offline?: boolean;
@@ -870,6 +893,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   let stage1Result: ForkResult;
   let stage1Findings: Stage1Findings | null = null;
+  const onUpdate = opts.onUpdate;
 
   async function runStage1Run(label: string, temperature?: number): Promise<ForkResult> {
     return runStageWithRetry({
@@ -886,6 +910,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       sanitizedSessionJsonl: sanitizedSnapshot,
       retries: 1,
       temperature,
+      onUpdate,
     });
   }
 
@@ -1017,6 +1042,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       stageTimeoutMs: 180_000,
       sanitizedSessionJsonl: sanitizedSnapshot,
       retries: 1,
+      onUpdate,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1062,6 +1088,8 @@ export async function runCdevReview(opts: {
   customReviewPrompt?: string;
   /** Called when review starts. */
   onProgress?: (stage: "scout" | "forge", model: string) => void;
+  /** Called when review emits a live activity update. */
+  onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
   extensions?: string[] | null;
   environment?: Record<string, string>;
   offline?: boolean;
@@ -1088,6 +1116,7 @@ export async function runCdevReview(opts: {
       signal,
       noTools: true,
       stageTimeoutMs: 180_000,
+      onUpdate: opts.onUpdate,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1108,6 +1137,8 @@ export async function runFileReview(opts: {
   fileContent: string;
   stageProfile: StageProfile;
   onProgress?: (stage: "scout" | "forge", model: string) => void;
+  /** Called when review emits a live activity update. */
+  onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
   extensions?: string[] | null;
   environment?: Record<string, string>;
   offline?: boolean;
@@ -1154,6 +1185,7 @@ export async function runFileReview(opts: {
       signal,
       noTools: true,
       stageTimeoutMs: 180_000,
+      onUpdate: opts.onUpdate,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1174,6 +1206,8 @@ export async function runDiffReview(opts: {
   diffContent: string;
   stageProfile: StageProfile;
   onProgress?: (stage: "scout" | "forge", model: string) => void;
+  /** Called when review emits a live activity update. */
+  onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
   extensions?: string[] | null;
   environment?: Record<string, string>;
   offline?: boolean;
@@ -1199,6 +1233,7 @@ export async function runDiffReview(opts: {
       signal,
       noTools: true,
       stageTimeoutMs: 180_000,
+      onUpdate: opts.onUpdate,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

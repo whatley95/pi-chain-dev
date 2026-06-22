@@ -14,6 +14,8 @@ import {
   resolveStageProfiles,
   formatResultContent,
   logError,
+  checkCostBudget,
+  recordForkCost,
 } from "./extension-context.js";
 
 export interface AutoForkParamsType {
@@ -103,6 +105,9 @@ export async function executeCdevTool(
           fileContent,
           stageProfile: reviewProfile,
           onProgress,
+          onUpdate: (update) => {
+            ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing ${p.reviewFile}…  ${update.activity ?? ""}`)]);
+          },
           extensions: config.extensions,
           environment: config.environment,
           offline: config.offline,
@@ -129,6 +134,8 @@ export async function executeCdevTool(
 
         saveSession(ctx.cwd, `review ${p.reviewFile}`, true, startTime, details, result);
         if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
+        const reviewCost = result.usage?.cost ?? 0;
+        recordForkCost(ctx.cwd, reviewCost);
         if (config.memory) {
           indexFindingsAsync({
             task: `review ${p.reviewFile}`,
@@ -214,6 +221,9 @@ export async function executeCdevTool(
           diffContent,
           stageProfile: reviewProfile,
           onProgress,
+          onUpdate: (update) => {
+            ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing diff ${diffSpec}…  ${update.activity ?? ""}`)]);
+          },
           extensions: config.extensions,
           environment: config.environment,
           offline: config.offline,
@@ -237,6 +247,8 @@ export async function executeCdevTool(
 
         saveSession(ctx.cwd, `review diff ${diffSpec}`, true, startTime, details, result);
         if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
+        const diffReviewCost = result.usage?.cost ?? 0;
+        recordForkCost(ctx.cwd, diffReviewCost);
         if (config.memory) {
           indexFindingsAsync({
             task: `review diff ${diffSpec}`,
@@ -283,6 +295,9 @@ export async function executeCdevTool(
         stageProfile: reviewProfile,
         customReviewPrompt: config.promptsEnabled ? config.prompts?.review : undefined,
         onProgress,
+        onUpdate: (update) => {
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing…  ${update.activity ?? ""}`)]);
+        },
         extensions: config.extensions,
         environment: config.environment,
         offline: config.offline,
@@ -305,6 +320,8 @@ export async function executeCdevTool(
 
       saveSession(ctx.cwd, reviewTask, true, startTime, details, result);
       if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
+      const sessionReviewCost = result.usage?.cost ?? 0;
+      recordForkCost(ctx.cwd, sessionReviewCost);
       if (config.memory) {
         indexFindingsAsync({
           task: reviewTask,
@@ -357,6 +374,18 @@ export async function executeCdevTool(
     }
 
     const quick = p.quick ?? false;
+    const verify = p.verify ?? false;
+
+    const estimatedCost = 0;
+    const budgetCheck = checkCostBudget(config, ctx.cwd, estimatedCost);
+    if (!budgetCheck.allowed) {
+      return {
+        content: [{ type: "text" as const, text: `cdev budget error: ${budgetCheck.reason}` }],
+        details: { stage1: null, stage2: null },
+        isError: true,
+      };
+    }
+
     const onProgress = (stage: string, model: string) => {
       if (stage === "scout") {
         ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔍 Scout exploring…  (${model})`)]);
@@ -376,8 +405,14 @@ export async function executeCdevTool(
       customExplorePrompt: config.promptsEnabled ? config.prompts?.explore : undefined,
       customSynthesizePrompt: config.promptsEnabled ? config.prompts?.synthesize : undefined,
       quick,
-      verify: p.verify ?? false,
+      verify,
       onProgress,
+      onUpdate: (update) => {
+        const icon = update.stage.includes("exploration") || update.stage === "scout" ? "🔍" : "⚒️";
+        const label = update.stage.includes("exploration") || update.stage === "scout" ? "Scout" : "Forge";
+        const activity = update.activity ? `  ${update.activity}` : "";
+        ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${label} ${update.stage}…${activity}`)]);
+      },
       extensions: config.extensions,
       environment: config.environment,
       offline: config.offline,
@@ -408,6 +443,8 @@ export async function executeCdevTool(
       }
     }
     if (result.errorMessage) logError(ctx.cwd, "full-mode", new Error(result.errorMessage));
+    const forkCost = result.usage?.cost ?? 0;
+    recordForkCost(ctx.cwd, forkCost);
     if (config.memory) {
       indexFindingsAsync({
         task: p.task,

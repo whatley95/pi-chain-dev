@@ -43,6 +43,8 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   memory: true,
   themed: false,
   signature: undefined,
+  maxForkCost: 0,
+  maxSessionCost: 0,
 };
 
 function isThinkingLevel(value: unknown): value is ForkThinkingLevel {
@@ -158,6 +160,8 @@ function readNamespacedConfig(settingsPath: string): Partial<AutoForkConfig> {
     if (typeof config.memory === "boolean") parsed.memory = config.memory;
     if (typeof config.themed === "boolean") parsed.themed = config.themed;
     if (typeof config.signature === "string") parsed.signature = config.signature;
+    if (typeof config.maxForkCost === "number") parsed.maxForkCost = Math.max(0, config.maxForkCost);
+    if (typeof config.maxSessionCost === "number") parsed.maxSessionCost = Math.max(0, config.maxSessionCost);
 
     // Parse prompts
     if (config.prompts && typeof config.prompts === "object") {
