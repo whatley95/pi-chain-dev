@@ -1,6 +1,7 @@
 import { readFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type AutoForkConfig } from "./config.js";
 import { getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
@@ -55,12 +56,11 @@ function bg(token: string, text: string, theme: ExtensionContext["ui"]["theme"],
 
 export function getCdevVersion(cwd: string): string {
   try {
-    const { spawnSync } = require("node:child_process");
     const git = spawnSync("git", ["describe", "--tags", "--always", "--dirty", "--abbrev=7"], { cwd, timeout: 3000 });
     if (git.status === 0 && git.stdout) return git.stdout.toString().trim();
     const sha = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd, timeout: 3000 });
     if (sha.status === 0 && sha.stdout) return sha.stdout.toString().trim();
-  } catch { /* require may be unavailable in some ESM loaders */ }
+  } catch { /* ignore */ }
   try {
     const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf-8"));
     if (pkg.version) return pkg.version;
