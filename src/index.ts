@@ -1408,16 +1408,44 @@ REVIEW_PROMPT:
         ctx.ui.notify("Only showing models from configured providers. Use /login to add providers.", "info");
         return;
       }
+
+      // Search/filter step to avoid stretching the UI with huge lists (e.g. OpenRouter)
+      const MAX_SHOWN = 50;
+      let searchTerm = "";
+      if (configuredModels.length > MAX_SHOWN) {
+        const raw = await ctx.ui.input(
+          `Search ${configuredModels.length} configured models (empty = show first ${MAX_SHOWN}):`,
+          "type to filter..."
+        );
+        if (raw === undefined) return;
+        searchTerm = raw.trim().toLowerCase();
+      }
+      const term = searchTerm;
+      const matchedModels = term
+        ? configuredModels.filter(m =>
+            m.id.toLowerCase().includes(term) ||
+            m.provider.toLowerCase().includes(term) ||
+            (m.name && m.name.toLowerCase().includes(term))
+          )
+        : configuredModels.slice(0, MAX_SHOWN);
+      if (matchedModels.length === 0) {
+        ctx.ui.notify(`No models match "${term}".`, "info");
+        return;
+      }
+
       const currentModel = ctx.model;
-      const modelItems = configuredModels.slice(0, 50).map(m => {
+      const modelItems = matchedModels.slice(0, MAX_SHOWN).map(m => {
         const isCurrent = currentModel && currentModel.provider === m.provider && currentModel.id === m.id;
         return `${m.id} [${m.provider}]${isCurrent ? " ✓" : ""}`;
       });
+      if (matchedModels.length > MAX_SHOWN) {
+        modelItems.push(`… ${matchedModels.length - MAX_SHOWN} more matches — refine your search`);
+      }
       const modelPick = await ctx.ui.select(
-        `Pick ${stage} model from configured providers (${configuredModels.length} available):`,
+        `Pick ${stage} model (${matchedModels.length} shown${term ? ` matching "${term}"` : ""}):`,
         modelItems
       );
-      if (!modelPick) return;
+      if (!modelPick || modelPick.startsWith("…")) return;
       
       // Parse "modelId [provider]"
       const match = modelPick.match(/^(.+?)\s+\[(.+?)\]/);
