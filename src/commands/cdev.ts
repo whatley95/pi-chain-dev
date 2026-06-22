@@ -3,32 +3,38 @@ import { join, isAbsolute } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "../config.js";
-import { runAutoFork } from "../runner.js";
-import { getFinalAssistantText } from "../runner-events.js";
-import { saveSession, listSessions, getSession, formatHistory, formatSessionRecord, purgeOldSessions } from "../history.js";
+import { listSessions, getSession, formatHistory, formatSessionRecord, purgeOldSessions } from "../history.js";
+import { memoryClear, getErrorCount, clearErrorLog } from "../memory.js";
 import {
-  indexFindingsAsync,
-  loadMemory,
-  formatMemoryTopics,
-  formatTopicDetail,
-  memoryClear,
-  memoryForget,
-  memoryGetTopic,
-  memoryTopicCount,
-  mergeSimilarTopics,
-  getErrorCount,
-  clearErrorLog,
-} from "../memory.js";
-import { scanProject, formatScanReport } from "../scan.js";
-import {
-  withAuditGuard,
-  makeThemedBg,
-  buildSessionSnapshotJsonl,
-  resolveStageProfiles,
   getCdevVersion,
   resolveSignature,
-  logError,
 } from "../extension-context.js";
+import { handleScan } from "./cdev-scan.js";
+import { handleMemory, memoryTopicCount } from "./cdev-memory.js";
+
+function writeAgentSetting(key: string, value: unknown): void {
+  const agentDir = getAgentDir();
+  const settingsPath = join(agentDir, "settings.json");
+  let settings: Record<string, unknown> = {};
+  if (existsSync(settingsPath)) {
+    settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+  }
+  if (!settings["pi-chain-dev"]) settings["pi-chain-dev"] = {};
+  (settings["pi-chain-dev"] as Record<string, unknown>)[key] = value;
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+}
+
+function writeProjectThemed(cwd: string, enable: boolean): void {
+  const projSettingsPath = join(cwd, ".pi", "settings.json");
+  if (existsSync(projSettingsPath)) {
+    const projSettings = JSON.parse(readFileSync(projSettingsPath, "utf-8"));
+    const projCdev = projSettings?.["pi-chain-dev"] as Record<string, unknown> | undefined;
+    if (projCdev && "themed" in projCdev) {
+      projCdev.themed = enable;
+      writeFileSync(projSettingsPath, JSON.stringify(projSettings, null, 2) + "\n", "utf-8");
+    }
+  }
+}
 
 export function registerCdevCommand(
   pi: ExtensionAPI,
@@ -37,21 +43,13 @@ export function registerCdevCommand(
   updatePromptsStatus: (ctx: ExtensionContext) => void,
 ): void {
   pi.registerCommand("cdev", {
-    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, verify <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, memory on|off, themed on|off",
+    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, verify <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
 
       // ── Subcommand: auto on ──
       if (trimmed === "auto on" || trimmed === "auto") {
-        const agentDir = getAgentDir();
-        const settingsPath = join(agentDir, "settings.json");
-        let settings: Record<string, unknown> = {};
-        if (existsSync(settingsPath)) {
-          settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-        }
-        if (!settings["pi-chain-dev"]) settings["pi-chain-dev"] = {};
-        (settings["pi-chain-dev"] as Record<string, unknown>).auto = true;
-        writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+        writeAgentSetting("auto", true);
         ctx.ui.notify("cdev auto mode ON — LLM will proactively use cdev for exploration", "info");
         resetAutoTurnCounter();
         updateAutoStatus(ctx);
@@ -60,190 +58,18 @@ export function registerCdevCommand(
 
       // ── Subcommand: auto off ──
       if (trimmed === "auto off") {
-        const agentDir = getAgentDir();
-        const settingsPath = join(agentDir, "settings.json");
-        let settings: Record<string, unknown> = {};
-        if (existsSync(settingsPath)) {
-          settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-        }
-        if (!settings["pi-chain-dev"]) settings["pi-chain-dev"] = {};
-        (settings["pi-chain-dev"] as Record<string, unknown>).auto = false;
-        writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+        writeAgentSetting("auto", false);
         ctx.ui.notify("cdev auto mode OFF", "info");
         resetAutoTurnCounter();
         updateAutoStatus(ctx);
         return;
       }
 
-      // ── Subcommand: scan deep ──
-      if (trimmed === "scan deep") {
-        const config = loadConfig(ctx.cwd);
-        const profiles = resolveStageProfiles(config);
-        const themedBg = makeThemedBg(ctx, config.themed);
-        if (profiles.warning) {
-          ctx.ui.notify(profiles.warning, "warn");
-          return;
-        }
-        ctx.ui.notify("Deep scanning project (stage 1 → stage 2)...", "info");
-        try {
-          const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager);
-          if (!snapshot) { ctx.ui.notify("Cannot snapshot session.", "error"); return; }
+      // ── Subcommands: scan, scan deep ──
+      if (await handleScan(trimmed, ctx, updatePromptsStatus)) return;
 
-          const task = `Scan this project's architecture, conventions, and patterns. Generate 3 focused prompts for future cdev use:
-1. explore — what to focus on during exploration (stack-specific patterns, conventions, key areas)
-2. synthesize — how to structure synthesis reports (what risks to flag, what ordering matters)
-3. review — what to check during code review (project-specific pitfalls, conventions, anti-patterns)
-
-Read package.json, key source files, config files, and directory structure. Return ONLY the 3 prompts in this format:
-
-EXPLORE_PROMPT:
-<text>
-
-SYNTHESIZE_PROMPT:
-<text>
-
-REVIEW_PROMPT:
-<text>`;
-
-          const scanTask = withAuditGuard(task);
-          const scanStartTime = Date.now();
-          const onProgress = (stage: string, model: string) => {
-            if (stage === "scout") {
-              ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔍 Scout exploring…  (${model})`)]);
-            } else {
-              ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge synthesizing…  (${model})`)]);
-            }
-          };
-          onProgress("scout", profiles.stage1.id);
-          const { result, details: scanDetails } = await runAutoFork({
-            cwd: ctx.cwd,
-            task: scanTask,
-            forkSessionSnapshotJsonl: snapshot,
-            stage1Profile: profiles.stage1,
-            stage2Profile: profiles.stage2,
-            onProgress,
-            extensions: config.extensions,
-            environment: config.environment,
-            offline: config.offline,
-            signal: undefined,
-          });
-          ctx.ui.setWidget("cdev-progress", undefined);
-
-          saveSession(ctx.cwd, task, false, scanStartTime, scanDetails, result);
-          if (result.errorMessage) logError(ctx.cwd, "deep-scan-fork", new Error(result.errorMessage));
-          if (config.memory) {
-            indexFindingsAsync({
-              task,
-              resultText: getFinalAssistantText(result.messages) || "",
-              stage1Model: scanDetails.stage1?.model ?? profiles.stage1.id,
-              stage2Model: scanDetails.stage2?.model ?? profiles.stage2.id,
-              isReview: false,
-              quick: false,
-              cost: result.usage?.cost ?? 0,
-              cwd: ctx.cwd,
-            });
-          }
-
-          const text = getFinalAssistantText(result.messages) || "";
-          const exploreMatch = text.match(/EXPLORE_PROMPT:\s*\n([\s\S]*?)(?=\n\nSYNTHESIZE_PROMPT:|$)/i);
-          const synthMatch = text.match(/SYNTHESIZE_PROMPT:\s*\n([\s\S]*?)(?=\n\nREVIEW_PROMPT:|$)/i);
-          const reviewMatch = text.match(/REVIEW_PROMPT:\s*\n([\s\S]*?)$/i);
-
-          const explore = exploreMatch?.[1]?.trim() || "";
-          const synthesize = synthMatch?.[1]?.trim() || "";
-          const review = reviewMatch?.[1]?.trim() || "";
-
-          if (!explore && !review) {
-            ctx.ui.notify("Could not parse prompts from model output. Falling back to template scan.", "warn");
-            return;
-          }
-
-          const projectDir = join(ctx.cwd, ".pi");
-          if (!existsSync(projectDir)) mkdirSync(projectDir, { recursive: true });
-          const projectSettingsPath = join(projectDir, "settings.json");
-          let projSettings: Record<string, unknown> = {};
-          if (existsSync(projectSettingsPath)) {
-            projSettings = JSON.parse(readFileSync(projectSettingsPath, "utf-8"));
-          }
-          if (!projSettings["pi-chain-dev"]) projSettings["pi-chain-dev"] = {};
-          (projSettings["pi-chain-dev"] as Record<string, unknown>).prompts = { explore, synthesize, review };
-          (projSettings["pi-chain-dev"] as Record<string, unknown>).promptsEnabled = true;
-          writeFileSync(projectSettingsPath, JSON.stringify(projSettings, null, 2) + "\n", "utf-8");
-
-          ctx.ui.notify(
-            `Deep scan complete!\nScout: ${scanDetails.stage1?.model || "?"}\nForge: ${scanDetails.stage2?.model || "?"}\n\nPrompts saved to .pi/settings.json\nToggle: /cdev prompts on|off`,
-            "info"
-          );
-          updatePromptsStatus(ctx);
-        } catch (err) {
-          logError(ctx.cwd, "deep-scan", err);
-          ctx.ui.notify(`Deep scan failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-        }
-        return;
-      }
-
-      // ── Subcommand: scan ──
-      if (trimmed === "scan") {
-        ctx.ui.notify("Scanning project for stack detection...", "info");
-        try {
-          const result = scanProject(ctx.cwd);
-          const report = formatScanReport(result);
-
-          const projectDir = join(ctx.cwd, ".pi");
-          if (!existsSync(projectDir)) mkdirSync(projectDir, { recursive: true });
-          const projectSettingsPath = join(projectDir, "settings.json");
-          let projSettings: Record<string, unknown> = {};
-          if (existsSync(projectSettingsPath)) {
-            projSettings = JSON.parse(readFileSync(projectSettingsPath, "utf-8"));
-          }
-          if (!projSettings["pi-chain-dev"]) projSettings["pi-chain-dev"] = {};
-          (projSettings["pi-chain-dev"] as Record<string, unknown>).prompts = result.prompts;
-          (projSettings["pi-chain-dev"] as Record<string, unknown>).promptsEnabled = true;
-          writeFileSync(projectSettingsPath, JSON.stringify(projSettings, null, 2) + "\n", "utf-8");
-
-          ctx.ui.notify(report, "info");
-          updatePromptsStatus(ctx);
-        } catch (err) {
-          logError(ctx.cwd, "template-scan", err);
-          ctx.ui.notify(`Scan failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-        }
-        return;
-      }
-
-      // ── Subcommand: recall ──
-      const recallMatch = trimmed.match(/^recall(?:\s+(.+))?$/);
-      if (recallMatch) {
-        const config = loadConfig(ctx.cwd);
-        if (!config.memory) {
-          ctx.ui.notify("Project memory is disabled. /cdev memory on to enable.", "warn");
-          return;
-        }
-        const topic = recallMatch[1]?.trim();
-        if (topic) {
-          const entry = memoryGetTopic(ctx.cwd, topic);
-          if (entry) ctx.ui.notify(formatTopicDetail(entry, ctx.cwd), "info");
-          else ctx.ui.notify(`No memory for topic "${topic}". /cdev recall to list all.`, "warn");
-        } else {
-          const memory = loadMemory(ctx.cwd);
-          ctx.ui.notify(formatMemoryTopics(memory), "info");
-        }
-        return;
-      }
-
-      // ── Subcommand: view (alias for recall) ──
-      const viewMatch = trimmed.match(/^view(?:\s+(.+))?$/);
-      if (viewMatch) {
-        const topic = viewMatch[1]?.trim();
-        if (topic) {
-          const entry = memoryGetTopic(ctx.cwd, topic);
-          if (entry) ctx.ui.notify(formatTopicDetail(entry, ctx.cwd), "info");
-          else ctx.ui.notify(`No memory for topic "${topic}". /cdev recall to list all.`, "warn");
-        } else {
-          const memory = loadMemory(ctx.cwd);
-          ctx.ui.notify(formatMemoryTopics(memory), "info");
-        }
-        return;
-      }
+      // ── Subcommands: recall, view, memory *, memory on/off ──
+      if (await handleMemory(trimmed, ctx)) return;
 
       // ── Subcommand: clear ──
       if (trimmed === "clear") {
@@ -278,13 +104,6 @@ REVIEW_PROMPT:
         return;
       }
 
-      // ── Subcommand: memory clear ──
-      if (trimmed === "memory clear") {
-        memoryClear(ctx.cwd);
-        ctx.ui.notify("Cleared all cdev project memory.", "info");
-        return;
-      }
-
       // ── Subcommand: clear error ──
       if (trimmed === "clear error") {
         const count = getErrorCount(ctx.cwd);
@@ -293,146 +112,11 @@ REVIEW_PROMPT:
         return;
       }
 
-      // ── Subcommand: memory forget <topic> ──
-      const memoryForgetMatch = trimmed.match(/^memory forget\s+(.+)$/);
-      if (memoryForgetMatch) {
-        const topic = memoryForgetMatch[1].trim();
-        const removed = memoryForget(ctx.cwd, topic);
-        if (removed) ctx.ui.notify(`Removed memory for topic "${topic}".`, "info");
-        else ctx.ui.notify(`No memory found for topic "${topic}".`, "warn");
-        return;
-      }
-
-      // ── Subcommand: memory merge ──
-      if (trimmed === "memory merge") {
-        const merged = mergeSimilarTopics(ctx.cwd);
-        if (merged.length > 0) {
-          ctx.ui.notify(`Merged similar topics:\n${merged.join("\n")}`, "info");
-        } else {
-          ctx.ui.notify("No similar topics to merge.", "info");
-        }
-        return;
-      }
-
-      // ── Subcommand: memory refresh <topic> ──
-      const memoryRefreshMatch = trimmed.match(/^memory refresh\s+(.+)$/);
-      if (memoryRefreshMatch) {
-        const config = loadConfig(ctx.cwd);
-        if (!config.memory) {
-          ctx.ui.notify("Project memory is disabled. /cdev memory on to enable.", "warn");
-          return;
-        }
-        const profiles = resolveStageProfiles(config);
-        if (profiles.warning) {
-          ctx.ui.notify(profiles.warning, "warn");
-          return;
-        }
-        const topic = memoryRefreshMatch[1].trim();
-        const entry = memoryGetTopic(ctx.cwd, topic);
-        if (!entry) {
-          ctx.ui.notify(`No memory found for topic "${topic}".`, "warn");
-          return;
-        }
-
-        ctx.ui.notify(`Refreshing memory topic "${topic}" (stage 1 → stage 2)...`, "info");
-        try {
-          const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager);
-          if (!snapshot) { ctx.ui.notify("Cannot snapshot session.", "error"); return; }
-
-          const filesList = entry.files.slice(0, 15).join(", ");
-          const previousFindings = entry.findings.slice(0, 3).map((f: { text: string }) => `- ${f.text}`).join("\n");
-          const refreshTask = withAuditGuard(
-            `Re-explore the "${topic}" topic in this project. Update our understanding based on the current code state.\n\nPreviously tracked files:\n${filesList}\n\nRecent findings:\n${previousFindings}\n\nFocus on what has changed and what is still accurate. Return updated findings, evidence, and action items.`
-          );
-
-          const themedBg = makeThemedBg(ctx, config.themed);
-          const refreshStartTime = Date.now();
-          const onProgress = (stage: string, model: string) => {
-            const icon = stage === "scout" ? "🔍" : "⚒️";
-            const label = stage === "scout" ? "Scout" : "Forge";
-            ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${label} refreshing ${topic}…  (${model})`)]);
-          };
-          onProgress("scout", profiles.stage1.id);
-          const { result, details: refreshDetails } = await runAutoFork({
-            cwd: ctx.cwd,
-            task: refreshTask,
-            forkSessionSnapshotJsonl: snapshot,
-            stage1Profile: profiles.stage1,
-            stage2Profile: profiles.stage2,
-            onProgress,
-            extensions: config.extensions,
-            environment: config.environment,
-            offline: config.offline,
-            signal: undefined,
-          });
-          ctx.ui.setWidget("cdev-progress", undefined);
-
-          saveSession(ctx.cwd, refreshTask, false, refreshStartTime, refreshDetails, result);
-          if (result.errorMessage) logError(ctx.cwd, "memory-refresh", new Error(result.errorMessage));
-
-          const finalText = getFinalAssistantText(result.messages);
-          if (finalText) {
-            indexFindingsAsync({
-              task: `refresh ${topic}`,
-              resultText: finalText,
-              stage1Model: refreshDetails.stage1?.model ?? profiles.stage1.id,
-              stage2Model: refreshDetails.stage2?.model ?? profiles.stage2.id,
-              isReview: false,
-              quick: false,
-              cost: result.usage?.cost ?? 0,
-              cwd: ctx.cwd,
-            });
-            const updated = memoryGetTopic(ctx.cwd, topic);
-            ctx.ui.notify(formatTopicDetail(updated ?? entry, ctx.cwd), "info");
-          } else {
-            ctx.ui.notify(`Refresh completed but produced no output.`, "warn");
-          }
-        } catch (err) {
-          logError(ctx.cwd, "memory-refresh", err);
-          ctx.ui.notify(`Refresh failed: ${err instanceof Error ? err.message : String(err)}`, "error");
-        }
-        return;
-      }
-
-      // ── Subcommand: memory on/off ──
-      if (trimmed === "memory on" || trimmed === "memory off") {
-        const enable = trimmed === "memory on";
-        const agentDir = getAgentDir();
-        const settingsPath = join(agentDir, "settings.json");
-        let settings: Record<string, unknown> = {};
-        if (existsSync(settingsPath)) {
-          settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-        }
-        if (!settings["pi-chain-dev"]) settings["pi-chain-dev"] = {};
-        (settings["pi-chain-dev"] as Record<string, unknown>).memory = enable;
-        writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
-        ctx.ui.notify(`Project memory ${enable ? "ON" : "OFF"}`, "info");
-        return;
-      }
-
       // ── Subcommand: themed on/off ──
       if (trimmed === "themed on" || trimmed === "themed off") {
         const enable = trimmed === "themed on";
-        const agentDir = getAgentDir();
-        const settingsPath = join(agentDir, "settings.json");
-        let settings: Record<string, unknown> = {};
-        if (existsSync(settingsPath)) {
-          settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-        }
-        if (!settings["pi-chain-dev"]) settings["pi-chain-dev"] = {};
-        (settings["pi-chain-dev"] as Record<string, unknown>).themed = enable;
-        writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
-
-        const projSettingsPath = join(ctx.cwd, ".pi", "settings.json");
-        if (existsSync(projSettingsPath)) {
-          const projSettings = JSON.parse(readFileSync(projSettingsPath, "utf-8"));
-          const projCdev = projSettings?.["pi-chain-dev"] as Record<string, unknown> | undefined;
-          if (projCdev && "themed" in projCdev) {
-            projCdev.themed = enable;
-            writeFileSync(projSettingsPath, JSON.stringify(projSettings, null, 2) + "\n", "utf-8");
-          }
-        }
-
+        writeAgentSetting("themed", enable);
+        writeProjectThemed(ctx.cwd, enable);
         ctx.ui.notify(`Themed TUI rendering ${enable ? "ON" : "OFF"}`, "info");
         return;
       }
@@ -440,15 +124,7 @@ REVIEW_PROMPT:
       // ── Subcommand: prompts on/off ──
       if (trimmed === "prompts on" || trimmed === "prompts off") {
         const enable = trimmed === "prompts on";
-        const agentDir = getAgentDir();
-        const settingsPath = join(agentDir, "settings.json");
-        let settings: Record<string, unknown> = {};
-        if (existsSync(settingsPath)) {
-          settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-        }
-        if (!settings["pi-chain-dev"]) settings["pi-chain-dev"] = {};
-        (settings["pi-chain-dev"] as Record<string, unknown>).promptsEnabled = enable;
-        writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
+        writeAgentSetting("promptsEnabled", enable);
         ctx.ui.notify(`Custom prompts ${enable ? "ON" : "OFF"}`, "info");
         updatePromptsStatus(ctx);
         return;

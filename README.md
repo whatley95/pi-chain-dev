@@ -408,8 +408,10 @@ pi-chain-dev/
 │   ├── index.ts              # Extension entry point — registers cdev tool + commands
 │   ├── tool.ts               # cdev tool execution (recall/review/fork)
 │   ├── commands/
-│   │   ├── cdev.ts           # /cdev command + lifecycle handlers
-│   │   └── cdev-model.ts     # /cdev-model interactive model picker
+│   │   ├── cdev.ts           # /cdev command dispatcher + lifecycle handlers
+│   │   ├── cdev-model.ts     # /cdev-model interactive model picker
+│   │   ├── cdev-scan.ts      # /cdev scan and /cdev scan deep implementation
+│   │   └── cdev-memory.ts    # /cdev recall, view, memory *, memory refresh/on/off
 │   ├── extension-context.ts  # Shared helpers, snapshots, cost footer, profiles
 │   ├── runner.ts             # Two-stage fork runner + review mode
 │   ├── history.ts            # Session telemetry — save, list, purge (7 days)
