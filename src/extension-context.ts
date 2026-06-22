@@ -54,15 +54,18 @@ function bg(token: string, text: string, theme: ExtensionContext["ui"]["theme"],
 }
 
 export function getCdevVersion(cwd: string): string {
-  const { spawnSync } = require("node:child_process");
-  const git = spawnSync("git", ["describe", "--tags", "--always", "--dirty", "--abbrev=7"], { cwd, timeout: 3000 });
-  if (git.status === 0 && git.stdout) return git.stdout.toString().trim();
-  const sha = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd, timeout: 3000 });
-  if (sha.status === 0 && sha.stdout) return sha.stdout.toString().trim();
+  try {
+    const { spawnSync } = require("node:child_process");
+    const git = spawnSync("git", ["describe", "--tags", "--always", "--dirty", "--abbrev=7"], { cwd, timeout: 3000 });
+    if (git.status === 0 && git.stdout) return git.stdout.toString().trim();
+    const sha = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd, timeout: 3000 });
+    if (sha.status === 0 && sha.stdout) return sha.stdout.toString().trim();
+  } catch { /* require may be unavailable in some ESM loaders */ }
   try {
     const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf-8"));
-    return pkg.version ?? "unknown";
-  } catch { return "unknown"; }
+    if (pkg.version) return pkg.version;
+  } catch { /* ignore */ }
+  return "unknown";
 }
 
 export function resolveSignature(config: AutoForkConfig): string {
