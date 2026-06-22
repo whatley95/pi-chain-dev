@@ -8,6 +8,10 @@ import { memoryClear, getErrorCount, clearErrorLog } from "../memory.js";
 import {
   getCdevVersion,
   resolveSignature,
+  resolveStageProfiles,
+  estimateSessionSize,
+  getSessionForkCost,
+  checkSessionCostAlert,
 } from "../extension-context.js";
 import { handleScan } from "./cdev-scan.js";
 import { handleMemory, memoryTopicCount } from "./cdev-memory.js";
@@ -129,6 +133,24 @@ export function registerCdevCommand(
         return;
       }
 
+      // ── Subcommand: replay <n> ──
+      const replayMatch = trimmed.match(/^replay\s+(\d+)$/);
+      if (replayMatch) {
+        const sessionNum = parseInt(replayMatch[1], 10);
+        const session = getSession(ctx.cwd, sessionNum);
+        if (!session) {
+          ctx.ui.notify(`No session #${sessionNum}. Try /cdev history to list.`, "warn");
+          return;
+        }
+        ctx.ui.notify(`Replaying session #${sessionNum}: ${session.task}`, "info");
+        const modePrefix = session.isReview ? "review" : "";
+        const message = modePrefix
+          ? `Use cdev with ${modePrefix}=true to: ${session.task}`
+          : `Use cdev to: ${session.task}`;
+        pi.sendUserMessage(message, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
+
       // ── Subcommand: review [path|diff] ──
       const reviewFileMatch = trimmed.match(/^review\s+(.+)$/);
       if (trimmed === "review" || reviewFileMatch) {
@@ -198,29 +220,53 @@ export function registerCdevCommand(
 
       // ── Subcommand: status ──
       if (trimmed === "status" || trimmed === "info") {
+        const resolved = resolveStageProfiles(config);
+        const isConfigured = resolved.stage1.provider && resolved.stage1.id && resolved.stage2.provider && resolved.stage2.id;
+        const sessionSize = estimateSessionSize(ctx);
+        const sessionCost = getSessionForkCost(ctx.cwd);
+        const costAlert = checkSessionCostAlert(config, ctx.cwd);
+        const sessions = listSessions(ctx.cwd);
+        const now = Date.now();
+        const oneDay = 24 * 60 * 60 * 1000;
+        let todayCost = 0;
+        let totalCost = 0;
+        for (const s of sessions) {
+          const c = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
+          totalCost += c;
+          if (new Date(s.startedAt).getTime() > now - oneDay) {
+            todayCost += c;
+          }
+        }
+
         const lines: string[] = [
           "── cdev status ─────────────────────────────────────",
           "",
           `  👤 ${resolveSignature(config)}`,
           `  Version:          ${getCdevVersion(ctx.cwd)}`,
           "",
-          `  Current model:    ${ctx.model ? ctx.model.id : "none"}`,
-          `  Scout:  ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`,
-          `  Forge:  ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`,
-          `  Review: ${config.review ? `${config.review.provider}:${config.review.id}  •  ${config.review.thinking}` : `↳ Forge (${config.stage2.id})`}`,
-          `  Auto-trigger:     ${config.auto ? "⚡ ON (sends steer every 3 turns to prompt cdev use)" : "OFF (agent uses cdev only when asked or it decides)"}`,
-          `  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`,
-          `  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`,
-          `  Project memory:   ${config.memory ? "ON" : "OFF"}`,
-          ...(config.themed ? [`  Themed TUI:       🎨 ON`] : []),
-          `  Offline mode:     ${config.offline ? "ON" : "OFF"}`,
-          `  Extensions:       ${config.extensions === null ? "inherit" : config.extensions.length === 0 ? "none" : config.extensions.join(", ")}`,
-          "",
         ];
-        const sessions = listSessions(ctx.cwd);
+        if (!isConfigured) {
+          lines.push(`  ⚠️  ${resolved.warning ?? "cdev is not configured. Use /cdev-model to set scout and forge models."}`);
+          lines.push("");
+        }
+        lines.push(`  Current model:    ${ctx.model ? ctx.model.id : "none"}`);
+        lines.push(`  Scout:  ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`);
+        lines.push(`  Forge:  ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`);
+        lines.push(`  Review: ${config.review ? `${config.review.provider}:${config.review.id}  •  ${config.review.thinking}` : `↳ Forge (${config.stage2.id})`}`);
+        lines.push(`  Auto-trigger:     ${config.auto ? "⚡ ON (sends steer every 3 turns to prompt cdev use)" : "OFF (agent uses cdev only when asked or it decides)"}`);
+        lines.push(`  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`);
+        lines.push(`  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`);
+        lines.push(`  Project memory:   ${config.memory ? "ON" : "OFF"}`);
+        lines.push(`  Session size:     ${sessionSize} message${sessionSize === 1 ? "" : "s"}${sessionSize >= 40 ? "  ⚠️ consider /compact" : ""}`);
+        lines.push(`  Session cost:     ${formatCost(sessionCost)}${config.maxSessionCost ? ` / ${formatCost(config.maxSessionCost)}` : ""}${costAlert ? `  ${costAlert.level === "critical" ? "🔴" : "🟡"} ${(costAlert.percent * 100).toFixed(0)}% of budget` : ""}`);
+        lines.push(`  Today's cost:     ${formatCost(todayCost)}`);
+        if (config.themed) {
+          lines.push(`  Themed TUI:       🎨 ON`);
+        }
+        lines.push(`  Offline mode:     ${config.offline ? "ON" : "OFF"}`);
+        lines.push(`  Extensions:       ${config.extensions === null ? "inherit" : config.extensions.length === 0 ? "none" : config.extensions.join(", ")}`);
+        lines.push("");
         if (sessions.length > 0) {
-          let totalCost = 0;
-          for (const s of sessions) totalCost += (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
           lines.push(`  Sessions:         ${sessions.length} (7-day window, ${formatCost(totalCost)} total)`);
         }
         const topicCount = memoryTopicCount(ctx.cwd);
@@ -249,6 +295,7 @@ export function registerCdevCommand(
           "/cdev history [n]      Past session details",
           "/cdev recall [topic]   Check project memory",
           "/cdev memory refresh <topic>  Re-explore stale topic",
+          "/cdev replay <n>        Re-run a past session",
           "/cdev status           Config overview",
           "/cdev memory on|off    Toggle project memory",
           "/cdev prompts on|off   Toggle custom prompts",
@@ -273,6 +320,7 @@ export function registerCdevCommand(
           "  history [n]      Past fork sessions",
           "  recall [topic]   Check project memory",
           "  memory refresh <topic>  Re-explore stale topic",
+          "  replay <n>        Re-run a past session",
           "  status           Full config overview",
           "  memory on|off    Toggle memory",
           "  prompts on|off   Toggle custom prompts",

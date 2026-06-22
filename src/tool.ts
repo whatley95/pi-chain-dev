@@ -18,6 +18,8 @@ import {
   recordForkCost,
   estimateForkCost,
   formatCost,
+  maybeWarnSessionSize,
+  maybeNotifyCostAlert,
 } from "./extension-context.js";
 
 export interface AutoForkParamsType {
@@ -168,6 +170,8 @@ export async function executeCdevTool(
         if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
         const reviewCost = result.usage?.cost ?? 0;
         recordForkCost(ctx.cwd, reviewCost);
+        maybeNotifyCostAlert(ctx, config);
+        maybeWarnSessionSize(ctx);
         if (config.memory) {
           indexFindingsAsync({
             task: `review ${p.reviewFile}`,
@@ -274,11 +278,13 @@ export async function executeCdevTool(
           body: reviewText || "(no review output)",
         });
 
-        saveSession(ctx.cwd, `review diff ${diffSpec}`, true, startTime, details, result);
-        if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
-        const diffReviewCost = result.usage?.cost ?? 0;
-        recordForkCost(ctx.cwd, diffReviewCost);
-        if (config.memory) {
+      saveSession(ctx.cwd, `review diff ${diffSpec}`, true, startTime, details, result);
+      if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
+      const diffReviewCost = result.usage?.cost ?? 0;
+      recordForkCost(ctx.cwd, diffReviewCost);
+      maybeNotifyCostAlert(ctx, config);
+      maybeWarnSessionSize(ctx);
+      if (config.memory) {
           indexFindingsAsync({
             task: `review diff ${diffSpec}`,
             resultText: reviewText || "",
@@ -350,6 +356,8 @@ export async function executeCdevTool(
       if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
       const sessionReviewCost = result.usage?.cost ?? 0;
       recordForkCost(ctx.cwd, sessionReviewCost);
+      maybeNotifyCostAlert(ctx, config);
+      maybeWarnSessionSize(ctx);
       if (config.memory) {
         indexFindingsAsync({
           task: reviewTask,
@@ -455,7 +463,7 @@ export async function executeCdevTool(
     });
     ctx.ui.setWidget("cdev-progress", undefined);
 
-    saveSession(ctx.cwd, p.task, false, startTime, details, result);
+    const current = saveSession(ctx.cwd, p.task, false, startTime, details, result);
 
     let reportRelPath = "";
     if (!quick && details.stage2 && !result.errorMessage) {
@@ -479,6 +487,7 @@ export async function executeCdevTool(
     if (result.errorMessage) logError(ctx.cwd, "full-mode", new Error(result.errorMessage));
     const forkCost = result.usage?.cost ?? 0;
     recordForkCost(ctx.cwd, forkCost);
+    maybeNotifyCostAlert(ctx, config);
     if (config.memory) {
       indexFindingsAsync({
         task: p.task,
@@ -497,13 +506,14 @@ export async function executeCdevTool(
 
     // Compare to previous report on same task, if available
     const previous = findPreviousSession(ctx.cwd, p.task);
-    const current = saveSession(ctx.cwd, p.task, false, startTime, details, result);
     if (previous?.resultText && previous.id !== current.id) {
       const diff = computeReportDiff(previous.resultText, getFinalAssistantText(result.messages) || "");
       if (diff.added.length > 0 || diff.removed.length > 0) {
         resultText += "\n\n---\n📊 Changes vs previous report\n\n" + formatReportDiff(diff);
       }
     }
+
+    maybeWarnSessionSize(ctx);
 
     const reportNote = reportRelPath
       ? `\n\n---\n📄 Report saved: ${reportRelPath}\nAfter implementing findings, update this file to track what was done (check off items, add notes). Use /cdev review ${reportRelPath} to get a second opinion.`

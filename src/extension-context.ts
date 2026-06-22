@@ -82,6 +82,53 @@ export function checkCostBudget(config: AutoForkConfig, cwd: string, forkCost: n
   return { allowed: true };
 }
 
+/** Alert level for the current session cost against maxSessionCost. */
+export type CostAlertLevel = "ok" | "warning" | "critical";
+
+export interface SessionCostAlert {
+  level: CostAlertLevel;
+  currentCost: number;
+  maxCost: number;
+  percent: number;
+  message: string;
+}
+
+const WARNING_THRESHOLD = 0.8;
+const CRITICAL_THRESHOLD = 0.95;
+
+export function checkSessionCostAlert(config: AutoForkConfig, cwd: string): SessionCostAlert | null {
+  const maxSessionCost = config.maxSessionCost ?? 0;
+  if (maxSessionCost <= 0) return null;
+  const currentCost = getSessionForkCost(cwd);
+  const percent = currentCost / maxSessionCost;
+  if (percent >= CRITICAL_THRESHOLD) {
+    return {
+      level: "critical",
+      currentCost,
+      maxCost: maxSessionCost,
+      percent,
+      message: `cdev session cost ${formatCost(currentCost)} is ${(percent * 100).toFixed(0)}% of budget ${formatCost(maxSessionCost)}`,
+    };
+  }
+  if (percent >= WARNING_THRESHOLD) {
+    return {
+      level: "warning",
+      currentCost,
+      maxCost: maxSessionCost,
+      percent,
+      message: `cdev session cost ${formatCost(currentCost)} is ${(percent * 100).toFixed(0)}% of budget ${formatCost(maxSessionCost)}`,
+    };
+  }
+  return null;
+}
+
+export function maybeNotifyCostAlert(ctx: ExtensionContext, config: AutoForkConfig): void {
+  const alert = checkSessionCostAlert(config, ctx.cwd);
+  if (alert) {
+    ctx.ui.notify(alert.message, alert.level === "critical" ? "error" : "warn");
+  }
+}
+
 // ── Cost estimation ────────────────────────────────────────
 
 const MODEL_PRICES: Record<string, { input: number; output: number }> = {
@@ -245,6 +292,30 @@ export function buildSessionSnapshotJsonl(sessionManager: SessionSnapshotSource)
   const lines = [JSON.stringify(header)];
   for (const entry of branchEntries) lines.push(JSON.stringify(entry));
   return `${lines.join("\n")}\n`;
+}
+
+/** Estimate the number of messages in the current Pi session. Read-only. */
+export function estimateSessionSize(ctx: ExtensionContext): number {
+  try {
+    const branch = ctx.sessionManager?.getBranch?.() ?? [];
+    const entries = ctx.sessionManager?.getEntries?.() ?? [];
+    return branch.length + entries.length;
+  } catch {
+    return 0;
+  }
+}
+
+const SESSION_SIZE_WARNING_THRESHOLD = 40;
+
+/** Read-only nudge to compact when the parent session is getting large. */
+export function maybeWarnSessionSize(ctx: ExtensionContext): void {
+  const size = estimateSessionSize(ctx);
+  if (size >= SESSION_SIZE_WARNING_THRESHOLD) {
+    ctx.ui.notify(
+      `Pi session has ~${size} messages. Consider running /compact before the next cdev task.`,
+      "warn",
+    );
+  }
 }
 
 export function resolveStageProfiles(

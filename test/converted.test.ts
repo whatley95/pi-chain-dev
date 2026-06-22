@@ -6,7 +6,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseInheritedCliArgs } from "../src/runner-cli.js";
 import { processPiEvent, processPiJsonLine, getFinalAssistantText, stableStringify } from "../src/runner-events.js";
-import { buildSessionSnapshotJsonl, resolveStageProfiles, formatResultContent } from "../src/extension-context.js";
+import { buildSessionSnapshotJsonl, resolveStageProfiles, formatResultContent, estimateSessionSize, checkSessionCostAlert } from "../src/extension-context.js";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import * as path from "node:path";
 import { emptyUsage, emptyFailedResult } from "../src/types.js";
 
 // ── runner-cli.ts ────────────────────────────────────────
@@ -188,6 +190,46 @@ describe("formatResultContent (extension-context.ts)", () => {
     const text = formatResultContent(result, details as any);
     assert.ok(text.includes("cdev failed"));
     assert.ok(text.includes("boom"));
+  });
+});
+
+describe("estimateSessionSize (extension-context.ts)", () => {
+  it("sums branch and entries", () => {
+    const ctx = {
+      cwd: "/tmp",
+      sessionManager: { getBranch: () => [1, 2, 3], getEntries: () => [4, 5] },
+    } as any;
+    assert.strictEqual(estimateSessionSize(ctx), 5);
+  });
+
+  it("returns 0 when sessionManager is missing", () => {
+    const ctx = { cwd: "/tmp" } as any;
+    assert.strictEqual(estimateSessionSize(ctx), 0);
+  });
+});
+
+describe("checkSessionCostAlert (extension-context.ts)", () => {
+  it("returns null when maxSessionCost is 0", () => {
+    const config = { maxSessionCost: 0 } as any;
+    const alert = checkSessionCostAlert(config, "/tmp/no-such-dir-" + Date.now());
+    assert.strictEqual(alert, null);
+  });
+
+  it("returns warning at 80% of budget", () => {
+    const cwd = process.cwd();
+    const costPath = path.join(cwd, ".pi", "cdev", ".session-cost");
+    const previous = existsSync(costPath) ? readFileSync(costPath, "utf-8") : null;
+    try {
+      mkdirSync(path.dirname(costPath), { recursive: true });
+      writeFileSync(costPath, "0.85", "utf-8");
+      const alert = checkSessionCostAlert({ maxSessionCost: 1 } as any, cwd);
+      assert.ok(alert);
+      assert.strictEqual(alert!.level, "warning");
+      assert.ok(alert!.message.includes("85%"));
+    } finally {
+      if (previous !== null) writeFileSync(costPath, previous, "utf-8");
+      else unlinkSync(costPath);
+    }
   });
 });
 
