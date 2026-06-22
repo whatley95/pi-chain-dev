@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -383,7 +384,6 @@ export function registerLifecycleHandlers(_pi: ExtensionAPI, ctx: ExtensionConte
     }
     if (!warned && existsSync(join(ctx.cwd, ".svn"))) {
       try {
-        const { spawnSync } = require("node:child_process");
         const result = spawnSync("svn", ["propget", "svn:ignore", "."], { cwd: ctx.cwd, encoding: "utf-8", timeout: 5000 });
         const svnIgnore = (result.stdout || "").trim();
         if (!svnIgnore.split(/[\r\n]+/).some((line: string) => line.trim() === ".pi")) {

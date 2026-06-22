@@ -12,8 +12,10 @@ import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig } f
 
 let getAgentDirImpl: () => string;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pi = require("@earendil-works/pi-coding-agent");
+  // Dynamic import is used because this package is a peer dependency provided by
+  // the Pi runtime. A static import would fail type-checking and bundling when
+  // the dependency is not physically installed in this package's tree.
+  const pi = await import("@earendil-works/pi-coding-agent");
   getAgentDirImpl = pi.getAgentDir;
 } catch {
   getAgentDirImpl = () => path.join(homedir(), ".pi", "agent");

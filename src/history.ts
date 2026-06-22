@@ -121,6 +121,7 @@ export function saveSession(
         ts: new Date().toISOString(),
         context: "saveSession",
         message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
       }) + "\n", "utf-8");
     } catch { /* can't even log — give up */ }
   }

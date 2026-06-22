@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join, isAbsolute } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config.js";
@@ -175,7 +176,6 @@ export async function executeCdevTool(
         const diffSpec = p.diffSpec.trim();
         let diffContent: string;
         try {
-          const { spawnSync } = require("node:child_process");
           const gitResult = spawnSync("git", ["diff", diffSpec], { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
           if (gitResult.error || gitResult.status !== 0) {
             const gitErrMsg = gitResult.error
@@ -470,7 +470,8 @@ export async function executeCdevTool(
 
     // Compare to previous report on same task, if available
     const previous = findPreviousSession(ctx.cwd, p.task);
-    if (previous?.resultText && previous.id !== saveSession(ctx.cwd, p.task, false, startTime, details, result).id) {
+    const current = saveSession(ctx.cwd, p.task, false, startTime, details, result);
+    if (previous?.resultText && previous.id !== current.id) {
       const diff = computeReportDiff(previous.resultText, getFinalAssistantText(result.messages) || "");
       if (diff.added.length > 0 || diff.removed.length > 0) {
         resultText += "\n\n---\n📊 Changes vs previous report\n\n" + formatReportDiff(diff);
