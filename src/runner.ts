@@ -280,6 +280,72 @@ function cleanupTempDir(dir: string | null): void {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
+// ── File-change detection guard ───────────────────────────
+
+/** Snapshot mtimes of tracked files under cwd. Lightweight. */
+function snapshotFileMtimes(cwd: string): Map<string, number> {
+  const snapshot = new Map<string, number>();
+  try {
+    const stack = [cwd];
+    while (stack.length > 0) {
+      const dir = stack.pop()!;
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist" || entry.name === "out" || entry.name === "build") {
+            continue;
+          }
+          stack.push(fullPath);
+        } else if (entry.isFile()) {
+          try {
+            const stat = fs.statSync(fullPath);
+            snapshot.set(path.relative(cwd, fullPath), stat.mtimeMs);
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return snapshot;
+}
+
+function detectChangedFiles(
+  before: Map<string, number>,
+  after: Map<string, number>,
+): string[] {
+  const changed: string[] = [];
+  for (const [relPath, beforeMtime] of before) {
+    const afterMtime = after.get(relPath);
+    if (afterMtime === undefined) {
+      changed.push(relPath);
+    } else if (afterMtime !== beforeMtime) {
+      changed.push(relPath);
+    }
+  }
+  for (const [relPath] of after) {
+    if (!before.has(relPath)) {
+      changed.push(relPath);
+    }
+  }
+  return changed;
+}
+
+const EXCLUDED_CHANGE_DIRS = new Set([".pi", "node_modules", "dist", "out", "build", ".git", ".svn"]);
+
+function isUserCodeChange(relPath: string): boolean {
+  const firstDir = relPath.split(/[\\/]/)[0];
+  return !EXCLUDED_CHANGE_DIRS.has(firstDir);
+}
+
 // ── Prompts ────────────────────────────────────────────────
 
 /** Audit guard — stages never modify code */
@@ -684,7 +750,7 @@ export function buildPiArgs(
   forkSessionPath: string,
   extensions: string[] | null,
   stageProfile: StageProfile,
-  noTools = false,
+  toolMode: "scout" | "forge" | null = null,
 ): string[] {
   const args: string[] = [
     "--mode", "json",
@@ -705,8 +771,12 @@ export function buildPiArgs(
   if (inheritedCliArgs.fallbackThinking && !stageProfile.thinking) {
     args.push("--thinking", inheritedCliArgs.fallbackThinking);
   }
-  if (noTools) {
+
+  // Tool policy: scout gets a read-only allowlist; forge/review gets no tools.
+  if (toolMode === "forge") {
     args.push("--no-tools");
+  } else if (toolMode === "scout") {
+    args.push("--tools", "read,bash,ls,grep,find,cat");
   } else if (!stageProfile.id) {
     if (inheritedCliArgs.fallbackTools) {
       args.push("--tools", inheritedCliArgs.fallbackTools);
@@ -743,6 +813,8 @@ export interface RunStageOptions {
   signal?: AbortSignal;
   /** If true, pass --no-tools so the child process cannot modify files */
   noTools?: boolean;
+  /** Tool mode passed through to buildPiArgs: scout = read-only allowlist, forge = --no-tools. */
+  toolMode?: "scout" | "forge";
   /** Max wall-clock ms before the stage is force-killed. 0 = no limit. */
   stageTimeoutMs?: number;
   /**
@@ -791,8 +863,8 @@ async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResult> {
 
 async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
   const { cwd, task, stageLabel, forkSessionJsonl, stageProfile, extensions,
-          environment, offline, signal, noTools = false, stageTimeoutMs = 0,
-          sanitizedSessionJsonl, onUpdate } = opts;
+          environment, offline, signal, noTools = false, toolMode,
+          stageTimeoutMs = 0, sanitizedSessionJsonl, onUpdate } = opts;
 
   const result: ForkResult = {
     task,
@@ -815,7 +887,8 @@ async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
   // Test-build args to check command-line length. If the task is so large that
   // it would exceed OS spawn limits, offload the task into the session file as
   // a user message and pass a minimal task argument instead.
-  const testArgs = buildPiArgs(taskArg, sessionFilePath, extensions, stageProfile, noTools);
+  const effectiveToolMode = toolMode ?? (noTools ? "forge" : null);
+  const testArgs = buildPiArgs(taskArg, sessionFilePath, extensions, stageProfile, effectiveToolMode);
   if (estimateCommandLineLength(command, [...prefixArgs, ...testArgs]) > MAX_COMMAND_LINE_LENGTH) {
     const combinedJsonl = appendTaskToSessionJsonl(sanitized.jsonl, task);
     fs.writeFileSync(sessionFilePath, combinedJsonl, { encoding: "utf-8", mode: 0o600 });
@@ -823,7 +896,7 @@ async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
     result.stderr += `[cdev] task offloaded to session file to avoid command-line length limit\n`;
   }
 
-  const piArgs = buildPiArgs(taskArg, sessionFilePath, extensions, stageProfile, noTools);
+  const piArgs = buildPiArgs(taskArg, sessionFilePath, extensions, stageProfile, effectiveToolMode);
 
   const exitCode = await new Promise<number>((resolve) => {
     const proc = spawn(command, [...prefixArgs, ...piArgs], {
@@ -979,6 +1052,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   let stage1Result: ForkResult;
   let stage1Findings: Stage1Findings | null = null;
+  const stage1MtimeBefore = snapshotFileMtimes(cwd);
   const onUpdate = opts.onUpdate;
 
   async function runStage1Run(label: string): Promise<ForkResult> {
@@ -995,6 +1069,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       stageTimeoutMs: 300_000,
       sanitizedSessionJsonl: sanitizedSnapshot,
       retries: 1,
+      toolMode: "scout",
       onUpdate,
     });
   }
@@ -1080,6 +1155,23 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     }
   }
 
+  // ── Detect if stage 1 wrote any user code despite the audit guard ──
+  const stage1Changes = detectChangedFiles(stage1MtimeBefore, snapshotFileMtimes(cwd))
+    .filter(isUserCodeChange)
+    .slice(0, 10);
+  if (stage1Changes.length > 0) {
+    const changedList = stage1Changes.join(", ");
+    return {
+      result: {
+        ...stage1Result,
+        task,
+        exitCode: 1,
+        errorMessage: `Exploration stage violated audit guard and modified files: ${changedList}. Aborting.`,
+      },
+      details,
+    };
+  }
+
   if (stage1Result.exitCode > 0 && !getFinalAssistantText(stage1Result.messages)) {
     return {
       result: {
@@ -1126,6 +1218,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       offline,
       signal,
       noTools: true,
+      toolMode: "forge",
       stageTimeoutMs: 180_000,
       sanitizedSessionJsonl: sanitizedSnapshot,
       retries: 1,
@@ -1253,13 +1346,14 @@ async function runReviewStage(
       cwd,
       task,
       stageLabel: "review",
-      forkSessionJsonl,
+      forkSessionJsonl: forkSessionJsonl,
       stageProfile,
       extensions,
       environment,
       offline,
       signal,
       noTools: true,
+      toolMode: "forge",
       stageTimeoutMs: 180_000,
       retries: 1,
       onUpdate,
