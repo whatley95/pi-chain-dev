@@ -1450,6 +1450,33 @@ REVIEW_PROMPT:
         shownModels = prefixEntries.find(([p]) => p === selectedPrefix)?.[1] ?? providerModels;
       }
 
+      // If the selected prefix still has too many models, group by model family.
+      function getFamily(id: string): string {
+        const local = id.includes("/") ? id.slice(id.lastIndexOf("/") + 1) : id;
+        const match = local.match(/^([a-z]+(?:-[a-z]+)*(?:-\d+(?:\.\d+)?[a-z]?)?)/i);
+        return match ? match[1] : local;
+      }
+      if (shownModels.length > MAX_SHOWN) {
+        const families = new Map<string, typeof shownModels>();
+        for (const m of shownModels) {
+          const family = getFamily(m.id);
+          const list = families.get(family);
+          if (list) list.push(m);
+          else families.set(family, [m]);
+        }
+        const familyEntries = Array.from(families.entries())
+          .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+        const familyItems = familyEntries.map(([f, list]) => `${f} (${list.length})`);
+        const familyPick = await ctx.ui.select(
+          `Pick ${provider} model family (${families.size} families):`,
+          familyItems
+        );
+        if (!familyPick) return;
+        const familyMatch = familyPick.match(/^(.+?)\s+\(/);
+        const selectedFamily = familyMatch ? familyMatch[1].trim() : familyPick.replace(/\s+\(\d+\)$/, "").trim();
+        shownModels = familyEntries.find(([f]) => f === selectedFamily)?.[1] ?? shownModels;
+      }
+
       const currentModel = ctx.model;
       const modelItems = shownModels.slice(0, MAX_SHOWN).map(m => {
         const isCurrent = currentModel && currentModel.provider === m.provider && currentModel.id === m.id;
