@@ -15,6 +15,7 @@ import {
   memoryForget,
   memoryGetTopic,
   memoryTopicCount,
+  mergeSimilarTopics,
   getErrorCount,
   clearErrorLog,
 } from "../memory.js";
@@ -299,6 +300,17 @@ REVIEW_PROMPT:
         const removed = memoryForget(ctx.cwd, topic);
         if (removed) ctx.ui.notify(`Removed memory for topic "${topic}".`, "info");
         else ctx.ui.notify(`No memory found for topic "${topic}".`, "warn");
+        return;
+      }
+
+      // ── Subcommand: memory merge ──
+      if (trimmed === "memory merge") {
+        const merged = mergeSimilarTopics(ctx.cwd);
+        if (merged.length > 0) {
+          ctx.ui.notify(`Merged similar topics:\n${merged.join("\n")}`, "info");
+        } else {
+          ctx.ui.notify("No similar topics to merge.", "info");
+        }
         return;
       }
 

@@ -200,3 +200,52 @@ export function isStage1Findings(value: unknown): value is Stage1Findings {
 export function emptyStage1Findings(): Stage1Findings {
   return { summary: "", findings: [] };
 }
+
+/** Structured output expected from Stage 2 synthesis. */
+export interface Stage2Report {
+  /** Overall status of the task. */
+  status: "ok" | "needs-work" | "blocked" | "exploratory";
+  /** One-paragraph summary. */
+  summary: string;
+  /** Key findings, decisions, or explanations. */
+  output: string;
+  /** Concrete anchors: paths, snippets, commands, config keys. */
+  evidence: string;
+  /** Reusable knowledge: dead ends, wrong assumptions, couplings. */
+  learnings: string;
+  /** Concrete, verifiable tasks as checkboxes. */
+  actionItems: string[];
+}
+
+export function isStage2Report(value: unknown): value is Stage2Report {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  if (!["ok", "needs-work", "blocked", "exploratory"].includes(v.status as string)) return false;
+  if (typeof v.summary !== "string") return false;
+  if (typeof v.output !== "string") return false;
+  if (typeof v.evidence !== "string") return false;
+  if (typeof v.learnings !== "string") return false;
+  if (!Array.isArray(v.actionItems)) return false;
+  for (const item of v.actionItems) {
+    if (typeof item !== "string") return false;
+  }
+  return true;
+}
+
+export function emptyStage2Report(): Stage2Report {
+  return {
+    status: "exploratory",
+    summary: "",
+    output: "",
+    evidence: "",
+    learnings: "",
+    actionItems: [],
+  };
+}
+
+/** Cost estimate for a fork before it runs. */
+export interface ForkCostEstimate {
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+}

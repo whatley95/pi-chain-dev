@@ -46,6 +46,7 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 | `/cdev clear` | Wipe all project memory |
 | `/cdev memory clear` | Same as `/cdev clear` |
 | `/cdev memory forget auth` | Remove one topic from memory |
+| `/cdev memory merge` | Auto-merge similar memory topics |
 | `/cdev memory on` | Enable project memory |
 | `/cdev memory off` | Disable project memory (stops indexing + recall) |
 | `/cdev clear error` | Wipe error log |
@@ -490,6 +491,23 @@ Long-running forks now emit live activity updates. The progress widget shows the
 ```
 
 This is automatic — no config needed.
+
+## Report diffs
+
+Each cdev session now stores the full result text. When you re-run a similar task, cdev compares the new report to the most recent previous report on that task and shows a diff:
+
+```
+📊 Changes vs previous report
+
+### New
++ added a new auth middleware file
++ JWT secret now read from env
+
+### Removed / Changed
+- old session cookie approach
+```
+
+This makes it easy to see what changed between explorations.
 
 ## Session history
 

@@ -2,20 +2,20 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } fr
 import { join, isAbsolute } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config.js";
-import { runAutoFork, runCdevReview, runFileReview, runDiffReview } from "./runner.js";
+import { runAutoFork, runCdevReview, runFileReview, runDiffReview, formatForkResultOutput, computeReportDiff, formatReportDiff } from "./runner.js";
 import { getFinalAssistantText } from "./runner-events.js";
 import { emptyFailedResult } from "./types.js";
-import { saveSession } from "./history.js";
+import { saveSession, findPreviousSession } from "./history.js";
 import { indexFindingsAsync, memoryGetTopic, formatTopicDetail, loadMemory, formatMemoryTopics } from "./memory.js";
 import {
   withAuditGuard,
   makeThemedBg,
   buildSessionSnapshotJsonl,
   resolveStageProfiles,
-  formatResultContent,
   logError,
   checkCostBudget,
   recordForkCost,
+  estimateForkCost,
 } from "./extension-context.js";
 
 export interface AutoForkParamsType {
@@ -148,7 +148,7 @@ export async function executeCdevTool(
           });
         }
         const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);
-        const reviewOutput = formatResultContent(result, details);
+        const reviewOutput = formatForkResultOutput(result, details);
         const hasIssues = reviewText && (
           reviewText.includes("❌ missing") ||
           reviewText.includes("⚠️ partial") ||
@@ -261,7 +261,7 @@ export async function executeCdevTool(
           });
         }
         const isError = result.exitCode > 0 && !reviewText;
-        const reviewOutput = formatResultContent(result, details);
+        const reviewOutput = formatForkResultOutput(result, details);
         const actionNote = isError
           ? `\n\n---\n⚠️ Diff review found issues. Report saved at ${reportRelPath}`
           : `\n\n---\n✅ Diff review complete. Report saved at ${reportRelPath}`;
@@ -336,7 +336,7 @@ export async function executeCdevTool(
       const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);
       const suffix = reviewReportPath ? `\n\n---\n📄 Review report saved: ${reviewReportPath}` : "";
       return {
-        content: [{ type: "text" as const, text: formatResultContent(result, details) + suffix }],
+        content: [{ type: "text" as const, text: formatForkResultOutput(result, details) + suffix }],
         details,
         isError,
       };
@@ -376,11 +376,18 @@ export async function executeCdevTool(
     const quick = p.quick ?? false;
     const verify = p.verify ?? false;
 
-    const estimatedCost = 0;
-    const budgetCheck = checkCostBudget(config, ctx.cwd, estimatedCost);
+    const estimate = estimateForkCost({
+      task: withAuditGuard(p.task),
+      stage1Profile: profiles.stage1,
+      stage2Profile: profiles.stage2,
+      quick,
+      verify,
+      forkSessionSnapshotJsonl: snapshot ?? undefined,
+    });
+    const budgetCheck = checkCostBudget(config, ctx.cwd, estimate.cost);
     if (!budgetCheck.allowed) {
       return {
-        content: [{ type: "text" as const, text: `cdev budget error: ${budgetCheck.reason}` }],
+        content: [{ type: "text" as const, text: `cdev budget error: ${budgetCheck.reason}\nEstimated: ~$${estimate.cost.toFixed(4)} (${estimate.inputTokens} input / ${estimate.outputTokens} output tokens)` }],
         details: { stage1: null, stage2: null },
         isError: true,
       };
@@ -459,7 +466,17 @@ export async function executeCdevTool(
     }
 
     const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);
-    const resultText = formatResultContent(result, details);
+    let resultText = formatForkResultOutput(result, details);
+
+    // Compare to previous report on same task, if available
+    const previous = findPreviousSession(ctx.cwd, p.task);
+    if (previous?.resultText && previous.id !== saveSession(ctx.cwd, p.task, false, startTime, details, result).id) {
+      const diff = computeReportDiff(previous.resultText, getFinalAssistantText(result.messages) || "");
+      if (diff.added.length > 0 || diff.removed.length > 0) {
+        resultText += "\n\n---\n📊 Changes vs previous report\n\n" + formatReportDiff(diff);
+      }
+    }
+
     const reportNote = reportRelPath
       ? `\n\n---\n📄 Report saved: ${reportRelPath}\nAfter implementing findings, update this file to track what was done (check off items, add notes). Use /cdev review ${reportRelPath} to get a second opinion.`
       : "";

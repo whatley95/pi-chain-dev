@@ -465,6 +465,64 @@ export function memoryForget(cwd: string, topic: string): boolean {
   return true;
 }
 
+// ── Topic auto-merge ───────────────────────────────────────
+
+function topicSimilarity(a: string, b: string): number {
+  const na = a.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  const nb = b.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  if (na === nb) return 1;
+  const tokensA = new Set(na.split(/\s+/).filter(Boolean));
+  const tokensB = new Set(nb.split(/\s+/).filter(Boolean));
+  if (tokensA.size === 0 || tokensB.size === 0) return 0;
+  const intersection = new Set([...tokensA].filter(x => tokensB.has(x)));
+  return intersection.size / Math.max(tokensA.size, tokensB.size);
+}
+
+export function mergeSimilarTopics(cwd: string, threshold = 0.6): string[] {
+  const memory = loadMemory(cwd);
+  const topics = Object.keys(memory.topics);
+  if (topics.length < 2) return [];
+
+  const merged: string[] = [];
+  const visited = new Set<string>();
+
+  for (let i = 0; i < topics.length; i++) {
+    const a = topics[i];
+    if (visited.has(a)) continue;
+    visited.add(a);
+
+    for (let j = i + 1; j < topics.length; j++) {
+      const b = topics[j];
+      if (visited.has(b)) continue;
+      if (topicSimilarity(a, b) >= threshold) {
+        const target = memory.topics[a];
+        const source = memory.topics[b];
+        if (!target || !source) continue;
+
+        // Merge findings (newest first), keeping up to 20 total
+        const combinedFindings = [...source.findings, ...target.findings].sort((x, y) => y.timestamp - x.timestamp).slice(0, 20);
+        target.findings = combinedFindings;
+        target.forkCount += source.forkCount;
+        target.lastSeen = Math.max(target.lastSeen, source.lastSeen);
+
+        // Merge file list
+        const fileSet = new Set([...target.files, ...source.files]);
+        target.files = Array.from(fileSet).sort();
+
+        delete memory.topics[b];
+        visited.add(b);
+        merged.push(`${b} → ${a}`);
+      }
+    }
+  }
+
+  if (merged.length > 0) {
+    saveMemory(cwd, memory);
+    _topicCountCache = null;
+  }
+  return merged;
+}
+
 export function memoryGetTopic(cwd: string, topic: string): CdevTopic | null {
   const memory = loadMemory(cwd);
   return memory.topics[topic] ?? null;

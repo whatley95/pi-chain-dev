@@ -48,6 +48,8 @@ export interface SessionRecord {
   status: "success" | "failed";
   /** First 200 chars of final output. */
   resultPreview: string;
+  /** Stored full final output for diffing. */
+  resultText?: string;
 }
 
 // ── Storage ────────────────────────────────────────────
@@ -69,6 +71,7 @@ export function saveSession(
 
   const now = Date.now();
   const id = new Date(startedAt).toISOString().replace(/[:.]/g, "-") + "-" + randomBytes(3).toString("hex");
+  const resultText = getFinalAssistantText(result.messages) || "";
   
   const record: SessionRecord = {
     id,
@@ -102,7 +105,8 @@ export function saveSession(
         }
       : null,
     status: result.exitCode === 0 ? "success" : "failed",
-    resultPreview: (getFinalAssistantText(result.messages) || "").slice(0, 200),
+    resultPreview: resultText.slice(0, 200),
+    resultText,
   };
 
   const filePath = join(dir, `${id}.json`);
@@ -150,6 +154,16 @@ export function getSession(cwd: string, index: number): SessionRecord | null {
   const sessions = listSessions(cwd);
   if (index < 1 || index > sessions.length) return null;
   return sessions[index - 1]; // 1-indexed for user display
+}
+
+/** Find the most recent previous session matching a task (case-insensitive substring). */
+export function findPreviousSession(cwd: string, task: string): SessionRecord | null {
+  const sessions = listSessions(cwd);
+  const lower = task.toLowerCase();
+  for (const s of sessions) {
+    if (s.task.toLowerCase().includes(lower)) return s;
+  }
+  return null;
 }
 
 // ── Purge old sessions ─────────────────────────────────

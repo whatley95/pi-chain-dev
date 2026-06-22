@@ -13,8 +13,9 @@ import { buildChildEnv } from "./env.js";
 import { extractFilePaths } from "./memory.js";
 import { parseInheritedCliArgs } from "./runner-cli.js";
 import { processPiJsonLine, getFinalAssistantText, summarizePiEvent } from "./runner-events.js";
-import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings } from "./types.js";
-import { emptyUsage, emptyFailedResult, isStage1Findings } from "./types.js";
+import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, Stage2Report } from "./types.js";
+import { emptyUsage, emptyFailedResult, isStage1Findings, isStage2Report } from "./types.js";
+import { formatResultContent } from "./extension-context.js";
 
 const SIGKILL_TIMEOUT_MS = 5000;
 
@@ -340,6 +341,14 @@ function formatStage1FindingsForStage2(findings: Stage1Findings): string {
 }
 
 function buildStage2Prompt(task: string, stage1Output: string, customPrompt?: string): string {
+  const jsonSchema = `{
+  "status": "ok|needs-work|blocked|exploratory",
+  "summary": "one-paragraph summary of the synthesis",
+  "output": "key findings, decisions, or explanations as a single string",
+  "evidence": "concrete anchors: paths, snippets, commands, config keys",
+  "learnings": "reusable knowledge: dead ends, wrong assumptions, couplings",
+  "actionItems": ["concrete verifiable task 1", "concrete verifiable task 2"]
+}`;
   if (customPrompt) {
     return `${customPrompt}
 
@@ -347,7 +356,10 @@ Task: ${task}
 
 <previous_findings>
 ${stage1Output}
-</previous_findings>${STAGE_AUDIT_GUARD}`;
+</previous_findings>
+
+Return your synthesis as a single JSON object matching this schema (no markdown fences, no extra prose):
+${jsonSchema}${STAGE_AUDIT_GUARD}`;
   }
   return `${task}
 
@@ -359,39 +371,17 @@ ${stage1Output}
 
 Your job: synthesize these findings into a decision-useful report. You do NOT need to explore further — work with the findings above.
 
-Use this exact structure:
+Return your synthesis as a single JSON object matching this schema (no markdown fences, no extra prose):
+${jsonSchema}
 
-## Result
-
-Say what happened in the fewest bullets that are still useful. Include status, outcome, changes, and confidence/caveats if relevant.
-
-## Output
-
-Give the useful substance. Adapt to the task type (exploration, debugging, implementation, review, etc.). Include concrete flow, tradeoffs, decisions, and reasoning.
-
-## Evidence
-
-Include concrete anchors to trust/verify/continue: paths, symbols, snippets, commands, config keys, error messages. Prefer decisive snippets and exact anchors over paraphrase.
-
-## Learnings
-
-Extract reusable knowledge: dead ends, failed attempts, wrong assumptions, hidden coupling, source-of-truth discoveries, project mental models. Use "Learning / Evidence / Reuse when" format.
-
-## Action Items
-
-If you identified specific things that should be done, list them as checkboxes. The main agent will mark them complete after implementing.
-
-- [ ] item 1
-- [ ] item 2
-
-Assembly rules:
-- Always use exactly these five headings: Result, Output, Evidence, Learnings, Action Items
-- Right-size each section independently
-- Do not compress away important evidence
-- Do not narrate tool calls
-- If no files changed, say "No changes made" once
-- Report what changes future decisions, trust, or behavior
-- Action Items should be concrete, verifiable tasks the agent can check off${STAGE_AUDIT_GUARD}`;
+Rules:
+- "status" is required and must be one of: ok, needs-work, blocked, exploratory.
+- "summary" is required and should be one paragraph.
+- "output" is required. Put the useful substance here.
+- "evidence" is required. Include concrete anchors.
+- "learnings" is required. Extract reusable knowledge.
+- "actionItems" is required. Each item must be a concrete, verifiable task string.
+- Do NOT use markdown headings like "## Result" outside the JSON.${STAGE_AUDIT_GUARD}`;
 }
 
 // ── Stage 1 structured findings ────────────────────────────
@@ -407,16 +397,49 @@ function extractJsonFromText(text: string): string | null {
   return null;
 }
 
-export function parseStage1Findings(text: string): Stage1Findings | null {
+export function parseJsonObject<T>(text: string, guard: (value: unknown) => value is T): T | null {
   const jsonText = extractJsonFromText(text);
   if (!jsonText) return null;
   try {
     const parsed = JSON.parse(jsonText);
-    if (!isStage1Findings(parsed)) return null;
+    if (!guard(parsed)) return null;
     return parsed;
   } catch {
     return null;
   }
+}
+
+export function parseStage1Findings(text: string): Stage1Findings | null {
+  return parseJsonObject(text, isStage1Findings);
+}
+
+export function parseStage2Report(text: string): Stage2Report | null {
+  return parseJsonObject(text, isStage2Report);
+}
+
+export function formatStage2Report(report: Stage2Report): string {
+  const lines: string[] = [];
+  lines.push(`## Result`);
+  lines.push(`Status: ${report.status}`);
+  lines.push(report.summary);
+  lines.push("");
+  lines.push(`## Output`);
+  lines.push(report.output);
+  lines.push("");
+  lines.push(`## Evidence`);
+  lines.push(report.evidence);
+  lines.push("");
+  lines.push(`## Learnings`);
+  lines.push(report.learnings);
+  if (report.actionItems.length > 0) {
+    lines.push("");
+    lines.push(`## Action Items`);
+    for (const item of report.actionItems) {
+      const clean = item.replace(/^\s*[-*]\s*/, "").trim();
+      lines.push(`- [ ] ${clean}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 function validateStage1Findings(findings: Stage1Findings, source: string): { valid: boolean; reason?: string } {
@@ -707,6 +730,10 @@ export interface RunStageOptions {
   onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
 }
 
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResult> {
   const retries = Math.max(0, opts.retries ?? 0);
   let lastResult: ForkResult | undefined;
@@ -721,6 +748,10 @@ async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResult> {
       }
       if (attempt < retries) {
         result.stderr += `[cdev] retrying ${opts.stageLabel} stage (${attempt + 1}/${retries})\n`;
+        // Exponential backoff: 1s, 2s, 4s, ...
+        const delayMs = Math.min(1000 * 2 ** attempt, 8000);
+        if (opts.signal?.aborted) break;
+        await sleep(delayMs);
       }
     } finally {
       release();
@@ -1087,7 +1118,64 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     errorMessage: stage2Result.errorMessage,
   };
 
+  // Try to parse structured stage 2 report; fall back to raw text if invalid
+  const stage2Text = getFinalAssistantText(stage2Result.messages);
+  const stage2Report = stage2Text ? parseStage2Report(stage2Text) : null;
+  if (stage2Report) {
+    finalResult.stderr += "\n[cdev] forge produced structured JSON report\n";
+  } else if (stage2Text) {
+    finalResult.stderr += "\n[cdev] forge output was not valid structured JSON; using raw text\n";
+  }
+
   return { result: finalResult, details };
+}
+
+/** Format the final assistant output, preferring structured report when available. */
+export function formatForkResultOutput(result: ForkResult, details: AutoForkDetails): string {
+  const stage2Text = getFinalAssistantText(result.messages);
+  if (!stage2Text) {
+    return formatResultContent(result, details);
+  }
+  const report = parseStage2Report(stage2Text);
+  if (report) {
+    return formatStage2Report(report);
+  }
+  return formatResultContent(result, details);
+}
+
+/** Compute a simple line diff between two texts. */
+export function computeReportDiff(oldText: string, newText: string): { added: string[]; removed: string[] } {
+  const normalize = (text: string) =>
+    text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("- [ ]") && !line.startsWith("- [x]"));
+
+  const oldLines = new Set(normalize(oldText));
+  const newLines = new Set(normalize(newText));
+
+  const added = [...newLines].filter((line) => !oldLines.has(line));
+  const removed = [...oldLines].filter((line) => !newLines.has(line));
+  return { added, removed };
+}
+
+export function formatReportDiff(diff: { added: string[]; removed: string[] }): string {
+  const lines: string[] = [];
+  if (diff.added.length === 0 && diff.removed.length === 0) {
+    return "No significant changes detected vs previous report.";
+  }
+  if (diff.added.length > 0) {
+    lines.push("### New");
+    for (const line of diff.added.slice(0, 30)) lines.push(`+ ${line}`);
+    if (diff.added.length > 30) lines.push(`+ ... and ${diff.added.length - 30} more`);
+  }
+  if (diff.removed.length > 0) {
+    lines.push("");
+    lines.push("### Removed / Changed");
+    for (const line of diff.removed.slice(0, 30)) lines.push(`- ${line}`);
+    if (diff.removed.length > 30) lines.push(`- ... and ${diff.removed.length - 30} more`);
+  }
+  return lines.join("\n");
 }
 
 // ── Review-only mode (stage 2 only) ────────────────────────

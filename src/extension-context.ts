@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { readFileSync, mkdirSync, appendFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -17,17 +17,52 @@ export const FORK_COST_STATUS_KEY = "cdev-cost";
 
 const _sessionCostCache = new Map<string, number>();
 
+function sessionCostFilePath(cwd: string): string {
+  return join(cwd, ".pi", "cdev", ".session-cost");
+}
+
 export function recordForkCost(cwd: string, cost: number): void {
-  const current = _sessionCostCache.get(cwd) || 0;
-  _sessionCostCache.set(cwd, current + cost);
+  const current = getSessionForkCost(cwd);
+  const next = current + cost;
+  _sessionCostCache.set(cwd, next);
+  try {
+    const path = sessionCostFilePath(cwd);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, String(next), "utf-8");
+  } catch {
+    // ignore persistence failure
+  }
 }
 
 export function getSessionForkCost(cwd: string): number {
-  return _sessionCostCache.get(cwd) || 0;
+  const cached = _sessionCostCache.get(cwd);
+  if (cached !== undefined) return cached;
+  try {
+    const path = sessionCostFilePath(cwd);
+    if (existsSync(path)) {
+      const raw = readFileSync(path, "utf-8").trim();
+      const parsed = parseFloat(raw);
+      if (!Number.isNaN(parsed)) {
+        _sessionCostCache.set(cwd, parsed);
+        return parsed;
+      }
+    }
+  } catch {
+    // ignore read failure
+  }
+  return 0;
 }
 
 export function resetSessionForkCost(cwd: string): void {
   _sessionCostCache.delete(cwd);
+  try {
+    const path = sessionCostFilePath(cwd);
+    if (existsSync(path)) {
+      writeFileSync(path, "0", "utf-8");
+    }
+  } catch {
+    // ignore
+  }
 }
 
 export function checkCostBudget(config: AutoForkConfig, cwd: string, forkCost: number): { allowed: boolean; reason?: string } {
@@ -41,6 +76,85 @@ export function checkCostBudget(config: AutoForkConfig, cwd: string, forkCost: n
     return { allowed: false, reason: `session cost would reach $${(sessionCost + forkCost).toFixed(4)}, exceeding maxSessionCost $${maxSessionCost.toFixed(4)}` };
   }
   return { allowed: true };
+}
+
+// ── Cost estimation ────────────────────────────────────────
+
+const MODEL_PRICES: Record<string, { input: number; output: number }> = {
+  // Prices per 1M tokens (USD). Best-effort defaults.
+  "deepseek-v4-flash": { input: 0.10, output: 0.30 },
+  "deepseek-v4-pro": { input: 3.00, output: 8.00 },
+  "kimi-k2-thinking": { input: 0.60, output: 2.40 },
+  "kimi-for-coding": { input: 0.30, output: 1.20 },
+  "gpt-5-mini": { input: 0.15, output: 0.60 },
+  "gpt-5": { input: 2.50, output: 10.00 },
+  "claude-sonnet-4-5": { input: 3.00, output: 15.00 },
+  "claude-opus-4-5": { input: 15.00, output: 75.00 },
+  "gemini-2.0-flash": { input: 0.075, output: 0.30 },
+  "gemini-2.5-pro": { input: 1.25, output: 10.00 },
+};
+
+function lookupModelPrice(modelId: string): { input: number; output: number } | undefined {
+  const normalized = modelId.toLowerCase();
+  if (MODEL_PRICES[normalized]) return MODEL_PRICES[normalized];
+  for (const [key, price] of Object.entries(MODEL_PRICES)) {
+    if (normalized.includes(key) || key.includes(normalized)) return price;
+  }
+  return undefined;
+}
+
+export interface ForkCostEstimateInput {
+  task: string;
+  stage1Profile: StageProfile;
+  stage2Profile: StageProfile;
+  quick?: boolean;
+  verify?: boolean;
+  forkSessionSnapshotJsonl?: string;
+}
+
+export interface ForkCostEstimate {
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+}
+
+export function estimateForkCost(input: ForkCostEstimateInput): ForkCostEstimate {
+  const { task, stage1Profile, stage2Profile, quick = false, verify = false, forkSessionSnapshotJsonl = "" } = input;
+
+  // Base input tokens: task + session snapshot + prompt overhead
+  const snapshotChars = forkSessionSnapshotJsonl.length;
+  const taskChars = task.length;
+  const baseInputChars = snapshotChars + taskChars + 2000;
+  const inputTokens = Math.ceil(baseInputChars / 4);
+
+  // Estimated output tokens scales with task complexity
+  const outputTokens = Math.min(4000, Math.max(500, Math.ceil(taskChars / 4) + 500));
+
+  const stage1Price = lookupModelPrice(stage1Profile.id);
+  const stage2Price = lookupModelPrice(stage2Profile.id);
+
+  const stage1Runs = verify ? 2 : 1;
+  const stage1InputCost = stage1Price ? (inputTokens / 1_000_000) * stage1Price.input * stage1Runs : 0;
+  const stage1OutputCost = stage1Price ? (outputTokens / 1_000_000) * stage1Price.output * stage1Runs : 0;
+
+  let stage2InputCost = 0;
+  let stage2OutputCost = 0;
+  if (!quick) {
+    const stage2InputTokens = inputTokens + outputTokens; // stage 2 sees stage 1 output too
+    stage2InputCost = stage2Price ? (stage2InputTokens / 1_000_000) * stage2Price.input : 0;
+    stage2OutputCost = stage2Price ? ((outputTokens * 1.5) / 1_000_000) * stage2Price.output : 0;
+  }
+
+  const totalCost = stage1InputCost + stage1OutputCost + stage2InputCost + stage2OutputCost;
+  const stage2InputTokens = quick ? 0 : inputTokens + outputTokens;
+  const totalInputTokens = Math.ceil(inputTokens * stage1Runs + stage2InputTokens);
+  const totalOutputTokens = Math.ceil(outputTokens * stage1Runs + (quick ? 0 : outputTokens * 1.5));
+
+  return {
+    inputTokens: totalInputTokens,
+    outputTokens: totalOutputTokens,
+    cost: totalCost,
+  };
 }
 
 // ── Cost footer cache ──────────────────────────────────────
