@@ -448,8 +448,8 @@ export function parseStage2Report(text: string): Stage2Report | null {
 
 export function formatStage2Report(report: Stage2Report): string {
   const lines: string[] = [];
-  lines.push(`## Result`);
   lines.push(`Status: ${report.status}`);
+  lines.push("");
   lines.push(report.summary);
   lines.push("");
   lines.push(`## Output`);
