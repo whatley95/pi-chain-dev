@@ -1425,28 +1425,27 @@ REVIEW_PROMPT:
 
       const providerModels = configuredModels.filter(m => m.provider === provider);
       const MAX_SHOWN = 50;
-
-      // For huge providers (e.g. OpenRouter), ask for a search term first.
       let shownModels = providerModels;
-      if (providerModels.length > MAX_SHOWN) {
-        const raw = await ctx.ui.input(
-          `${provider} has ${providerModels.length} models. Search to narrow it down:`,
-          "type to filter..."
+
+      // For huge providers with slash-prefixed IDs (e.g. OpenRouter), group by prefix first.
+      const prefixes = new Map<string, typeof providerModels>();
+      for (const m of providerModels) {
+        const prefix = m.id.includes("/") ? m.id.split("/")[0] : "(other)";
+        const list = prefixes.get(prefix);
+        if (list) list.push(m);
+        else prefixes.set(prefix, [m]);
+      }
+      if (providerModels.length > MAX_SHOWN && prefixes.size > 1) {
+        const prefixEntries = Array.from(prefixes.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+        const prefixItems = prefixEntries.map(([p, list]) => `${p}/ (${list.length})`);
+        const prefixPick = await ctx.ui.select(
+          `Pick ${provider} model group (${prefixes.size} groups):`,
+          prefixItems
         );
-        if (raw === undefined) return;
-        const term = raw.trim().toLowerCase();
-        if (term) {
-          shownModels = providerModels.filter(m =>
-            m.id.toLowerCase().includes(term) ||
-            (m.name && m.name.toLowerCase().includes(term))
-          );
-          if (shownModels.length === 0) {
-            ctx.ui.notify(`No models match "${raw.trim()}" in ${provider}.`, "info");
-            return;
-          }
-        } else {
-          shownModels = providerModels.slice(0, MAX_SHOWN);
-        }
+        if (!prefixPick) return;
+        const prefixMatch = prefixPick.match(/^(.+?)\/\s+\(/);
+        const selectedPrefix = prefixMatch ? prefixMatch[1] : prefixPick.replace(/\s+\(\d+\)$/, "").trim();
+        shownModels = prefixEntries.find(([p]) => p === selectedPrefix)?.[1] ?? providerModels;
       }
 
       const currentModel = ctx.model;
@@ -1455,10 +1454,10 @@ REVIEW_PROMPT:
         return `${m.id}${isCurrent ? " ✓" : ""}`;
       });
       if (shownModels.length > MAX_SHOWN) {
-        modelItems.push(`… ${shownModels.length - MAX_SHOWN} more — refine your search`);
+        modelItems.push(`… ${shownModels.length - MAX_SHOWN} more models hidden`);
       }
       const modelPick = await ctx.ui.select(
-        `Pick ${stage} model from ${provider} (${shownModels.length} shown):`,
+        `Pick ${stage} model from ${provider} (${shownModels.length} available):`,
         modelItems
       );
       if (!modelPick || modelPick.startsWith("…")) return;
