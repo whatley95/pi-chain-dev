@@ -499,11 +499,13 @@ export interface RunStageOptions {
   signal?: AbortSignal;
   /** If true, pass --no-tools so the child process cannot modify files */
   noTools?: boolean;
+  /** Max wall-clock ms before the stage is force-killed. 0 = no limit. */
+  stageTimeoutMs?: number;
 }
 
 async function runStage(opts: RunStageOptions): Promise<ForkResult> {
   const { cwd, task, stageLabel, forkSessionJsonl, stageProfile, extensions,
-          environment, offline, signal, noTools = false } = opts;
+          environment, offline, signal, noTools = false, stageTimeoutMs = 0 } = opts;
 
   const result: ForkResult = {
     task,
@@ -535,6 +537,33 @@ async function runStage(opts: RunStageOptions): Promise<ForkResult> {
     let buffer = "";
     let settled = false;
     let abortHandler: (() => void) | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const killProc = () => {
+      if (!settled && proc.pid) {
+        try { proc.kill("SIGTERM"); } catch { /* ignore */ }
+        setTimeout(() => {
+          if (!settled && proc.pid) {
+            if (process.platform === "win32") {
+              try {
+                spawn("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { stdio: "ignore" }).unref();
+              } catch { /* ignore */ }
+            } else {
+              try { proc.kill("SIGKILL"); } catch { /* ignore */ }
+            }
+          }
+        }, SIGKILL_TIMEOUT_MS);
+      }
+    };
+
+    const settle = (exitCode: number) => {
+      if (timeoutId) { clearTimeout(timeoutId); timeoutId = undefined; }
+      if (abortHandler && signal) {
+        signal.removeEventListener("abort", abortHandler);
+      }
+      if (buffer.trim()) flushLine(buffer);
+      if (!settled) { settled = true; resolve(exitCode); }
+    };
 
     const flushLine = (line: string) => {
       if (processPiJsonLine(line, result)) { /* progress parsed */ }
@@ -553,13 +582,7 @@ async function runStage(opts: RunStageOptions): Promise<ForkResult> {
       result.stderr += chunk.toString();
     });
 
-    proc.on("close", (code) => {
-      if (abortHandler && signal) {
-        signal.removeEventListener("abort", abortHandler);
-      }
-      if (buffer.trim()) flushLine(buffer);
-      if (!settled) { settled = true; resolve(code ?? 0); }
-    });
+    proc.on("close", (code) => settle(code ?? 0));
 
     proc.on("error", (err) => {
       if (!settled) {
@@ -569,26 +592,15 @@ async function runStage(opts: RunStageOptions): Promise<ForkResult> {
       }
     });
 
+    if (stageTimeoutMs > 0) {
+      timeoutId = setTimeout(() => {
+        result.stderr += `[cdev] ${stageLabel} stage timed out after ${stageTimeoutMs}ms\n`;
+        killProc();
+      }, stageTimeoutMs);
+    }
+
     if (signal) {
-      abortHandler = () => {
-        if (!settled) {
-          if (proc.pid) {
-            try { proc.kill("SIGTERM"); } catch { /* ignore */ }
-            setTimeout(() => {
-              if (!settled && proc.pid) {
-                // SIGKILL is not valid on Windows — use taskkill instead
-                if (process.platform === "win32") {
-                  try {
-                    spawn("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { stdio: "ignore" }).unref();
-                  } catch { /* ignore */ }
-                } else {
-                  try { proc.kill("SIGKILL"); } catch { /* ignore */ }
-                }
-              }
-            }, SIGKILL_TIMEOUT_MS);
-          }
-        }
-      };
+      abortHandler = () => killProc();
       if (signal.aborted) abortHandler();
       else signal.addEventListener("abort", abortHandler, { once: true });
     }
@@ -651,6 +663,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       environment,
       offline,
       signal,
+      stageTimeoutMs: 300_000,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -703,6 +716,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       offline,
       signal,
       noTools: true,
+      stageTimeoutMs: 180_000,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -773,6 +787,7 @@ export async function runCdevReview(opts: {
       offline,
       signal,
       noTools: true,
+      stageTimeoutMs: 180_000,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -838,6 +853,7 @@ export async function runFileReview(opts: {
       offline,
       signal,
       noTools: true,
+      stageTimeoutMs: 180_000,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -882,6 +898,7 @@ export async function runDiffReview(opts: {
       offline,
       signal,
       noTools: true,
+      stageTimeoutMs: 180_000,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
