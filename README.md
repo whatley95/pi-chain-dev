@@ -37,7 +37,8 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 | `/cdev prompts off` | Disable custom prompts — use generic ones instead |
 | `/cdev history` | List recent cdev sessions (date, task, cost, status, model chain) |
 | `/cdev history 3` | Show full detail for session #3 (models, tokens, cost) |
-| `/cdev status` | Show full config overview — models, auto, prompts, memory, errors, cost |
+| `/cdev replay 3` | Re-run session #3 as a new cdev task or review |
+| `/cdev status` | Show full config overview — models, auto, prompts, memory, session size, costs, budget |
 | `/cdev info` | Alias for `/cdev status` |
 | `/cdev recall` | List all memory topics with fork counts, file counts, age |
 | `/cdev recall auth` | Show all findings for "auth" with freshness (✅ fresh / ⚠️ stale / ❓ unverified) |
@@ -135,6 +136,19 @@ All cdev errors are appended to `.pi/cdev/errors.jsonl` (JSONL, one record per l
 Logged for: tool crashes, review failures, full-mode failures, deep-scan failures, scan failures.
 
 `/cdev status` shows error count if any exist. `/cdev clear error` wipes the log.
+
+## Session health and cost budgets
+
+`/cdev status` now shows live session metadata:
+
+```
+  Session size:     32 messages
+  Session cost:     $0.0234 / $1.0000  🟡 23% of budget
+  Today's cost:     $0.0234
+```
+
+- **Session size** is read-only. When it reaches ~40 messages, cdev warns: "Consider running /compact before the next cdev task." It never modifies the parent session automatically.
+- **Cost budgets** are configured with `maxSessionCost` (and `maxForkCost`) in settings. Alerts fire at 80% (warn) and 95% (critical) of the session budget. Budget checks also block forks that would exceed the limit.
 
 ## How it works
 
