@@ -5,18 +5,59 @@
  * Stage 2: Spawn child pi with powerful model → structured report.
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { buildChildEnv } from "./env.js";
 import { extractFilePaths } from "./memory.js";
 import { parseInheritedCliArgs } from "./runner-cli.js";
-import { processPiJsonLine, getForkProgressText, getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
+import { processPiJsonLine, getFinalAssistantText } from "./runner-events.js";
 import type { StageProfile, ForkResult, UsageStats, AutoForkDetails } from "./types.js";
 import { emptyUsage, emptyFailedResult } from "./types.js";
 
 const SIGKILL_TIMEOUT_MS = 5000;
+
+// ── Concurrency control ────────────────────────────────────
+
+class Semaphore {
+  private queue: (() => void)[] = [];
+  private count: number;
+
+  constructor(maxConcurrency: number) {
+    this.count = maxConcurrency;
+  }
+
+  acquire(): Promise<() => void> {
+    return new Promise((resolve) => {
+      const release = () => {
+        this.count++;
+        this.drain();
+      };
+      if (this.count > 0) {
+        this.count--;
+        resolve(release);
+      } else {
+        this.queue.push(() => {
+          this.count--;
+          resolve(release);
+        });
+      }
+    });
+  }
+
+  private drain(): void {
+    if (this.count > 0 && this.queue.length > 0) {
+      const next = this.queue.shift();
+      next?.();
+    }
+  }
+}
+
+/** Max concurrent child Pi processes across all cdev forks. */
+const stageSemaphore = new Semaphore(2);
+
+// ── Helpers ────────────────────────────────────────────────
 
 function resolvePiSpawn(): { command: string; prefixArgs: string[] } {
   const isNode = /[\\/]node(?:\.exe)?$/i.test(process.execPath);
@@ -501,11 +542,41 @@ export interface RunStageOptions {
   noTools?: boolean;
   /** Max wall-clock ms before the stage is force-killed. 0 = no limit. */
   stageTimeoutMs?: number;
+  /**
+   * If provided, skip redundant sanitization of forkSessionJsonl.
+   * Useful when the same snapshot is reused across stages.
+   */
+  sanitizedSessionJsonl?: { jsonl: string; stripped: number };
+  /** Number of retries on spawn/early-exit failures. */
+  retries?: number;
 }
 
-async function runStage(opts: RunStageOptions): Promise<ForkResult> {
+async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResult> {
+  const retries = Math.max(0, opts.retries ?? 0);
+  let lastResult: ForkResult | undefined;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const release = await stageSemaphore.acquire();
+    try {
+      const result = await runStageCore({ ...opts, stageLabel: attempt > 0 ? `${opts.stageLabel} (retry ${attempt})` : opts.stageLabel });
+      lastResult = result;
+      // Retry only on hard failure with no assistant output and no explicit abort
+      if (result.exitCode === 0 || getFinalAssistantText(result.messages) || opts.signal?.aborted) {
+        return result;
+      }
+      if (attempt < retries) {
+        result.stderr += `[cdev] retrying ${opts.stageLabel} stage (${attempt + 1}/${retries})\n`;
+      }
+    } finally {
+      release();
+    }
+  }
+  return lastResult ?? emptyFailedResult(opts.task, `${opts.stageLabel} stage failed after ${retries} retries`);
+}
+
+async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
   const { cwd, task, stageLabel, forkSessionJsonl, stageProfile, extensions,
-          environment, offline, signal, noTools = false, stageTimeoutMs = 0 } = opts;
+          environment, offline, signal, noTools = false, stageTimeoutMs = 0,
+          sanitizedSessionJsonl } = opts;
 
   const result: ForkResult = {
     task,
@@ -515,11 +586,11 @@ async function runStage(opts: RunStageOptions): Promise<ForkResult> {
     usage: emptyUsage(),
   };
 
-  const { jsonl: sanitizedJsonl, stripped } = sanitizeSessionJsonl(forkSessionJsonl);
-  if (stripped > 0) {
-    result.stderr += `[cdev] stripped ${stripped} orphaned tool message(s) from session snapshot\n`;
+  const sanitized = sanitizedSessionJsonl ?? sanitizeSessionJsonl(forkSessionJsonl);
+  if (sanitized.stripped > 0) {
+    result.stderr += `[cdev] stripped ${sanitized.stripped} orphaned tool message(s) from session snapshot\n`;
   }
-  const tmp = writeTempSessionJsonl(sanitizedJsonl);
+  const tmp = writeTempSessionJsonl(sanitized.jsonl);
   const piArgs = buildPiArgs(task, tmp.filePath, extensions, stageProfile, noTools);
 
   const exitCode = await new Promise<number>((resolve) => {
@@ -647,13 +718,16 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   const details: AutoForkDetails = { stage1: null, stage2: null };
 
+  // Sanitize session snapshot once and reuse across stages
+  const sanitizedSnapshot = sanitizeSessionJsonl(forkSessionSnapshotJsonl);
+
   // ── Stage 1: Exploration with cheap model ──
   opts.onProgress?.("scout", stage1Profile.thinking ? `${stage1Profile.provider}:${stage1Profile.id} • ${stage1Profile.thinking}` : `${stage1Profile.provider}:${stage1Profile.id}`);
   const stage1Task = buildStage1Prompt(task, customExplorePrompt);
 
   let stage1Result: ForkResult;
   try {
-    stage1Result = await runStage({
+    stage1Result = await runStageWithRetry({
       cwd,
       task: stage1Task,
       stageLabel: "exploration",
@@ -664,6 +738,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       offline,
       signal,
       stageTimeoutMs: 300_000,
+      sanitizedSessionJsonl: sanitizedSnapshot,
+      retries: 1,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -705,7 +781,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   let stage2Result: ForkResult;
   try {
-    stage2Result = await runStage({
+    stage2Result = await runStageWithRetry({
       cwd,
       task: stage2Task,
       stageLabel: "synthesis",
@@ -717,6 +793,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       signal,
       noTools: true,
       stageTimeoutMs: 180_000,
+      sanitizedSessionJsonl: sanitizedSnapshot,
+      retries: 1,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -776,7 +854,7 @@ export async function runCdevReview(opts: {
 
   let result: ForkResult;
   try {
-    result = await runStage({
+    result = await runStageWithRetry({
       cwd,
       task: reviewTask,
       stageLabel: "review",
@@ -842,7 +920,7 @@ export async function runFileReview(opts: {
 
   let result: ForkResult;
   try {
-    result = await runStage({
+    result = await runStageWithRetry({
       cwd,
       task: reviewTask,
       stageLabel: "review",
@@ -887,7 +965,7 @@ export async function runDiffReview(opts: {
 
   let result: ForkResult;
   try {
-    result = await runStage({
+    result = await runStageWithRetry({
       cwd,
       task: reviewTask,
       stageLabel: "review",

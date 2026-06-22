@@ -71,6 +71,26 @@ export interface ForkResult {
   model?: string;
   stopReason?: string;
   errorMessage?: string;
+  /** Internal retry tracking populated by runner-events. */
+  retry?: {
+    active?: boolean;
+    pending?: boolean;
+    success?: boolean;
+    attempt?: number;
+    maxAttempts?: number;
+    delayMs?: number;
+    errorMessage?: string;
+    finalError?: string;
+    history?: { type: "start" | "end"; [key: string]: unknown }[];
+  };
+  /** Internal activity tracking populated by runner-events. */
+  thinking?: { status?: string; tokens?: number; activityOrder?: number; [key: string]: unknown };
+  activities?: { type?: string; status?: string; activityOrder?: number; [key: string]: unknown }[];
+  toolExecutions?: { toolCallId?: string; toolName?: string; status?: string; activityOrder?: number; [key: string]: unknown }[];
+  activityCount?: number;
+  toolExecutionCount?: number;
+  sawAgentEnd?: boolean;
+  willRetry?: boolean;
 }
 
 export interface AutoForkState {

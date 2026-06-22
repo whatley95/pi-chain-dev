@@ -87,7 +87,7 @@ export function renderCall(args: any, theme: Theme, _context?: { cwd?: string })
     label = task ? `cdev "${task}"` : "cdev";
   }
 
-  return new SimpleText(bg("toolPendingBg", fg("toolTitle", label), theme, themed));
+  return new SimpleText(bg("toolPendingBg", fg("toolTitle", label), theme, themed)) as unknown as Component;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,10 +159,10 @@ export function renderResult(
       lines.push(fg("muted", trunc(textOut.split("\n")[0], MAX_PREVIEW_CHARS - 2)));
     }
     const hasMore = textOut && textOut.split("\n").length > 1;
-    if (hasMore) lines.push(`(${keyHint("app.tools.expand", "expand")})`);
+    if (hasMore) lines.push(`(${keyHint("expand")})`);
   }
 
-  return new SimpleText(lines.join("\n"));
+  return new SimpleText(lines.join("\n")) as unknown as Component;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +170,7 @@ export function renderResult(
 // ---------------------------------------------------------------------------
 
 class SimpleText implements Component {
+  [key: string]: unknown;
   private text: string;
 
   constructor(text: string) {

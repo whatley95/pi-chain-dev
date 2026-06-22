@@ -7,8 +7,21 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { homedir } from "node:os";
 import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig } from "./types.js";
+
+let getAgentDirImpl: () => string;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const pi = require("@earendil-works/pi-coding-agent");
+  getAgentDirImpl = pi.getAgentDir;
+} catch {
+  getAgentDirImpl = () => path.join(homedir(), ".pi", "agent");
+}
+
+export function getAgentDir(): string {
+  return getAgentDirImpl();
+}
 
 export const EFFORT_LEVELS = ["fast", "balanced", "deep"] as const;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;

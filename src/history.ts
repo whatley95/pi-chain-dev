@@ -201,8 +201,6 @@ export function formatHistory(sessions: SessionRecord[]): string {
     const duration = (s.durationMs / 1000).toFixed(1) + "s";
     const mode = s.isReview ? "review" : "full  ";
     const status = s.status === "success" ? "✓" : "✗";
-    const s1Cost = s.stage1 ? `$${s.stage1.cost.toFixed(4)}` : "";
-    const s2Cost = s.stage2 ? `$${s.stage2.cost.toFixed(4)}` : "";
     const combinedCost = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
     totalCost += combinedCost;
     const costStr = combinedCost > 0 ? ` $${combinedCost.toFixed(4)}`.padStart(9) : "";

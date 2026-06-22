@@ -9,6 +9,7 @@
  *   /cdev recall [topic]  — view findings, auto-check freshness
  *   /cdev memory clear     — wipe all memory
  *   /cdev memory forget <topic> — remove a topic
+ *   /cdev memory refresh <topic> — re-explore a topic and update findings
  *   /cdev clear            — alias for memory clear
  */
 
@@ -197,6 +198,20 @@ export interface IndexFindingsInput {
 }
 
 export function indexFindings(input: IndexFindingsInput): string | null {
+  const topic = buildFindingAndUpdateMemory(input);
+  return topic;
+}
+
+/** Asynchronous variant: computes the finding in the current tick and writes memory in the background. */
+export function indexFindingsAsync(input: IndexFindingsInput): Promise<string | null> {
+  return new Promise((resolve) => {
+    setImmediate(() => {
+      resolve(buildFindingAndUpdateMemory(input));
+    });
+  });
+}
+
+function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
   const { task, resultText, stage1Model, stage2Model, isReview, quick, cost, cwd } = input;
 
   const filePaths = extractFilePaths(resultText, cwd);

@@ -2,57 +2,69 @@
  * Helpers for parsing Pi JSON mode events and summarizing fork results.
  */
 
+import type { ForkResult, UsageStats } from "./types.js";
+
 const MAX_TOOL_PREVIEW_CHARS = 1200;
 const MAX_TOOL_ARGS_PREVIEW_CHARS = 300;
 const MAX_INLINE_ERROR_PREVIEW_CHARS = 160;
 const MAX_STORED_TOOL_EXECUTIONS = 25;
 
-function getSeenMessageSignatures(result) {
+// Internal bookkeeping properties attached to ForkResult instances.
+declare module "./types.js" {
+  interface ForkResult {
+    __seenMessageSignatures?: Set<string>;
+    __seenForkToolResultSignatures?: Set<string>;
+    __activityOrder?: number;
+  }
+}
+
+function getSeenMessageSignatures(result: ForkResult): Set<string> {
   if (!Object.prototype.hasOwnProperty.call(result, "__seenMessageSignatures")) {
     Object.defineProperty(result, "__seenMessageSignatures", {
-      value: new Set(),
+      value: new Set<string>(),
       enumerable: false,
       configurable: false,
       writable: false,
     });
   }
-  return result.__seenMessageSignatures;
+  return result.__seenMessageSignatures as Set<string>;
 }
 
-function getSeenForkToolResultSignatures(result) {
+function getSeenForkToolResultSignatures(result: ForkResult): Set<string> {
   if (!Object.prototype.hasOwnProperty.call(result, "__seenForkToolResultSignatures")) {
     Object.defineProperty(result, "__seenForkToolResultSignatures", {
-      value: new Set(),
+      value: new Set<string>(),
       enumerable: false,
       configurable: false,
       writable: false,
     });
   }
-  return result.__seenForkToolResultSignatures;
+  return result.__seenForkToolResultSignatures as Set<string>;
 }
 
-export function stableStringify(value, seen = new WeakSet()) {
+export function stableStringify(value: unknown, seen = new WeakSet<object>()): string {
   if (value === undefined) return "undefined";
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
   }
 
-  if (seen.has(value)) {
+  const objValue = value as object;
+  if (seen.has(objValue)) {
     return '"<circular>"';
   }
-  seen.add(value);
+  seen.add(objValue);
 
   if (Array.isArray(value)) {
     return `[${value.map((item) => stableStringify(item, seen)).join(",")}]`;
   }
 
-  const entries = Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
   return `{${entries
     .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue, seen)}`)
     .join(",")}}`;
 }
 
-function truncateMiddle(text, maxChars) {
+function truncateMiddle(text: string, maxChars: number): string {
   if (typeof text !== "string" || text.length <= maxChars) return text;
   const keep = Math.max(0, maxChars - 15);
   const head = Math.ceil(keep / 2);
@@ -60,19 +72,19 @@ function truncateMiddle(text, maxChars) {
   return `${text.slice(0, head)}\n… truncated …\n${text.slice(text.length - tail)}`;
 }
 
-function truncateTail(text, maxChars) {
+function truncateTail(text: string, maxChars: number): string {
   if (typeof text !== "string" || text.length <= maxChars) return text;
   return `… truncated …\n${text.slice(text.length - maxChars)}`;
 }
 
-function truncateInline(text, maxChars) {
+function truncateInline(text: string, maxChars: number): string {
   if (typeof text !== "string") return "";
   const singleLine = text.replace(/\s+/g, " ").trim();
   if (singleLine.length <= maxChars) return singleLine;
   return `${singleLine.slice(0, Math.max(0, maxChars - 1))}…`;
 }
 
-function formatCount(n) {
+function formatCount(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return "0";
   if (n < 1000) return String(n);
   if (n < 10_000) return `${(n / 1000).toFixed(1)}k`;
@@ -80,7 +92,7 @@ function formatCount(n) {
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
-function stringifyPreview(value, maxChars) {
+function stringifyPreview(value: unknown, maxChars: number): string {
   if (value === undefined) return "";
   if (typeof value === "string") return truncateMiddle(value, maxChars);
 
@@ -91,12 +103,23 @@ function stringifyPreview(value, maxChars) {
   }
 }
 
-function shortPath(value) {
+function shortPath(value: string): string {
   if (typeof value !== "string" || !value) return "...";
   return value.replace(/^\/home\/[^/]+/, "~");
 }
 
-function formatToolCallPreview(toolName, args) {
+interface ToolArgs {
+  command?: unknown;
+  path?: unknown;
+  file_path?: unknown;
+  offset?: unknown;
+  limit?: unknown;
+  pattern?: unknown;
+  task?: unknown;
+  [key: string]: unknown;
+}
+
+function formatToolCallPreview(toolName: string, args: ToolArgs): string {
   if (!args || typeof args !== "object") return toolName || "tool";
 
   switch (toolName) {
@@ -105,22 +128,22 @@ function formatToolCallPreview(toolName, args) {
       return `bash $ ${truncateInline(command, 80)}`;
     }
     case "read": {
-      const filePath = shortPath(args.path || args.file_path);
-      const offset = args.offset;
-      const limit = args.limit;
+      const filePath = shortPath(String(args.path || args.file_path || ""));
+      const offset = typeof args.offset === "number" ? args.offset : undefined;
+      const limit = typeof args.limit === "number" ? args.limit : undefined;
       const range = offset !== undefined || limit !== undefined ? `:${offset ?? 1}${limit !== undefined ? `-${(offset ?? 1) + limit - 1}` : ""}` : "";
       return `read ${filePath}${range}`;
     }
     case "write":
-      return `write ${shortPath(args.path || args.file_path)}`;
+      return `write ${shortPath(String(args.path || args.file_path || ""))}`;
     case "edit":
-      return `edit ${shortPath(args.path || args.file_path)}`;
+      return `edit ${shortPath(String(args.path || args.file_path || ""))}`;
     case "ls":
-      return `ls ${shortPath(args.path || ".")}`;
+      return `ls ${shortPath(String(args.path || "."))}`;
     case "find":
-      return `find ${truncateInline(stringifyPreview(args.pattern || "*", 60), 60)} in ${shortPath(args.path || ".")}`;
+      return `find ${truncateInline(stringifyPreview(args.pattern || "*", 60), 60)} in ${shortPath(String(args.path || "."))}`;
     case "grep":
-      return `grep ${truncateInline(stringifyPreview(args.pattern || "", 60), 60)} in ${shortPath(args.path || ".")}`;
+      return `grep ${truncateInline(stringifyPreview(args.pattern || "", 60), 60)} in ${shortPath(String(args.path || "."))}`;
     case "fork": {
       const task = typeof args.task === "string" ? args.task : stringifyPreview(args, 80);
       return `fork ${truncateInline(task, 80)}`;
@@ -132,15 +155,25 @@ function formatToolCallPreview(toolName, args) {
   }
 }
 
-function extractTextFromContent(content) {
+interface ContentPart {
+  type?: unknown;
+  text?: unknown;
+  thinking?: unknown;
+  reasoning?: unknown;
+  reasoning_content?: unknown;
+  [key: string]: unknown;
+}
+
+function extractTextFromContent(content: unknown): string {
   if (!Array.isArray(content)) return "";
 
-  const parts = [];
+  const parts: string[] = [];
   for (const part of content) {
     if (!part || typeof part !== "object") continue;
-    if (part.type === "text" && typeof part.text === "string") {
-      parts.push(part.text);
-    } else if (part.type === "image") {
+    const typedPart = part as ContentPart;
+    if (typedPart.type === "text" && typeof typedPart.text === "string") {
+      parts.push(typedPart.text);
+    } else if (typedPart.type === "image") {
       parts.push("[image]");
     }
   }
@@ -148,7 +181,14 @@ function extractTextFromContent(content) {
   return parts.join("\n").trim();
 }
 
-function extractResultText(toolResult) {
+interface ToolResult {
+  content?: unknown;
+  text?: unknown;
+  message?: unknown;
+  [key: string]: unknown;
+}
+
+function extractResultText(toolResult: ToolResult | undefined): string {
   if (!toolResult || typeof toolResult !== "object") return "";
 
   const contentText = extractTextFromContent(toolResult.content);
@@ -165,7 +205,45 @@ function extractResultText(toolResult) {
   return "";
 }
 
-function updateAssistantMetadata(result, message) {
+interface AssistantMessage {
+  role?: unknown;
+  provider?: string;
+  model?: string;
+  stopReason?: string;
+  errorMessage?: string;
+  usage?: Partial<UsageStats> & {
+    cost?: { total?: number } | number;
+    totalTokens?: number;
+  };
+  content?: unknown;
+  thinking?: unknown;
+  reasoning?: unknown;
+  reasoning_content?: unknown;
+}
+
+interface RetryState {
+  active?: boolean;
+  pending?: boolean;
+  success?: boolean;
+  attempt?: number;
+  maxAttempts?: number;
+  delayMs?: number;
+  errorMessage?: string;
+  finalError?: string;
+  history?: RetryHistoryEntry[];
+}
+
+interface RetryHistoryEntry {
+  type: "start" | "end";
+  attempt?: number;
+  maxAttempts?: number;
+  delayMs?: number;
+  errorMessage?: string;
+  success?: boolean;
+  finalError?: string;
+}
+
+function updateAssistantMetadata(result: ForkResult, message: AssistantMessage): void {
   if (!message || message.role !== "assistant") return;
   if (!result.provider && message.provider) result.provider = message.provider;
   if (!result.model && message.model) result.model = message.model;
@@ -186,18 +264,21 @@ function updateAssistantMetadata(result, message) {
   }
 }
 
-function sanitizeAssistantMessage(message) {
-  const sanitized = { ...message };
+function sanitizeAssistantMessage(message: AssistantMessage): AssistantMessage {
+  const sanitized: AssistantMessage = { ...message };
   delete sanitized.thinking;
   delete sanitized.reasoning;
   delete sanitized.reasoning_content;
 
   if (Array.isArray(message.content)) {
     sanitized.content = message.content
-      .filter((part) => part?.type !== "thinking")
-      .map((part) => {
+      .filter((part: unknown) => {
+        if (!part || typeof part !== "object") return true;
+        return (part as ContentPart).type !== "thinking";
+      })
+      .map((part: unknown) => {
         if (!part || typeof part !== "object") return part;
-        const cleanPart = { ...part };
+        const cleanPart: ContentPart = { ...(part as ContentPart) };
         delete cleanPart.thinking;
         delete cleanPart.reasoning;
         delete cleanPart.reasoning_content;
@@ -208,7 +289,7 @@ function sanitizeAssistantMessage(message) {
   return sanitized;
 }
 
-function addAssistantMessage(result, message) {
+function addAssistantMessage(result: ForkResult, message: AssistantMessage): boolean {
   if (!message || message.role !== "assistant") return false;
 
   const sanitizedMessage = sanitizeAssistantMessage(message);
@@ -219,7 +300,7 @@ function addAssistantMessage(result, message) {
   if (seen.has(signature)) return false;
   seen.add(signature);
 
-  result.messages.push(sanitizedMessage);
+  result.messages.push(sanitizedMessage as ForkResult["messages"][number]);
 
   result.usage.turns++;
   const usage = message.usage;
@@ -228,18 +309,27 @@ function addAssistantMessage(result, message) {
     result.usage.output += usage.output || 0;
     result.usage.cacheRead += usage.cacheRead || 0;
     result.usage.cacheWrite += usage.cacheWrite || 0;
-    result.usage.cost += usage.cost?.total || 0;
-    result.usage.contextTokens = usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite || 0;
+    result.usage.cost += typeof usage.cost === "object" && usage.cost !== null
+      ? (usage.cost as { total?: number }).total || 0
+      : typeof usage.cost === "number" ? usage.cost : 0;
+    result.usage.contextTokens = usage.totalTokens || (usage.input || 0) + (usage.output || 0) + (usage.cacheRead || 0) + (usage.cacheWrite || 0) || 0;
   }
 
   return true;
 }
 
-function finiteNumber(value) {
+function finiteNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function addNestedForkUsage(result, message) {
+interface ToolResultMessage {
+  role?: unknown;
+  toolName?: unknown;
+  toolCallId?: unknown;
+  details?: { results?: unknown };
+}
+
+function addNestedForkUsage(result: ForkResult, message: ToolResultMessage): boolean {
   if (!message || message.role !== "toolResult" || message.toolName !== "fork") return false;
 
   const results = message.details?.results;
@@ -253,7 +343,7 @@ function addNestedForkUsage(result, message) {
 
   let changed = false;
   for (const forkResult of results) {
-    const usage = forkResult?.usage;
+    const usage = (forkResult as { usage?: Partial<UsageStats> & { cost?: { total?: number } | number; totalTokens?: number } }).usage;
     if (!usage || typeof usage !== "object") continue;
 
     const input = finiteNumber(usage.input);
@@ -261,7 +351,7 @@ function addNestedForkUsage(result, message) {
     const cacheRead = finiteNumber(usage.cacheRead);
     const cacheWrite = finiteNumber(usage.cacheWrite);
     const cost = typeof usage.cost === "object" && usage.cost !== null
-      ? finiteNumber(usage.cost.total)
+      ? finiteNumber((usage.cost as { total?: number }).total)
       : finiteNumber(usage.cost);
     const turns = finiteNumber(usage.turns);
     const contextTokens = finiteNumber(usage.contextTokens) || finiteNumber(usage.totalTokens);
@@ -282,26 +372,36 @@ function addNestedForkUsage(result, message) {
   return changed;
 }
 
-function addMessageUsage(result, message) {
-  return addAssistantMessage(result, message) || addNestedForkUsage(result, message);
+type ProcessableMessage = AssistantMessage | ToolResultMessage;
+
+function addMessageUsage(result: ForkResult, message: ProcessableMessage): boolean {
+  return addAssistantMessage(result, message as AssistantMessage) || addNestedForkUsage(result, message as ToolResultMessage);
 }
 
-function addMessagesUsage(result, messages) {
+function addMessagesUsage(result: ForkResult, messages: unknown): boolean {
   if (!Array.isArray(messages)) return false;
   let changed = false;
   for (const message of messages) {
-    if (addMessageUsage(result, message)) changed = true;
+    if (addMessageUsage(result, message as ProcessableMessage)) changed = true;
   }
   return changed;
 }
 
-function ensureRetryState(result) {
+function ensureRetryState(result: ForkResult): RetryState {
   if (!result.retry || typeof result.retry !== "object") result.retry = {};
   if (!Array.isArray(result.retry.history)) result.retry.history = [];
-  return result.retry;
+  return result.retry as RetryState;
 }
 
-function processAutoRetryStart(event, result) {
+interface AutoRetryStartEvent {
+  type: "auto_retry_start";
+  attempt?: number;
+  maxAttempts?: number;
+  delayMs?: number;
+  errorMessage?: string;
+}
+
+function processAutoRetryStart(event: AutoRetryStartEvent, result: ForkResult): boolean {
   const retry = ensureRetryState(result);
   retry.active = true;
   retry.pending = false;
@@ -313,7 +413,7 @@ function processAutoRetryStart(event, result) {
   if (typeof event.errorMessage === "string") retry.errorMessage = event.errorMessage;
   delete retry.finalError;
 
-  retry.history.push({
+  retry.history!.push({
     type: "start",
     attempt: retry.attempt,
     maxAttempts: retry.maxAttempts,
@@ -325,7 +425,14 @@ function processAutoRetryStart(event, result) {
   return true;
 }
 
-function processAutoRetryEnd(event, result) {
+interface AutoRetryEndEvent {
+  type: "auto_retry_end";
+  attempt?: number;
+  success?: boolean;
+  finalError?: string;
+}
+
+function processAutoRetryEnd(event: AutoRetryEndEvent, result: ForkResult): boolean {
   const retry = ensureRetryState(result);
   retry.active = false;
   retry.pending = false;
@@ -334,7 +441,7 @@ function processAutoRetryEnd(event, result) {
   if (typeof event.attempt === "number") retry.attempt = event.attempt;
   if (typeof event.finalError === "string") retry.finalError = event.finalError;
 
-  retry.history.push({
+  retry.history!.push({
     type: "end",
     attempt: retry.attempt,
     success: retry.success,
@@ -349,23 +456,38 @@ function processAutoRetryEnd(event, result) {
   return true;
 }
 
-function maxActivityOrder(result) {
-  const orders = [];
-  if (typeof result?.thinking?.activityOrder === "number") orders.push(result.thinking.activityOrder);
-  if (Array.isArray(result?.activities)) {
+interface Activity {
+  type?: "thinking" | "tool" | string;
+  status?: string;
+  activityOrder?: number;
+  displayText?: string;
+  toolName?: string;
+  toolCallId?: string;
+  latestText?: string;
+  isError?: boolean;
+  _thinkingChars?: number;
+  chars?: number;
+  tokens?: number;
+  [key: string]: unknown;
+}
+
+function maxActivityOrder(result: ForkResult): number {
+  const orders: number[] = [];
+  if (typeof result.thinking?.activityOrder === "number") orders.push(result.thinking.activityOrder);
+  if (Array.isArray(result.activities)) {
     for (const activity of result.activities) {
-      if (typeof activity?.activityOrder === "number") orders.push(activity.activityOrder);
+      if (activity && typeof activity.activityOrder === "number") orders.push(activity.activityOrder);
     }
   }
-  if (Array.isArray(result?.toolExecutions)) {
+  if (Array.isArray(result.toolExecutions)) {
     for (const tool of result.toolExecutions) {
-      if (typeof tool?.activityOrder === "number") orders.push(tool.activityOrder);
+      if (tool && typeof tool.activityOrder === "number") orders.push(tool.activityOrder);
     }
   }
   return orders.length > 0 ? Math.max(...orders) : 0;
 }
 
-function nextActivityOrder(result) {
+function nextActivityOrder(result: ForkResult): number {
   if (!Object.prototype.hasOwnProperty.call(result, "__activityOrder")) {
     Object.defineProperty(result, "__activityOrder", {
       value: maxActivityOrder(result),
@@ -374,16 +496,16 @@ function nextActivityOrder(result) {
       writable: true,
     });
   }
-  result.__activityOrder += 1;
+  result.__activityOrder = (result.__activityOrder || 0) + 1;
   return result.__activityOrder;
 }
 
-function ensureActivities(result) {
+function ensureActivities(result: ForkResult): Activity[] {
   if (!Array.isArray(result.activities)) result.activities = [];
-  return result.activities;
+  return result.activities as Activity[];
 }
 
-function addActivity(result, activity) {
+function addActivity(result: ForkResult, activity: Activity): Activity {
   const activities = ensureActivities(result);
   const totalBefore = typeof result.activityCount === "number"
     ? result.activityCount
@@ -393,12 +515,25 @@ function addActivity(result, activity) {
   return activity;
 }
 
-function findToolActivity(result, toolCallId) {
+function findToolActivity(result: ForkResult, toolCallId: string | undefined): Activity | undefined {
   if (!toolCallId || !Array.isArray(result.activities)) return undefined;
-  return result.activities.find((activity) => activity?.type === "tool" && activity.toolCallId === toolCallId);
+  return (result.activities as Activity[]).find((activity) => activity?.type === "tool" && activity.toolCallId === toolCallId);
 }
 
-function syncToolActivity(result, tool) {
+interface ToolExecutionEntry {
+  toolCallId?: string;
+  toolName?: string;
+  status?: string;
+  isError?: boolean;
+  latestText?: string;
+  argsPreview?: string;
+  displayText?: string;
+  updates?: number;
+  activityOrder?: number;
+  [key: string]: unknown;
+}
+
+function syncToolActivity(result: ForkResult, tool: ToolExecutionEntry): Activity | undefined {
   if (!tool || typeof tool !== "object") return undefined;
   let activity = findToolActivity(result, tool.toolCallId);
   if (!activity) {
@@ -410,13 +545,13 @@ function syncToolActivity(result, tool) {
   return activity;
 }
 
-function latestActivity(result) {
-  const activities = Array.isArray(result.activities) ? result.activities : [];
+function latestActivity(result: ForkResult): Activity | undefined {
+  const activities = Array.isArray(result.activities) ? (result.activities as Activity[]) : [];
   return activities[activities.length - 1];
 }
 
-function latestRunningThinkingActivity(result) {
-  const activities = Array.isArray(result.activities) ? result.activities : [];
+function latestRunningThinkingActivity(result: ForkResult): Activity | undefined {
+  const activities = Array.isArray(result.activities) ? (result.activities as Activity[]) : [];
   for (let i = activities.length - 1; i >= 0; i--) {
     const activity = activities[i];
     if (activity?.type === "thinking" && activity.status === "running") return activity;
@@ -424,19 +559,19 @@ function latestRunningThinkingActivity(result) {
   return undefined;
 }
 
-function estimateTokensFromChars(chars) {
+function estimateTokensFromChars(chars: number): number {
   const safeChars = typeof chars === "number" && Number.isFinite(chars) && chars > 0 ? chars : 0;
   return safeChars > 0 ? Math.ceil(safeChars / 4) : 0;
 }
 
-function getThinkingChars(activity) {
+function getThinkingChars(activity: Activity): number {
   if (typeof activity?._thinkingChars === "number") return activity._thinkingChars;
   if (typeof activity?.chars === "number") return activity.chars;
   if (typeof activity?.tokens === "number") return activity.tokens * 4;
   return 0;
 }
 
-function setThinkingChars(activity, chars) {
+function setThinkingChars(activity: Activity, chars: number): void {
   Object.defineProperty(activity, "_thinkingChars", {
     value: Math.max(0, chars),
     writable: true,
@@ -447,13 +582,18 @@ function setThinkingChars(activity, chars) {
   delete activity.chars;
 }
 
-function getThinkingTokens(thinking) {
+interface ThinkingState {
+  tokens?: number;
+  chars?: number;
+}
+
+function getThinkingTokens(thinking: ThinkingState): number {
   if (typeof thinking?.tokens === "number") return thinking.tokens;
   if (typeof thinking?.chars === "number") return estimateTokensFromChars(thinking.chars);
   return 0;
 }
 
-function createThinkingActivity(result) {
+function createThinkingActivity(result: ForkResult): Activity {
   const activity = addActivity(result, {
     type: "thinking",
     status: "running",
@@ -464,11 +604,11 @@ function createThinkingActivity(result) {
   return activity;
 }
 
-function ensureLatestThinkingActivity(result) {
+function ensureLatestThinkingActivity(result: ForkResult): Activity {
   return latestRunningThinkingActivity(result) || createThinkingActivity(result);
 }
 
-function syncThinkingState(result, activity) {
+function syncThinkingState(result: ForkResult, activity: Activity): ThinkingState {
   result.thinking = {
     status: activity.status,
     tokens: getThinkingTokens(activity),
@@ -477,12 +617,22 @@ function syncThinkingState(result, activity) {
   return result.thinking;
 }
 
-function ensureToolExecutions(result) {
+function ensureToolExecutions(result: ForkResult): ToolExecutionEntry[] {
   if (!Array.isArray(result.toolExecutions)) result.toolExecutions = [];
-  return result.toolExecutions;
+  return result.toolExecutions as ToolExecutionEntry[];
 }
 
-function findToolExecution(result, event) {
+interface ToolExecutionEvent {
+  type: string;
+  toolCallId?: string;
+  toolName?: string;
+  args?: unknown;
+  partialResult?: ToolResult;
+  result?: ToolResult;
+  isError?: boolean;
+}
+
+function findToolExecution(result: ForkResult, event: ToolExecutionEvent): ToolExecutionEntry {
   const toolExecutions = ensureToolExecutions(result);
   const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : undefined;
 
@@ -511,7 +661,7 @@ function findToolExecution(result, event) {
   if (typeof event.toolName === "string") tool.toolName = event.toolName;
   if (Object.prototype.hasOwnProperty.call(event, "args")) {
     tool.argsPreview = stringifyPreview(event.args, MAX_TOOL_ARGS_PREVIEW_CHARS);
-    tool.displayText = formatToolCallPreview(tool.toolName, event.args);
+    tool.displayText = formatToolCallPreview(tool.toolName || "tool", event.args as ToolArgs);
   }
 
   if (!tool.displayText) tool.displayText = tool.toolName;
@@ -519,7 +669,7 @@ function findToolExecution(result, event) {
   return tool;
 }
 
-function processToolExecutionEvent(event, result) {
+function processToolExecutionEvent(event: ToolExecutionEvent, result: ForkResult): boolean {
   const tool = findToolExecution(result, event);
 
   switch (event.type) {
@@ -554,7 +704,18 @@ function processToolExecutionEvent(event, result) {
   }
 }
 
-function processMessageUpdateEvent(event, result) {
+interface AssistantMessageEvent {
+  type: string;
+  delta?: string;
+  content?: string;
+}
+
+interface MessageUpdateEvent {
+  type: "message_update";
+  assistantMessageEvent?: AssistantMessageEvent;
+}
+
+function processMessageUpdateEvent(event: MessageUpdateEvent, result: ForkResult): boolean {
   const assistantEvent = event.assistantMessageEvent;
   if (!assistantEvent || typeof assistantEvent !== "object") return false;
 
@@ -594,19 +755,40 @@ function processMessageUpdateEvent(event, result) {
   }
 }
 
-export function processPiEvent(event, result) {
+export interface PiEvent {
+  type: string;
+  message?: ProcessableMessage;
+  toolResults?: unknown;
+  messages?: unknown;
+  willRetry?: boolean;
+  assistantMessageEvent?: AssistantMessageEvent;
+  attempt?: number;
+  maxAttempts?: number;
+  delayMs?: number;
+  errorMessage?: string;
+  success?: boolean;
+  finalError?: string;
+  toolCallId?: string;
+  toolName?: string;
+  args?: unknown;
+  partialResult?: ToolResult;
+  result?: ToolResult;
+  isError?: boolean;
+}
+
+export function processPiEvent(event: PiEvent, result: ForkResult): boolean {
   if (!event || typeof event !== "object") return false;
 
   switch (event.type) {
     case "message_update":
-      return processMessageUpdateEvent(event, result);
+      return processMessageUpdateEvent(event as MessageUpdateEvent, result);
 
     case "message_end":
-      return addMessageUsage(result, event.message);
+      return addMessageUsage(result, event.message as ProcessableMessage);
 
     case "turn_end": {
       let changed = false;
-      if (addMessageUsage(result, event.message)) changed = true;
+      if (addMessageUsage(result, event.message as ProcessableMessage)) changed = true;
       if (addMessagesUsage(result, event.toolResults)) changed = true;
       return changed;
     }
@@ -618,27 +800,27 @@ export function processPiEvent(event, result) {
       return addMessagesUsage(result, event.messages);
 
     case "auto_retry_start":
-      return processAutoRetryStart(event, result);
+      return processAutoRetryStart(event as AutoRetryStartEvent, result);
 
     case "auto_retry_end":
-      return processAutoRetryEnd(event, result);
+      return processAutoRetryEnd(event as AutoRetryEndEvent, result);
 
     case "tool_execution_start":
     case "tool_execution_update":
     case "tool_execution_end":
-      return processToolExecutionEvent(event, result);
+      return processToolExecutionEvent(event as ToolExecutionEvent, result);
 
     default:
       return false;
   }
 }
 
-export function processPiJsonLine(line, result) {
+export function processPiJsonLine(line: string, result: ForkResult): boolean {
   if (!line.trim()) return false;
 
-  let event;
+  let event: PiEvent;
   try {
-    event = JSON.parse(line);
+    event = JSON.parse(line) as PiEvent;
   } catch {
     return false;
   }
@@ -646,18 +828,19 @@ export function processPiJsonLine(line, result) {
   return processPiEvent(event, result);
 }
 
-export function getFinalAssistantText(messages) {
+export function getFinalAssistantText(messages: unknown): string {
   if (!Array.isArray(messages)) return "";
 
   for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
+    const message = messages[i] as AssistantMessage;
     if (!message || message.role !== "assistant" || !Array.isArray(message.content)) {
       continue;
     }
 
     for (const part of message.content) {
-      if (part?.type === "text" && typeof part.text === "string" && part.text.length > 0) {
-        return part.text;
+      const typedPart = part as ContentPart;
+      if (typedPart?.type === "text" && typeof typedPart.text === "string" && typedPart.text.length > 0) {
+        return typedPart.text;
       }
     }
   }
@@ -665,8 +848,9 @@ export function getFinalAssistantText(messages) {
   return "";
 }
 
-function getLatestRelevantToolExecution(result) {
-  const activities = Array.isArray(result?.activities) ? result.activities : [];
+/*
+function getLatestRelevantToolExecution(result: ForkResult): ToolExecutionEntry | undefined {
+  const activities = Array.isArray(result.activities) ? (result.activities as Activity[]) : [];
   for (let i = activities.length - 1; i >= 0; i--) {
     const activity = activities[i];
     if (activity?.type === "tool" && activity.status === "running") return activity;
@@ -676,27 +860,28 @@ function getLatestRelevantToolExecution(result) {
     if (activity?.type === "tool") return activity;
   }
 
-  const toolExecutions = Array.isArray(result?.toolExecutions) ? result.toolExecutions : [];
+  const toolExecutions = Array.isArray(result.toolExecutions) ? (result.toolExecutions as ToolExecutionEntry[]) : [];
   for (let i = toolExecutions.length - 1; i >= 0; i--) {
     if (toolExecutions[i]?.status === "running") return toolExecutions[i];
   }
 
   return toolExecutions[toolExecutions.length - 1];
 }
+*/
 
-function formatToolStatusIcon(tool) {
+function formatToolStatusIcon(tool: ToolExecutionEntry): string {
   if (tool?.status === "running") return "…";
   if (tool?.status === "error") return "×";
   return "✓";
 }
 
-function formatToolErrorSuffix(tool) {
+function formatToolErrorSuffix(tool: ToolExecutionEntry): string {
   if (tool?.status !== "error" && !tool?.isError) return "";
   if (typeof tool.latestText !== "string" || !tool.latestText.trim()) return "";
   return ` — ${truncateInline(tool.latestText, MAX_INLINE_ERROR_PREVIEW_CHARS)}`;
 }
 
-function formatThinkingActivityProgress(thinking) {
+function formatThinkingActivityProgress(thinking: ThinkingState & { status?: string }): string {
   if (!thinking || typeof thinking !== "object") return "";
   const icon = thinking.status === "running" ? "…" : "✓";
   const tokens = getThinkingTokens(thinking);
@@ -706,11 +891,11 @@ function formatThinkingActivityProgress(thinking) {
   return `${icon} ${label}`;
 }
 
-function getActivityOrder(item, fallback) {
+function getActivityOrder(item: Activity, fallback: number): number {
   return typeof item?.activityOrder === "number" ? item.activityOrder : fallback;
 }
 
-function formatActivityProgress(activity) {
+function formatActivityProgress(activity: Activity): string {
   if (activity?.type === "thinking") return formatThinkingActivityProgress(activity);
   if (activity?.type === "tool") {
     return `${formatToolStatusIcon(activity)} ${activity.displayText || activity.toolName || "tool"}${formatToolErrorSuffix(activity)}`;
@@ -718,23 +903,23 @@ function formatActivityProgress(activity) {
   return "";
 }
 
-function legacyActivities(result) {
-  const activities = [];
+function legacyActivities(result: ForkResult): Activity[] {
+  const activities: Activity[] = [];
   if (result?.thinking) activities.push({ ...result.thinking, type: "thinking" });
-  const toolExecutions = Array.isArray(result?.toolExecutions) ? result.toolExecutions : [];
+  const toolExecutions = Array.isArray(result?.toolExecutions) ? (result.toolExecutions as ToolExecutionEntry[]) : [];
   for (const tool of toolExecutions) activities.push({ ...tool, type: "tool" });
   activities.sort((a, b) => getActivityOrder(a, 0) - getActivityOrder(b, 0));
   return activities;
 }
 
-function getStoredActivities(result) {
+function getStoredActivities(result: ForkResult): Activity[] {
   const activities = Array.isArray(result?.activities) && result.activities.length > 0
-    ? result.activities
+    ? (result.activities as Activity[])
     : legacyActivities(result);
   return activities.filter((activity) => activity && typeof activity === "object");
 }
 
-function totalActivities(result, storedActivities) {
+function totalActivities(result: ForkResult, storedActivities: Activity[]): number {
   if (typeof result?.activityCount === "number") {
     return Math.max(result.activityCount, storedActivities.length);
   }
@@ -745,7 +930,7 @@ function totalActivities(result, storedActivities) {
   return totalTools + (result?.thinking ? 1 : 0);
 }
 
-function formatRetryProgress(retry) {
+function formatRetryProgress(retry: RetryState): string {
   if (!retry || typeof retry !== "object" || !retry.active) return "";
 
   const attempt = typeof retry.attempt === "number" ? retry.attempt : undefined;
@@ -763,9 +948,9 @@ function formatRetryProgress(retry) {
   return `Retrying${errorText} (${attemptText}${delayText})`;
 }
 
-function formatToolProgress(result) {
+function formatToolProgress(result: ForkResult): string {
   const storedActivities = getStoredActivities(result);
-  const lines = [];
+  const lines: string[] = [];
 
   const toShow = storedActivities.slice(-10);
   const skipped = Math.max(0, totalActivities(result, storedActivities) - toShow.length);
@@ -779,8 +964,8 @@ function formatToolProgress(result) {
   return lines.join("\n").trim();
 }
 
-export function getForkProgressText(result) {
-  const retryProgress = formatRetryProgress(result?.retry);
+export function getForkProgressText(result: ForkResult): string {
+  const retryProgress = formatRetryProgress(result?.retry as RetryState);
   if (retryProgress) return retryProgress;
 
   const finalText = getFinalAssistantText(result?.messages);
@@ -796,7 +981,7 @@ export function getForkProgressText(result) {
   return "(running...)";
 }
 
-export function getResultSummaryText(result) {
+export function getResultSummaryText(result: ForkResult): string {
   const finalText = getFinalAssistantText(result?.messages);
   if (finalText) return finalText;
 

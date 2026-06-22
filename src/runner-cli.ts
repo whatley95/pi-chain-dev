@@ -6,7 +6,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-function looksLikeExplicitRelativePath(value) {
+export interface InheritedCliArgs {
+  extensionArgs: string[];
+  alwaysProxy: string[];
+  fallbackModel: string | undefined;
+  fallbackThinking: string | undefined;
+  fallbackTools: string | undefined;
+  fallbackNoTools: boolean;
+}
+
+function looksLikeExplicitRelativePath(value: string): boolean {
   return (
     value.startsWith("./") ||
     value.startsWith("../") ||
@@ -15,7 +24,12 @@ function looksLikeExplicitRelativePath(value) {
   );
 }
 
-function resolvePathArg(value, options = {}) {
+interface ResolvePathOptions {
+  allowPackageSource?: boolean;
+  alwaysResolveRelative?: boolean;
+}
+
+function resolvePathArg(value: string, options: ResolvePathOptions = {}): string {
   const { allowPackageSource = false, alwaysResolveRelative = false } = options;
   if (!value) return value;
   if (allowPackageSource && (value.startsWith("npm:") || value.startsWith("git:"))) return value;
@@ -42,12 +56,12 @@ function resolvePathArg(value, options = {}) {
  * - fallbackModel/thinking/tools: used only when the child session does not
  *   already restore these from its JSONL context.
  */
-export function parseInheritedCliArgs(argv) {
-  const extensionArgs = [];
-  const alwaysProxy = [];
-  let fallbackModel;
-  let fallbackThinking;
-  let fallbackTools;
+export function parseInheritedCliArgs(argv: string[]): InheritedCliArgs {
+  const extensionArgs: string[] = [];
+  const alwaysProxy: string[] = [];
+  let fallbackModel: string | undefined;
+  let fallbackThinking: string | undefined;
+  let fallbackTools: string | undefined;
   let fallbackNoTools = false;
 
   let i = 2;
@@ -65,7 +79,7 @@ export function parseInheritedCliArgs(argv) {
     const nextToken = argv[i + 1];
     const nextIsValue = nextToken !== undefined && !nextToken.startsWith("-");
 
-    const getValue = () => {
+    const getValue = (): [string | undefined, number] => {
       if (inlineValue !== undefined) return [inlineValue, 1];
       if (nextIsValue) return [nextToken, 2];
       return [undefined, 1];
