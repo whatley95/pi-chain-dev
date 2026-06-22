@@ -992,7 +992,6 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       environment,
       offline,
       signal,
-      noTools: true,
       stageTimeoutMs: 300_000,
       sanitizedSessionJsonl: sanitizedSnapshot,
       retries: 1,
