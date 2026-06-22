@@ -86,7 +86,7 @@ export default function (pi: ExtensionAPI) {
     name: "cdev",
     label: "Chain Dev",
     description:
-      "Two-stage development fork: first a cheap model (scout) explores and gathers evidence, then a powerful model (forge) synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for scout only (raw findings, no forge). Set recall=<topic> to retrieve past fork findings from project memory (no fork runs). Set reviewFile=<path> with review=true to review a specific file/artifact instead of the session. Set diffSpec=<range> to review a git/svn diff (e.g. 'HEAD~3..HEAD'). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
+      "Two-stage development fork: first a cheap model (scout) explores and gathers evidence, then a powerful model (forge) synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for scout only (raw findings, no forge). Set verify=true to run scout twice with different temperatures and merge findings before forge (better accuracy, slower, costs ~2x stage 1). Set recall=<topic> to retrieve past fork findings from project memory (no fork runs). Set reviewFile=<path> with review=true to review a specific file/artifact instead of the session. Set diffSpec=<range> to review a git/svn diff (e.g. 'HEAD~3..HEAD'). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
     promptSnippet: "Two-stage fork: scout (cheap) explores → forge (powerful) writes (or scout only with quick:true). Use recall to retrieve past findings.",
     promptGuidelines: [
       "Use cdev for any task requiring more than 3-4 file reads — cheaper than parent model reading files one-by-one.",
@@ -98,6 +98,7 @@ export default function (pi: ExtensionAPI) {
       "After implementing findings from a cdev report, update the report file to check off Action Items and add implementation notes. Then suggest the user run /cdev review <reportPath> to verify the changes.",
       "When a /cdev review file appends findings, address the new Action Items and check them off in the report.",
       "Use cdev with quick:true for follow-up file tracing, grep-style lookups, or when raw findings suffice.",
+      "Use cdev with verify:true for high-stakes exploration where accuracy matters more than speed or cost. verify runs scout twice and merges findings before forge.",
       "Prefer cdev over bash/grep when you need to understand file relationships, not just find text matches.",
       "Tell cdev to surface ambiguities back to you — don't resolve them in the fork.",
       "cdev stages never modify code — the main agent handles all changes.",
@@ -127,6 +128,10 @@ export default function (pi: ExtensionAPI) {
         description:
           "If review is true, provide a git or SVN revision range to review the diff (e.g. 'HEAD~3..HEAD', 'main..feature', 'r1234:1235'). Runs git diff or svn diff and sends the output to the review model.",
       })),
+      verify: Type.Optional(Type.Boolean({
+        description:
+          "If true, run the scout stage twice with different sampling temperatures and merge the findings before sending them to the forge stage. Improves accuracy and coverage for high-stakes tasks at ~2x stage 1 cost and slower speed.",
+      })),
     }),
     renderCall,
     renderResult,
@@ -153,6 +158,7 @@ export default function (pi: ExtensionAPI) {
         "──────────────────────────────────────",
         "/cdev <task>           Scout + Forge explore",
         "/cdev quick <task>     Scout only (fast)",
+        "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
         "/cdev review [path]    Forge review session/file",
         "/cdev review A..B      Review git/svn diff",
         "/cdev scan [deep]      Generate custom prompts",

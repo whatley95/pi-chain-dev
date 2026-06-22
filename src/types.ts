@@ -155,3 +155,44 @@ export interface CdevFindingRecord {
   /** SHA256 hashes of files that support this finding (path → hash). */
   fileFingerprints?: Record<string, string>;
 }
+
+/** Structured output expected from Stage 1 exploration. */
+export interface Stage1Findings {
+  /** One-sentence summary of what was explored. */
+  summary: string;
+  /** Concrete observations backed by evidence. */
+  findings: Array<{
+    /** File path or source anchor, if any. */
+    file?: string;
+    /** The observation itself. */
+    observation: string;
+    /** Supporting evidence (snippet, command output, value). */
+    evidence?: string;
+    /** Confidence in this finding. */
+    confidence: "high" | "medium" | "low";
+  }>;
+  /** Paths or approaches that did not pan out. */
+  deadEnds?: string[];
+  /** Assumptions made during exploration. */
+  assumptions?: string[];
+  /** Questions the main agent should resolve. */
+  openQuestions?: string[];
+}
+
+export function isStage1Findings(value: unknown): value is Stage1Findings {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.summary !== "string") return false;
+  if (!Array.isArray(v.findings)) return false;
+  for (const f of v.findings) {
+    if (!f || typeof f !== "object" || Array.isArray(f)) return false;
+    const finding = f as Record<string, unknown>;
+    if (typeof finding.observation !== "string") return false;
+    if (finding.confidence !== undefined && !["high", "medium", "low"].includes(finding.confidence as string)) return false;
+  }
+  return true;
+}
+
+export function emptyStage1Findings(): Stage1Findings {
+  return { summary: "", findings: [] };
+}

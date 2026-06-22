@@ -237,3 +237,118 @@ describe("memory refresh integration", () => {
     memoryClear(cwd);
   });
 });
+
+// ── Structured stage 1 findings ──────────────────────────
+
+import { isStage1Findings } from "../src/types.js";
+import { parseStage1Findings, mergeStage1Findings } from "../src/runner.js";
+
+describe("isStage1Findings (types.ts)", () => {
+  it("accepts valid findings", () => {
+    assert.ok(isStage1Findings({
+      summary: "explored auth",
+      findings: [{ observation: "JWT used", confidence: "high" }],
+    }));
+  });
+
+  it("rejects missing summary", () => {
+    assert.ok(!isStage1Findings({
+      findings: [{ observation: "JWT used", confidence: "high" }],
+    }));
+  });
+
+  it("rejects missing findings array", () => {
+    assert.ok(!isStage1Findings({
+      summary: "explored auth",
+    }));
+  });
+
+  it("rejects findings without observation", () => {
+    assert.ok(!isStage1Findings({
+      summary: "explored auth",
+      findings: [{ confidence: "high" }],
+    }));
+  });
+
+  it("rejects invalid confidence", () => {
+    assert.ok(!isStage1Findings({
+      summary: "explored auth",
+      findings: [{ observation: "JWT used", confidence: "maybe" }],
+    }));
+  });
+});
+
+describe("parseStage1Findings (runner.ts)", () => {
+  it("parses bare JSON", () => {
+    const text = JSON.stringify({ summary: "s", findings: [{ observation: "o", confidence: "medium" }] });
+    const result = parseStage1Findings(text);
+    assert.ok(result);
+    assert.strictEqual(result!.summary, "s");
+    assert.strictEqual(result!.findings.length, 1);
+  });
+
+  it("parses JSON inside markdown fence", () => {
+    const text = "```json\n" + JSON.stringify({ summary: "s", findings: [{ observation: "o", confidence: "medium" }] }) + "\n```";
+    const result = parseStage1Findings(text);
+    assert.ok(result);
+    assert.strictEqual(result!.summary, "s");
+  });
+
+  it("returns null for invalid JSON", () => {
+    const result = parseStage1Findings("not json");
+    assert.strictEqual(result, null);
+  });
+
+  it("returns null for findings missing required fields", () => {
+    const result = parseStage1Findings(JSON.stringify({ summary: "s" }));
+    assert.strictEqual(result, null);
+  });
+});
+
+describe("mergeStage1Findings (runner.ts)", () => {
+  it("merges unique findings from two runs", () => {
+    const a = {
+      summary: "run A",
+      findings: [{ observation: "JWT used", confidence: "high" as const, file: "auth.ts" }],
+      deadEnds: ["oauth1"],
+    };
+    const b = {
+      summary: "run B",
+      findings: [{ observation: "sessions stored in redis", confidence: "medium" as const }],
+      assumptions: ["redis is persistent"],
+    };
+    const merged = mergeStage1Findings(a, b);
+    assert.strictEqual(merged.findings.length, 2);
+    assert.strictEqual(merged.deadEnds!.length, 1);
+    assert.strictEqual(merged.assumptions!.length, 1);
+  });
+
+  it("deduplicates near-duplicate findings", () => {
+    const a = {
+      summary: "run A",
+      findings: [{ observation: "JWT used for authentication", confidence: "high" as const }],
+    };
+    const b = {
+      summary: "run B",
+      findings: [{ observation: "JWT used for authentication", confidence: "medium" as const }],
+    };
+    const merged = mergeStage1Findings(a, b);
+    assert.strictEqual(merged.findings.length, 1);
+  });
+
+  it("picks longer summary when B has more findings", () => {
+    const a = {
+      summary: "short",
+      findings: [{ observation: "x", confidence: "high" as const }],
+    };
+    const b = {
+      summary: "longer summary here",
+      findings: [
+        { observation: "x", confidence: "high" as const },
+        { observation: "y", confidence: "medium" as const },
+      ],
+    };
+    const merged = mergeStage1Findings(a, b);
+    assert.strictEqual(merged.summary, "longer summary here");
+  });
+});

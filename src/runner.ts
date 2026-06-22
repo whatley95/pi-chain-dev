@@ -13,8 +13,8 @@ import { buildChildEnv } from "./env.js";
 import { extractFilePaths } from "./memory.js";
 import { parseInheritedCliArgs } from "./runner-cli.js";
 import { processPiJsonLine, getFinalAssistantText } from "./runner-events.js";
-import type { StageProfile, ForkResult, UsageStats, AutoForkDetails } from "./types.js";
-import { emptyUsage, emptyFailedResult } from "./types.js";
+import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings } from "./types.js";
+import { emptyUsage, emptyFailedResult, isStage1Findings } from "./types.js";
 
 const SIGKILL_TIMEOUT_MS = 5000;
 
@@ -256,12 +256,27 @@ function cleanupTempDir(dir: string | null): void {
 const STAGE_AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
 
 function buildStage1Prompt(task: string, customPrompt?: string): string {
+  const jsonSchema = `{
+  "summary": "one-sentence summary of what was explored",
+  "findings": [
+    {
+      "file": "optional relative file path",
+      "observation": "concrete observation",
+      "evidence": "supporting snippet, command output, or value",
+      "confidence": "high|medium|low"
+    }
+  ],
+  "deadEnds": ["optional paths that did not pan out"],
+  "assumptions": ["optional assumptions made"],
+  "openQuestions": ["optional questions for the main agent"]
+}`;
   if (customPrompt) {
     return `${customPrompt}
 
 Task: ${task}
 
-Do NOT write a report. Return raw findings only.${STAGE_AUDIT_GUARD}`;
+Return your findings as a single JSON object matching this schema (no markdown fences, no extra prose):
+${jsonSchema}${STAGE_AUDIT_GUARD}`;
   }
   return `${task}
 
@@ -270,12 +285,47 @@ You are in EXPLORATION MODE. Your job is to gather information, not to write a f
 Instructions:
 - Explore thoroughly using available tools (read, bash, ls, grep, etc.)
 - Gather concrete evidence: file contents, command outputs, config values
-- Return raw, unfiltered findings
-- Do NOT write structured sections like "Result", "Output", "Evidence", or "Learnings"
-- Do NOT write a decision-useful report
-- Just return what you found — raw data, observations, and preliminary notes
+- Return your findings as a single JSON object matching this schema (no markdown fences, no extra prose):
+${jsonSchema}
 
-After exploring, simply return your findings as plain text.${STAGE_AUDIT_GUARD}`;
+Rules:
+- "summary" is required and must be one sentence.
+- "findings" is required. Each finding must have "observation" and "confidence".
+- "file" and "evidence" are optional but strongly preferred when applicable.
+- "deadEnds", "assumptions", "openQuestions" are optional.
+- Do NOT write structured sections like "Result", "Output", "Evidence", or "Learnings" outside the JSON.
+- Do NOT write a decision-useful report. Only return the JSON object.${STAGE_AUDIT_GUARD}`;
+}
+
+function formatStage1FindingsForStage2(findings: Stage1Findings): string {
+  const lines: string[] = [];
+  lines.push(`Summary: ${findings.summary}`);
+  if (findings.findings.length > 0) {
+    lines.push("");
+    lines.push("Findings:");
+    for (const f of findings.findings) {
+      const parts: string[] = [`- [${f.confidence || "medium"}] ${f.observation}`];
+      if (f.file) parts.push(`  file: ${f.file}`);
+      if (f.evidence) parts.push(`  evidence: ${f.evidence}`);
+      lines.push(parts.join("\n"));
+    }
+  }
+  if (findings.deadEnds?.length) {
+    lines.push("");
+    lines.push("Dead ends:");
+    for (const d of findings.deadEnds) lines.push(`- ${d}`);
+  }
+  if (findings.assumptions?.length) {
+    lines.push("");
+    lines.push("Assumptions:");
+    for (const a of findings.assumptions) lines.push(`- ${a}`);
+  }
+  if (findings.openQuestions?.length) {
+    lines.push("");
+    lines.push("Open questions:");
+    for (const q of findings.openQuestions) lines.push(`- ${q}`);
+  }
+  return lines.join("\n");
 }
 
 function buildStage2Prompt(task: string, stage1Output: string, customPrompt?: string): string {
@@ -331,6 +381,89 @@ Assembly rules:
 - If no files changed, say "No changes made" once
 - Report what changes future decisions, trust, or behavior
 - Action Items should be concrete, verifiable tasks the agent can check off${STAGE_AUDIT_GUARD}`;
+}
+
+// ── Stage 1 structured findings ────────────────────────────
+
+function extractJsonFromText(text: string): string | null {
+  const trimmed = text.trim();
+  // Markdown fenced code block
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) return fenceMatch[1].trim();
+  // Bare JSON object
+  const objectMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (objectMatch) return objectMatch[0];
+  return null;
+}
+
+export function parseStage1Findings(text: string): Stage1Findings | null {
+  const jsonText = extractJsonFromText(text);
+  if (!jsonText) return null;
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (!isStage1Findings(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function validateStage1Findings(findings: Stage1Findings, source: string): { valid: boolean; reason?: string } {
+  if (!findings.summary || findings.summary.trim().length < 5) {
+    return { valid: false, reason: `${source}: summary missing or too short` };
+  }
+  if (findings.findings.length === 0) {
+    return { valid: false, reason: `${source}: no findings returned` };
+  }
+  const withObservations = findings.findings.filter(f => f.observation && f.observation.trim().length > 0);
+  if (withObservations.length === 0) {
+    return { valid: false, reason: `${source}: findings lack observations` };
+  }
+  return { valid: true };
+}
+
+/** Deduplicate findings by observation text similarity (case-insensitive prefix match). */
+function normalizeObservation(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function findingsOverlap(a: string, b: string): boolean {
+  const na = normalizeObservation(a);
+  const nb = normalizeObservation(b);
+  if (na === nb) return true;
+  if (na.length > 20 && nb.length > 20) {
+    return na.startsWith(nb.slice(0, 40)) || nb.startsWith(na.slice(0, 40));
+  }
+  return false;
+}
+
+export function mergeStage1Findings(a: Stage1Findings, b: Stage1Findings): Stage1Findings {
+  const merged: Stage1Findings = {
+    summary: a.summary,
+    findings: [...a.findings],
+    deadEnds: [...(a.deadEnds ?? [])],
+    assumptions: [...(a.assumptions ?? [])],
+    openQuestions: [...(a.openQuestions ?? [])],
+  };
+  for (const f of b.findings) {
+    if (!merged.findings.some(existing => findingsOverlap(existing.observation, f.observation))) {
+      merged.findings.push(f);
+    }
+  }
+  for (const list of ["deadEnds", "assumptions", "openQuestions"] as const) {
+    const source = b[list] ?? [];
+    for (const item of source) {
+      if (!merged[list]?.some(existing => normalizeObservation(existing) === normalizeObservation(item))) {
+        merged[list] = merged[list] ?? [];
+        merged[list].push(item);
+      }
+    }
+  }
+  // Use longer/more detailed summary if b has more findings
+  if (b.findings.length > a.findings.length && b.summary.length >= a.summary.length) {
+    merged.summary = b.summary;
+  }
+  return merged;
 }
 
 // ── Review mode prompts ────────────────────────────────────
@@ -482,6 +615,7 @@ function buildPiArgs(
   extensions: string[] | null,
   stageProfile: StageProfile,
   noTools = false,
+  temperature?: number,
 ): string[] {
   const args: string[] = [
     "--mode", "json",
@@ -518,6 +652,10 @@ function buildPiArgs(
   args.push("--model", stageProfile.id);
   args.push("--thinking", stageProfile.thinking);
 
+  if (typeof temperature === "number") {
+    args.push("--temperature", String(temperature));
+  }
+
   if (extensions !== null && extensions.length > 0) {
     for (const extension of extensions) {
       args.push("--extension", extension);
@@ -549,6 +687,8 @@ export interface RunStageOptions {
   sanitizedSessionJsonl?: { jsonl: string; stripped: number };
   /** Number of retries on spawn/early-exit failures. */
   retries?: number;
+  /** Optional sampling temperature for the stage model. */
+  temperature?: number;
 }
 
 async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResult> {
@@ -576,7 +716,7 @@ async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResult> {
 async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
   const { cwd, task, stageLabel, forkSessionJsonl, stageProfile, extensions,
           environment, offline, signal, noTools = false, stageTimeoutMs = 0,
-          sanitizedSessionJsonl } = opts;
+          sanitizedSessionJsonl, temperature } = opts;
 
   const result: ForkResult = {
     task,
@@ -591,7 +731,7 @@ async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
     result.stderr += `[cdev] stripped ${sanitized.stripped} orphaned tool message(s) from session snapshot\n`;
   }
   const tmp = writeTempSessionJsonl(sanitized.jsonl);
-  const piArgs = buildPiArgs(task, tmp.filePath, extensions, stageProfile, noTools);
+  const piArgs = buildPiArgs(task, tmp.filePath, extensions, stageProfile, noTools, temperature);
 
   const exitCode = await new Promise<number>((resolve) => {
     const { command, prefixArgs } = resolvePiSpawn();
@@ -699,6 +839,8 @@ export interface RunAutoForkOptions {
   customSynthesizePrompt?: string;
   /** If true, skip stage 2 — return raw stage 1 findings only. */
   quick?: boolean;
+  /** If true, run stage 1 twice with different temperatures and merge findings before stage 2. */
+  verify?: boolean;
   /** Called when a stage starts. Lets the caller show progress. */
   onProgress?: (stage: "scout" | "forge", model: string) => void;
   extensions?: string[] | null;
@@ -713,7 +855,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 }> {
   const { cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage2Profile,
           customExplorePrompt, customSynthesizePrompt,
-          quick = false,
+          quick = false, verify = false,
           extensions = null, environment = {}, offline = true, signal } = opts;
 
   const details: AutoForkDetails = { stage1: null, stage2: null };
@@ -722,15 +864,18 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   const sanitizedSnapshot = sanitizeSessionJsonl(forkSessionSnapshotJsonl);
 
   // ── Stage 1: Exploration with cheap model ──
-  opts.onProgress?.("scout", stage1Profile.thinking ? `${stage1Profile.provider}:${stage1Profile.id} • ${stage1Profile.thinking}` : `${stage1Profile.provider}:${stage1Profile.id}`);
+  const scoutModelLabel = stage1Profile.thinking ? `${stage1Profile.provider}:${stage1Profile.id} • ${stage1Profile.thinking}` : `${stage1Profile.provider}:${stage1Profile.id}`;
+  opts.onProgress?.("scout", scoutModelLabel);
   const stage1Task = buildStage1Prompt(task, customExplorePrompt);
 
   let stage1Result: ForkResult;
-  try {
-    stage1Result = await runStageWithRetry({
+  let stage1Findings: Stage1Findings | null = null;
+
+  async function runStage1Run(label: string, temperature?: number): Promise<ForkResult> {
+    return runStageWithRetry({
       cwd,
       task: stage1Task,
-      stageLabel: "exploration",
+      stageLabel: label,
       forkSessionJsonl: forkSessionSnapshotJsonl,
       stageProfile: stage1Profile,
       extensions,
@@ -740,15 +885,90 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       stageTimeoutMs: 300_000,
       sanitizedSessionJsonl: sanitizedSnapshot,
       retries: 1,
+      temperature,
     });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    stage1Result = emptyFailedResult(task, `Stage 1 (exploration) failed: ${message}`);
   }
-  details.stage1 = stage1Result;
+
+  if (verify) {
+    // Self-consistency: run stage 1 twice concurrently with different temperatures
+    const [runA, runB] = await Promise.all([
+      runStage1Run("exploration A", 0.2),
+      runStage1Run("exploration B", 0.7),
+    ]);
+
+    // Combine usage from both runs into the primary stage1 result
+    const combinedUsage: UsageStats = emptyUsage();
+    const addUsage = (usage: UsageStats | undefined | null) => {
+      if (!usage) return;
+      combinedUsage.input += usage.input || 0;
+      combinedUsage.output += usage.output || 0;
+      combinedUsage.cost += usage.cost || 0;
+      combinedUsage.turns += usage.turns || 0;
+      combinedUsage.contextTokens = Math.max(combinedUsage.contextTokens, usage.contextTokens || 0);
+    };
+    addUsage(runA.usage);
+    addUsage(runB.usage);
+
+    stage1Result = {
+      ...runA,
+      task,
+      usage: combinedUsage,
+      stderr: [runA.stderr, runB.stderr].filter(Boolean).join("\n"),
+    };
+    details.stage1 = stage1Result;
+
+    const textA = getFinalAssistantText(runA.messages) || "";
+    const textB = getFinalAssistantText(runB.messages) || "";
+    const findingsA = parseStage1Findings(textA);
+    const findingsB = parseStage1Findings(textB);
+
+    const validationA = findingsA ? validateStage1Findings(findingsA, "exploration A") : { valid: false, reason: "exploration A: output was not valid JSON findings" };
+    const validationB = findingsB ? validateStage1Findings(findingsB, "exploration B") : { valid: false, reason: "exploration B: output was not valid JSON findings" };
+
+    if (validationA.valid && validationB.valid) {
+      stage1Findings = mergeStage1Findings(findingsA!, findingsB!);
+      stage1Result.stderr += `\n[cdev] verify mode: merged ${findingsA!.findings.length} + ${findingsB!.findings.length} findings into ${stage1Findings.findings.length} unique findings\n`;
+    } else if (validationA.valid) {
+      stage1Findings = findingsA;
+      stage1Result.stderr += `\n[cdev] verify mode: exploration A valid, B invalid (${validationB.reason}); using A\n`;
+    } else if (validationB.valid) {
+      stage1Findings = findingsB;
+      stage1Result.stderr += `\n[cdev] verify mode: exploration B valid, A invalid (${validationA.reason}); using B\n`;
+    } else {
+      stage1Result.stderr += `\n[cdev] verify mode: both explorations invalid (${validationA.reason}; ${validationB.reason})\n`;
+    }
+  } else {
+    // Normal mode: run stage 1 once, validate, retry once if invalid
+    stage1Result = await runStage1Run("exploration");
+    details.stage1 = stage1Result;
+
+    const stage1Text = getFinalAssistantText(stage1Result.messages) || "";
+    stage1Findings = parseStage1Findings(stage1Text);
+    const validation = stage1Findings ? validateStage1Findings(stage1Findings, "exploration") : { valid: false, reason: "output was not valid JSON findings" };
+
+    if (!validation.valid) {
+      stage1Result.stderr += `\n[cdev] ${validation.reason}; retrying stage 1 with stricter prompt\n`;
+      const retryResult = await runStage1Run("exploration (validation retry)");
+      details.stage1 = retryResult;
+
+      const retryText = getFinalAssistantText(retryResult.messages) || "";
+      const retryFindings = parseStage1Findings(retryText);
+      const retryValidation = retryFindings ? validateStage1Findings(retryFindings, "exploration retry") : { valid: false, reason: "retry output was not valid JSON findings" };
+
+      if (retryValidation.valid) {
+        stage1Findings = retryFindings;
+        stage1Result = {
+          ...retryResult,
+          stderr: [stage1Result.stderr, retryResult.stderr].filter(Boolean).join("\n"),
+        };
+      } else {
+        stage1Result.stderr += `\n[cdev] ${retryValidation.reason}; proceeding with raw text\n`;
+        stage1Findings = null;
+      }
+    }
+  }
 
   if (stage1Result.exitCode > 0 && !getFinalAssistantText(stage1Result.messages)) {
-    // Stage 1 failed with no output — return the error
     return {
       result: {
         ...stage1Result,
@@ -761,21 +981,23 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   // Quick mode — skip stage 2, return raw findings
   if (quick) {
-    return {
-      result: {
-        ...stage1Result,
-        task,
-        stopReason: "quick",
-      },
-      details,
+    const quickResult: ForkResult = {
+      ...stage1Result,
+      task,
+      stopReason: "quick",
     };
+    if (stage1Findings) {
+      quickResult.messages = [...stage1Result.messages];
+    }
+    return { result: quickResult, details };
   }
 
   // ── Stage 2: Synthesis with powerful model ──
   opts.onProgress?.("forge", stage2Profile.thinking ? `${stage2Profile.provider}:${stage2Profile.id} • ${stage2Profile.thinking}` : `${stage2Profile.provider}:${stage2Profile.id}`);
-  const stage1Text = getFinalAssistantText(stage1Result.messages) ||
-                     stage1Result.stderr ||
-                     "(no output from exploration stage)";
+
+  const stage1Text = stage1Findings
+    ? formatStage1FindingsForStage2(stage1Findings)
+    : getFinalAssistantText(stage1Result.messages) || stage1Result.stderr || "(no output from exploration stage)";
 
   const stage2Task = buildStage2Prompt(task, stage1Text, customSynthesizePrompt);
 

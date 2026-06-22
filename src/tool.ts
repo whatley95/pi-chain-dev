@@ -20,6 +20,7 @@ export interface AutoForkParamsType {
   task?: string;
   review?: boolean;
   quick?: boolean;
+  verify?: boolean;
   recall?: string;
   reviewFile?: string;
   diffSpec?: string;
@@ -375,6 +376,7 @@ export async function executeCdevTool(
       customExplorePrompt: config.promptsEnabled ? config.prompts?.explore : undefined,
       customSynthesizePrompt: config.promptsEnabled ? config.prompts?.synthesize : undefined,
       quick,
+      verify: p.verify ?? false,
       onProgress,
       extensions: config.extensions,
       environment: config.environment,

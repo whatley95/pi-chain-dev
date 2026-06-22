@@ -36,7 +36,7 @@ export function registerCdevCommand(
   updatePromptsStatus: (ctx: ExtensionContext) => void,
 ): void {
   pi.registerCommand("cdev", {
-    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, memory on|off, themed on|off",
+    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, verify <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, memory on|off, themed on|off",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
 
@@ -513,6 +513,18 @@ REVIEW_PROMPT:
         return;
       }
 
+      // ── Subcommand: verify ──
+      if (trimmed.startsWith("verify ")) {
+        const verifyTask = trimmed.slice(7).trim();
+        if (!verifyTask) {
+          ctx.ui.notify("Usage: /cdev verify <task>", "warn");
+          return;
+        }
+        ctx.ui.notify(`Queuing verified exploration (scout ×2 + forge)...`, "info");
+        pi.sendUserMessage(`Use cdev with verify=true to: ${verifyTask}`, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
+
       // ── Subcommand: status ──
       if (trimmed === "status" || trimmed === "info") {
         const config = loadConfig(ctx.cwd);
@@ -560,6 +572,7 @@ REVIEW_PROMPT:
         await ctx.ui.select("cdev subcommands:", [
           "/cdev <task>           Scout + Forge explore",
           "/cdev quick <task>     Scout only (fast)",
+          "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
           "/cdev review [path]    Forge review session/file",
           "/cdev review A..B      Review git/svn diff",
           "/cdev scan [deep]      Generate custom prompts",
@@ -584,6 +597,7 @@ REVIEW_PROMPT:
           "",
           "Subcommands:",
           "  quick <task>     Scout only (fast findings)",
+          "  verify <task>    Scout ×2 + forge (higher accuracy)",
           "  review [path]    Forge review session, file, or diff",
           "  scan [deep]      Generate custom prompts",
           "  history [n]      Past fork sessions",
