@@ -1545,10 +1545,13 @@ REVIEW_PROMPT:
         const menu = menus[step];
         const pick = await ctx.ui.select(menu.title, menu.items);
         if (!pick || pick.startsWith("…")) {
-          if (step === 0) return;
           // Clear current and future selections, then go back.
           for (let i = step; i < menus.length; i++) {
             state[menus[i].key] = undefined;
+          }
+          if (step === 0) {
+            // At the root menu (provider picker), stay here instead of exiting.
+            continue;
           }
           step--;
           continue;
