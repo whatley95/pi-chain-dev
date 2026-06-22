@@ -1393,7 +1393,7 @@ REVIEW_PROMPT:
         : stagePick.startsWith("Forge") ? "stage2"
         : "review";
 
-      // Step 2: show only models from configured providers
+      // Step 2: group configured providers and pick provider, then model
       const allModels = typeof (ctx.modelRegistry as unknown as { getAll?: () => ReturnType<typeof ctx.modelRegistry.getAvailable> }).getAll === "function"
         ? (ctx.modelRegistry as unknown as { getAll: () => ReturnType<typeof ctx.modelRegistry.getAvailable> }).getAll()
         : ctx.modelRegistry.getAvailable();
@@ -1409,49 +1409,36 @@ REVIEW_PROMPT:
         return;
       }
 
-      // Search/filter step to avoid stretching the UI with huge lists (e.g. OpenRouter)
-      const MAX_SHOWN = 50;
-      let searchTerm = "";
-      if (configuredModels.length > MAX_SHOWN) {
-        const raw = await ctx.ui.input(
-          `Search ${configuredModels.length} configured models (empty = show first ${MAX_SHOWN}):`,
-          "type to filter..."
+      const providers = Array.from(new Set(configuredModels.map(m => m.provider)));
+      let provider: string;
+      if (providers.length === 1) {
+        provider = providers[0];
+      } else {
+        const providerPick = await ctx.ui.select(
+          "Pick provider:",
+          providers.map(p => `${p} (${configuredModels.filter(m => m.provider === p).length})`)
         );
-        if (raw === undefined) return;
-        searchTerm = raw.trim().toLowerCase();
-      }
-      const term = searchTerm;
-      const matchedModels = term
-        ? configuredModels.filter(m =>
-            m.id.toLowerCase().includes(term) ||
-            m.provider.toLowerCase().includes(term) ||
-            (m.name && m.name.toLowerCase().includes(term))
-          )
-        : configuredModels.slice(0, MAX_SHOWN);
-      if (matchedModels.length === 0) {
-        ctx.ui.notify(`No models match "${term}".`, "info");
-        return;
+        if (!providerPick) return;
+        const providerMatch = providerPick.match(/^(.+?)\s+\(/);
+        provider = providerMatch ? providerMatch[1].trim() : providerPick.trim();
       }
 
+      const providerModels = configuredModels.filter(m => m.provider === provider);
+      const MAX_SHOWN = 50;
       const currentModel = ctx.model;
-      const modelItems = matchedModels.slice(0, MAX_SHOWN).map(m => {
+      const modelItems = providerModels.slice(0, MAX_SHOWN).map(m => {
         const isCurrent = currentModel && currentModel.provider === m.provider && currentModel.id === m.id;
-        return `${m.id} [${m.provider}]${isCurrent ? " ✓" : ""}`;
+        return `${m.id}${isCurrent ? " ✓" : ""}`;
       });
-      if (matchedModels.length > MAX_SHOWN) {
-        modelItems.push(`… ${matchedModels.length - MAX_SHOWN} more matches — refine your search`);
+      if (providerModels.length > MAX_SHOWN) {
+        modelItems.push(`… ${providerModels.length - MAX_SHOWN} more models hidden`);
       }
       const modelPick = await ctx.ui.select(
-        `Pick ${stage} model (${matchedModels.length} shown${term ? ` matching "${term}"` : ""}):`,
+        `Pick ${stage} model from ${provider} (${providerModels.length} available):`,
         modelItems
       );
       if (!modelPick || modelPick.startsWith("…")) return;
-      
-      // Parse "modelId [provider]"
-      const match = modelPick.match(/^(.+?)\s+\[(.+?)\]/);
-      if (!match) { ctx.ui.notify("Parse error: " + modelPick, "error"); return; }
-      const modelId = match[1].trim();
-      const provider = match[2].trim();
+      const modelId = modelPick.replace(/ ✓$/, "").trim();
 
       // Step 3: pick thinking
       const thinkingPick = await ctx.ui.select("Pick thinking level:", [
