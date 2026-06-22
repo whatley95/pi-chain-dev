@@ -215,7 +215,7 @@ export function updateForkCostStatus(ctx: ExtensionContext): void {
   if (config.promptsEnabled && (config.prompts?.explore || config.prompts?.review)) segments.push("📋");
   if (config.memory) {
     const topicCount = memoryTopicCount(ctx.cwd);
-    if (topicCount > 0) segments.push(`🧠${topicCount}`);
+    if (topicCount > 0) segments.push(`🧠 ${topicCount}`);
   }
 
   if (segments.length <= 1) {
