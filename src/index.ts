@@ -1393,13 +1393,28 @@ REVIEW_PROMPT:
         : stagePick.startsWith("Forge") ? "stage2"
         : "review";
 
-      // Step 2: show all models via select (max 50)
-      const allModels = ctx.modelRegistry.getAvailable();
-      const modelItems = allModels.slice(0, 50).map(m =>
-        `${m.id} [${m.provider}]`
-      );
+      // Step 2: show only models from configured providers
+      const allModels = typeof (ctx.modelRegistry as unknown as { getAll?: () => ReturnType<typeof ctx.modelRegistry.getAvailable> }).getAll === "function"
+        ? (ctx.modelRegistry as unknown as { getAll: () => ReturnType<typeof ctx.modelRegistry.getAvailable> }).getAll()
+        : ctx.modelRegistry.getAvailable();
+      const configuredModels = allModels.filter(m => {
+        try {
+          return ctx.modelRegistry.getProviderAuthStatus(m.provider).configured;
+        } catch {
+          return ctx.modelRegistry.hasConfiguredAuth(m);
+        }
+      });
+      if (configuredModels.length === 0) {
+        ctx.ui.notify("Only showing models from configured providers. Use /login to add providers.", "info");
+        return;
+      }
+      const currentModel = ctx.model;
+      const modelItems = configuredModels.slice(0, 50).map(m => {
+        const isCurrent = currentModel && currentModel.provider === m.provider && currentModel.id === m.id;
+        return `${m.id} [${m.provider}]${isCurrent ? " ✓" : ""}`;
+      });
       const modelPick = await ctx.ui.select(
-        `Pick ${stage} model (arrow keys to scroll):`,
+        `Pick ${stage} model from configured providers (${configuredModels.length} available):`,
         modelItems
       );
       if (!modelPick) return;
