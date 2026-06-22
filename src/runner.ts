@@ -1262,6 +1262,7 @@ async function runReviewStage(
       signal,
       noTools: true,
       stageTimeoutMs: 180_000,
+      retries: 1,
       onUpdate,
     });
   } catch (err) {
