@@ -1409,54 +1409,85 @@ REVIEW_PROMPT:
         return;
       }
 
-      const providers = Array.from(new Set(configuredModels.map(m => m.provider)));
-      let provider: string;
-      if (providers.length === 1) {
-        provider = providers[0];
-      } else {
-        const providerPick = await ctx.ui.select(
-          "Pick provider:",
-          providers.map(p => `${p} (${configuredModels.filter(m => m.provider === p).length})`)
-        );
-        if (!providerPick) return;
-        const providerMatch = providerPick.match(/^(.+?)\s+\(/);
-        provider = providerMatch ? providerMatch[1].trim() : providerPick.trim();
-      }
-
-      const providerModels = configuredModels.filter(m => m.provider === provider);
       const MAX_SHOWN = 50;
-      let shownModels = providerModels;
+      const providers = Array.from(new Set(configuredModels.map(m => m.provider)));
 
-      // For huge providers with slash-prefixed IDs (e.g. OpenRouter), group by prefix first.
-      const prefixes = new Map<string, typeof providerModels>();
-      for (const m of providerModels) {
-        let prefix = m.id.includes("/") ? m.id.split("/")[0] : "(other)";
-        prefix = prefix.replace(/^~+/, "");
-        const list = prefixes.get(prefix);
-        if (list) list.push(m);
-        else prefixes.set(prefix, [m]);
-      }
-      if (providerModels.length > MAX_SHOWN && prefixes.size > 1) {
-        const prefixEntries = Array.from(prefixes.entries())
-          .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
-        const prefixItems = prefixEntries.map(([p, list]) => `${p}/ (${list.length})`);
-        const prefixPick = await ctx.ui.select(
-          `Pick ${provider} model group (${prefixes.size} groups):`,
-          prefixItems
-        );
-        if (!prefixPick) return;
-        const prefixMatch = prefixPick.match(/^(.+?)\/\s+\(/);
-        const selectedPrefix = prefixMatch ? prefixMatch[1] : prefixPick.replace(/\s+\(\d+\)$/, "").trim();
-        shownModels = prefixEntries.find(([p]) => p === selectedPrefix)?.[1] ?? providerModels;
-      }
-
-      // If the selected prefix still has too many models, group by model family.
       function getFamily(id: string): string {
         const local = id.includes("/") ? id.slice(id.lastIndexOf("/") + 1) : id;
         const match = local.match(/^([a-z]+(?:-[a-z]+)*(?:-\d+(?:\.\d+)?[a-z]?)?)/i);
         return match ? match[1] : local;
       }
-      if (shownModels.length > MAX_SHOWN) {
+
+      interface PickerState {
+        provider?: string;
+        prefix?: string;
+        family?: string;
+        modelId?: string;
+        thinking?: string;
+      }
+
+      function parseProvider(pick: string): string {
+        const match = pick.match(/^(.+?)\s+\(/);
+        return match ? match[1].trim() : pick.trim();
+      }
+      function parsePrefix(pick: string): string {
+        const match = pick.match(/^(.+?)\/\s+\(/);
+        return match ? match[1].trim() : pick.replace(/\s+\(\d+\)$/, "").trim();
+      }
+      function parseFamily(pick: string): string {
+        const match = pick.match(/^(.+?)\s+\(/);
+        return match ? match[1].trim() : pick.replace(/\s+\(\d+\)$/, "").trim();
+      }
+      function parseModel(pick: string): string {
+        return pick.replace(/ ✓$/, "").trim();
+      }
+
+      function buildMenus(state: PickerState): Array<{
+        key: keyof PickerState;
+        title: string;
+        items: string[];
+        parse: (pick: string) => string;
+      }> {
+        const menus: ReturnType<typeof buildMenus> = [];
+        const provider = state.provider ?? providers[0];
+        const providerModels = configuredModels.filter(m => m.provider === provider);
+
+        // Provider menu
+        if (providers.length > 1) {
+          menus.push({
+            key: "provider",
+            title: "Pick provider:",
+            items: providers.map(p => `${p} (${configuredModels.filter(m => m.provider === p).length})`),
+            parse: parseProvider,
+          });
+        }
+
+        // Prefix menu for huge providers
+        const prefixes = new Map<string, typeof providerModels>();
+        for (const m of providerModels) {
+          let prefix = m.id.includes("/") ? m.id.split("/")[0] : "(other)";
+          prefix = prefix.replace(/^~+/, "");
+          const list = prefixes.get(prefix);
+          if (list) list.push(m);
+          else prefixes.set(prefix, [m]);
+        }
+        const prefixEntries = Array.from(prefixes.entries())
+          .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+        if (providerModels.length > MAX_SHOWN && prefixEntries.length > 1) {
+          menus.push({
+            key: "prefix",
+            title: `Pick ${provider} model group (${prefixEntries.length} groups):`,
+            items: prefixEntries.map(([p, list]) => `${p}/ (${list.length})`),
+            parse: parsePrefix,
+          });
+        }
+
+        let shownModels = providerModels;
+        if (state.prefix) {
+          shownModels = prefixEntries.find(([p]) => p === state.prefix)?.[1] ?? providerModels;
+        }
+
+        // Family menu for still-huge groups
         const families = new Map<string, typeof shownModels>();
         for (const m of shownModels) {
           const family = getFamily(m.id);
@@ -1466,37 +1497,70 @@ REVIEW_PROMPT:
         }
         const familyEntries = Array.from(families.entries())
           .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
-        const familyItems = familyEntries.map(([f, list]) => `${f} (${list.length})`);
-        const familyPick = await ctx.ui.select(
-          `Pick ${provider} model family (${families.size} families):`,
-          familyItems
-        );
-        if (!familyPick) return;
-        const familyMatch = familyPick.match(/^(.+?)\s+\(/);
-        const selectedFamily = familyMatch ? familyMatch[1].trim() : familyPick.replace(/\s+\(\d+\)$/, "").trim();
-        shownModels = familyEntries.find(([f]) => f === selectedFamily)?.[1] ?? shownModels;
+        if (shownModels.length > MAX_SHOWN && familyEntries.length > 1) {
+          menus.push({
+            key: "family",
+            title: `Pick ${provider} model family (${familyEntries.length} families):`,
+            items: familyEntries.map(([f, list]) => `${f} (${list.length})`),
+            parse: parseFamily,
+          });
+        }
+
+        if (state.family) {
+          shownModels = familyEntries.find(([f]) => f === state.family)?.[1] ?? shownModels;
+        }
+
+        // Model menu
+        const currentModel = ctx.model;
+        const modelItems = shownModels.slice(0, MAX_SHOWN).map(m => {
+          const isCurrent = currentModel && currentModel.provider === m.provider && currentModel.id === m.id;
+          return `${m.id}${isCurrent ? " ✓" : ""}`;
+        });
+        if (shownModels.length > MAX_SHOWN) {
+          modelItems.push(`… ${shownModels.length - MAX_SHOWN} more models hidden`);
+        }
+        menus.push({
+          key: "modelId",
+          title: `Pick ${stage} model from ${provider} (${shownModels.length} available):`,
+          items: modelItems,
+          parse: parseModel,
+        });
+
+        // Thinking menu
+        menus.push({
+          key: "thinking",
+          title: "Pick thinking level:",
+          items: ["off", "minimal", "low", "medium", "high", "xhigh"],
+          parse: (pick) => pick,
+        });
+
+        return menus;
       }
 
-      const currentModel = ctx.model;
-      const modelItems = shownModels.slice(0, MAX_SHOWN).map(m => {
-        const isCurrent = currentModel && currentModel.provider === m.provider && currentModel.id === m.id;
-        return `${m.id}${isCurrent ? " ✓" : ""}`;
-      });
-      if (shownModels.length > MAX_SHOWN) {
-        modelItems.push(`… ${shownModels.length - MAX_SHOWN} more models hidden`);
+      let state: PickerState = {};
+      let step = 0;
+      while (true) {
+        const menus = buildMenus(state);
+        if (step >= menus.length) break;
+        const menu = menus[step];
+        const pick = await ctx.ui.select(menu.title, menu.items);
+        if (!pick || pick.startsWith("…")) {
+          if (step === 0) return;
+          // Clear current and future selections, then go back.
+          for (let i = step; i < menus.length; i++) {
+            state[menus[i].key] = undefined;
+          }
+          step--;
+          continue;
+        }
+        state[menu.key] = menu.parse(pick);
+        step++;
       }
-      const modelPick = await ctx.ui.select(
-        `Pick ${stage} model from ${provider} (${shownModels.length} available):`,
-        modelItems
-      );
-      if (!modelPick || modelPick.startsWith("…")) return;
-      const modelId = modelPick.replace(/ ✓$/, "").trim();
 
-      // Step 3: pick thinking
-      const thinkingPick = await ctx.ui.select("Pick thinking level:", [
-        "off", "minimal", "low", "medium", "high", "xhigh",
-      ]);
-      if (!thinkingPick) return;
+      const provider = state.provider ?? providers[0];
+      const modelId = state.modelId;
+      const thinkingPick = state.thinking;
+      if (!modelId || !thinkingPick) return;
 
       // Save
       const agentDir = getAgentDir();
