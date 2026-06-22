@@ -5,6 +5,7 @@
  * shows the fork's progress and outcome instead of generic JSON.
  */
 
+import { formatCost } from "./extension-context.js";
 import type { Component, Theme } from "@earendil-works/pi-tui";
 import { keyHint, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
@@ -25,7 +26,7 @@ function trunc(s: string, max: number): string {
 
 function fmtCost(cost: number): string {
   if (!Number.isFinite(cost) || cost <= 0) return "";
-  return `$${cost.toFixed(4)}`;
+  return formatCost(cost);
 }
 
 function readJsonSafe(p: string): Record<string, unknown> | null {

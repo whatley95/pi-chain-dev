@@ -1223,6 +1223,54 @@ export function formatReportDiff(diff: { added: string[]; removed: string[] }): 
   return lines.join("\n");
 }
 
+// ── Shared review stage wrapper ────────────────────────────
+
+interface RunReviewOptions {
+  cwd: string;
+  task: string;
+  stageProfile: StageProfile;
+  forkSessionJsonl?: string;
+  onProgress?: (stage: "scout" | "forge", model: string) => void;
+  onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
+  extensions?: string[] | null;
+  environment?: Record<string, string>;
+  offline?: boolean;
+  signal?: AbortSignal;
+}
+
+async function runReviewStage(
+  opts: RunReviewOptions,
+  errorContext: string,
+): Promise<{ result: ForkResult; details: AutoForkDetails }> {
+  const { cwd, task, stageProfile, forkSessionJsonl = JSON.stringify({}) + "\n",
+          extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate } = opts;
+
+  onProgress?.("forge", stageProfile.thinking ? `${stageProfile.provider}:${stageProfile.id} • ${stageProfile.thinking}` : `${stageProfile.provider}:${stageProfile.id}`);
+
+  let result: ForkResult;
+  try {
+    result = await runStageWithRetry({
+      cwd,
+      task,
+      stageLabel: "review",
+      forkSessionJsonl,
+      stageProfile,
+      extensions,
+      environment,
+      offline,
+      signal,
+      noTools: true,
+      stageTimeoutMs: 180_000,
+      onUpdate,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    result = emptyFailedResult(errorContext, `${errorContext} failed: ${message}`);
+  }
+
+  return { result, details: { stage1: null, stage2: result } };
+}
+
 // ── Review-only mode (stage 2 only) ────────────────────────
 
 export async function runCdevReview(opts: {
@@ -1241,36 +1289,21 @@ export async function runCdevReview(opts: {
 }): Promise<{ result: ForkResult; details: AutoForkDetails }> {
   const { cwd, forkSessionSnapshotJsonl, stageProfile,
           customReviewPrompt,
-          extensions = null, environment = {}, offline = true, signal } = opts;
+          extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate } = opts;
 
   const reviewTask = buildReviewPrompt(customReviewPrompt);
-  opts.onProgress?.("forge", stageProfile.thinking ? `${stageProfile.provider}:${stageProfile.id} • ${stageProfile.thinking}` : `${stageProfile.provider}:${stageProfile.id}`);
-
-  let result: ForkResult;
-  try {
-    result = await runStageWithRetry({
-      cwd,
-      task: reviewTask,
-      stageLabel: "review",
-      forkSessionJsonl: forkSessionSnapshotJsonl,
-      stageProfile,
-      extensions,
-      environment,
-      offline,
-      signal,
-      noTools: true,
-      stageTimeoutMs: 180_000,
-      onUpdate: opts.onUpdate,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    result = emptyFailedResult("review", `Review failed: ${message}`);
-  }
-
-  return {
-    result,
-    details: { stage1: null, stage2: result },
-  };
+  return runReviewStage({
+    cwd,
+    task: reviewTask,
+    stageProfile,
+    forkSessionJsonl: forkSessionSnapshotJsonl,
+    onProgress,
+    onUpdate,
+    extensions,
+    environment,
+    offline,
+    signal,
+  }, "Review");
 }
 
 // ── File review (review an artifact file) ──────────────────
@@ -1289,7 +1322,7 @@ export async function runFileReview(opts: {
   signal?: AbortSignal;
 }): Promise<{ result: ForkResult; details: AutoForkDetails }> {
   const { cwd, filePath, fileContent, stageProfile,
-          extensions = null, environment = {}, offline = true, signal } = opts;
+          extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate } = opts;
 
   // Extract paths using shared extractor from memory.ts
   const filePaths = extractFilePaths(fileContent, cwd);
@@ -1313,33 +1346,17 @@ export async function runFileReview(opts: {
   }
 
   const reviewTask = buildFileReviewPrompt(filePath, fileContent, referencedFiles);
-  opts.onProgress?.("forge", stageProfile.thinking ? `${stageProfile.provider}:${stageProfile.id} • ${stageProfile.thinking}` : `${stageProfile.provider}:${stageProfile.id}`);
-
-  let result: ForkResult;
-  try {
-    result = await runStageWithRetry({
-      cwd,
-      task: reviewTask,
-      stageLabel: "review",
-      forkSessionJsonl: JSON.stringify({}) + "\n",
-      stageProfile,
-      extensions,
-      environment,
-      offline,
-      signal,
-      noTools: true,
-      stageTimeoutMs: 180_000,
-      onUpdate: opts.onUpdate,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    result = emptyFailedResult(filePath, `File review failed: ${message}`);
-  }
-
-  return {
-    result,
-    details: { stage1: null, stage2: result },
-  };
+  return runReviewStage({
+    cwd,
+    task: reviewTask,
+    stageProfile,
+    onProgress,
+    onUpdate,
+    extensions,
+    environment,
+    offline,
+    signal,
+  }, `File review ${filePath}`);
 }
 
 // ── Diff review (review changes between revisions) ──────────
@@ -1358,34 +1375,18 @@ export async function runDiffReview(opts: {
   signal?: AbortSignal;
 }): Promise<{ result: ForkResult; details: AutoForkDetails }> {
   const { cwd, diffSpec, diffContent, stageProfile,
-          extensions = null, environment = {}, offline = true, signal } = opts;
+          extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate } = opts;
 
   const reviewTask = buildDiffReviewPrompt(diffSpec, diffContent);
-  opts.onProgress?.("forge", stageProfile.thinking ? `${stageProfile.provider}:${stageProfile.id} • ${stageProfile.thinking}` : `${stageProfile.provider}:${stageProfile.id}`);
-
-  let result: ForkResult;
-  try {
-    result = await runStageWithRetry({
-      cwd,
-      task: reviewTask,
-      stageLabel: "review",
-      forkSessionJsonl: JSON.stringify({}) + "\n",
-      stageProfile,
-      extensions,
-      environment,
-      offline,
-      signal,
-      noTools: true,
-      stageTimeoutMs: 180_000,
-      onUpdate: opts.onUpdate,
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    result = emptyFailedResult(diffSpec, `Diff review failed: ${message}`);
-  }
-
-  return {
-    result,
-    details: { stage1: null, stage2: result },
-  };
+  return runReviewStage({
+    cwd,
+    task: reviewTask,
+    stageProfile,
+    onProgress,
+    onUpdate,
+    extensions,
+    environment,
+    offline,
+    signal,
+  }, `Diff review ${diffSpec}`);
 }

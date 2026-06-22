@@ -65,15 +65,19 @@ export function resetSessionForkCost(cwd: string): void {
   }
 }
 
+export function formatCost(cost: number): string {
+  return `$${cost.toFixed(4)}`;
+}
+
 export function checkCostBudget(config: AutoForkConfig, cwd: string, forkCost: number): { allowed: boolean; reason?: string } {
   const maxForkCost = config.maxForkCost ?? 0;
   const maxSessionCost = config.maxSessionCost ?? 0;
   if (maxForkCost > 0 && forkCost > maxForkCost) {
-    return { allowed: false, reason: `fork cost $${forkCost.toFixed(4)} exceeds maxForkCost $${maxForkCost.toFixed(4)}` };
+    return { allowed: false, reason: `fork cost ${formatCost(forkCost)} exceeds maxForkCost ${formatCost(maxForkCost)}` };
   }
   const sessionCost = getSessionForkCost(cwd);
   if (maxSessionCost > 0 && sessionCost + forkCost > maxSessionCost) {
-    return { allowed: false, reason: `session cost would reach $${(sessionCost + forkCost).toFixed(4)}, exceeding maxSessionCost $${maxSessionCost.toFixed(4)}` };
+    return { allowed: false, reason: `session cost would reach ${formatCost(sessionCost + forkCost)}, exceeding maxSessionCost ${formatCost(maxSessionCost)}` };
   }
   return { allowed: true };
 }
@@ -270,7 +274,7 @@ export function formatResultContent(result: ForkResult, details: AutoForkDetails
     const forgeInfo = details.stage2
       ? ` | Forge: ${details.stage2.model || "?"} (exit ${details.stage2.exitCode})`
       : "";
-    const costInfo = (result.usage?.cost ?? 0) > 0 ? ` — cost: $${(result.usage?.cost ?? 0).toFixed(4)}` : "";
+    const costInfo = (result.usage?.cost ?? 0) > 0 ? ` — cost: ${formatCost(result.usage?.cost ?? 0)}` : "";
     return `cdev failed: ${result.errorMessage}${scoutInfo}${forgeInfo}${costInfo}`;
   }
 
@@ -325,7 +329,7 @@ export function updateForkCostStatus(ctx: ExtensionContext): void {
   const segments: string[] = [];
   if (config.auto) segments.push("⚡");
   segments.push("cdev");
-  if (totalCost > 0) segments.push(`$${totalCost.toFixed(4)}`);
+  if (totalCost > 0) segments.push(formatCost(totalCost));
   if (config.promptsEnabled && (config.prompts?.explore || config.prompts?.review)) segments.push("📋");
   if (config.memory) {
     const topicCount = memoryTopicCount(ctx.cwd);

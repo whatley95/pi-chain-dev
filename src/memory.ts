@@ -17,6 +17,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkS
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import type { CdevMemory, CdevTopic, CdevFindingRecord } from "./types.js";
+import { formatCost } from "./extension-context.js";
 
 // ── Storage ──────────────────────────────────────────────
 
@@ -410,7 +411,7 @@ export function formatTopicDetail(topic: CdevTopic, cwd: string): string {
       icon = "⚠️";
     }
 
-    const costStr = f.cost > 0 ? `$${f.cost.toFixed(4)}` : "";
+    const costStr = f.cost > 0 ? formatCost(f.cost) : "";
     const text = f.text.slice(0, 100);
 
     lines.push(`  ${icon} ${date}  ${f.stage}  ${f.models.padEnd(15)} ${costStr}`);

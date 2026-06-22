@@ -6,10 +6,11 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, appendFileSync, readdirSync, unlinkSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AutoForkDetails, ForkResult } from "./types.js";
 import { getFinalAssistantText } from "./runner-events.js";
+import { logError, formatCost } from "./extension-context.js";
 
 // ── Types ──────────────────────────────────────────────
 
@@ -114,16 +115,7 @@ export function saveSession(
     writeFileSync(filePath, JSON.stringify(record, null, 2) + "\n", "utf-8");
   } catch (err) {
     // Don't let disk error nuke fork output, but log to error trail
-    try {
-      const cdevDir = join(cwd, ".pi", "cdev");
-      mkdirSync(cdevDir, { recursive: true });
-      appendFileSync(join(cdevDir, "errors.jsonl"), JSON.stringify({
-        ts: new Date().toISOString(),
-        context: "saveSession",
-        message: err instanceof Error ? err.message : String(err),
-        stack: err instanceof Error ? err.stack : undefined,
-      }) + "\n", "utf-8");
-    } catch { /* can't even log — give up */ }
+    logError(cwd, "saveSession", err);
   }
   return record;
 }
@@ -218,7 +210,7 @@ export function formatHistory(sessions: SessionRecord[]): string {
     const status = s.status === "success" ? "✓" : "✗";
     const combinedCost = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
     totalCost += combinedCost;
-    const costStr = combinedCost > 0 ? ` $${combinedCost.toFixed(4)}`.padStart(9) : "";
+    const costStr = combinedCost > 0 ? ` ${formatCost(combinedCost)}`.padStart(9) : "";
     const s1Model = s.stage1 ? s.stage1.model.split(":").pop()?.slice(0, 12) ?? "?" : "—";
     const s2Model = s.stage2 ? s.stage2.model.split(":").pop()?.slice(0, 12) ?? "?" : "—";
     const models = s.stage1 && s.stage2 ? `${s1Model}→${s2Model}` : (s.stage1 || s.stage2 ? s1Model !== "—" ? s1Model : s2Model : "?");
@@ -231,7 +223,7 @@ export function formatHistory(sessions: SessionRecord[]): string {
 
   lines.push("─────────────────────────────────────────────────────");
   if (totalCost > 0) {
-    lines.push(`  Total cost: $${totalCost.toFixed(4)} across ${sessions.length} session${sessions.length > 1 ? "s" : ""}`);
+    lines.push(`  Total cost: ${formatCost(totalCost)} across ${sessions.length} session${sessions.length > 1 ? "s" : ""}`);
   }
   lines.push(`  /cdev history <n> to see full report`);
   lines.push(`  Sessions auto-purged after 7 days`);
@@ -259,7 +251,7 @@ export function formatSessionRecord(s: SessionRecord): string {
       lines.push(`    Tokens:     ${s.stage1.inputTokens} in / ${s.stage1.outputTokens} out`);
     }
     if (s.stage1.cost > 0) {
-      lines.push(`    Cost:       $${s.stage1.cost.toFixed(4)}`);
+      lines.push(`    Cost:       ${formatCost(s.stage1.cost)}`);
     }
     if (s.stage1.errorDetails) lines.push(`    Error:      ${s.stage1.errorDetails}`);
     lines.push("");
@@ -273,7 +265,7 @@ export function formatSessionRecord(s: SessionRecord): string {
       lines.push(`    Tokens:     ${s.stage2.inputTokens} in / ${s.stage2.outputTokens} out`);
     }
     if (s.stage2.cost > 0) {
-      lines.push(`    Cost:       $${s.stage2.cost.toFixed(4)}`);
+      lines.push(`    Cost:       ${formatCost(s.stage2.cost)}`);
     }
     if (s.stage2.errorDetails && s.stage2.errorDetails !== s.resultPreview) {
       lines.push(`    Error:      ${s.stage2.errorDetails}`);
@@ -283,7 +275,7 @@ export function formatSessionRecord(s: SessionRecord): string {
   const totalCost = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
   if (totalCost > 0) {
     lines.push("");
-    lines.push(`  Total cost:  $${totalCost.toFixed(4)}`);
+    lines.push(`  Total cost:  ${formatCost(totalCost)}`);
   }
   lines.push("");
 

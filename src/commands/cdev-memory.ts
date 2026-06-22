@@ -1,8 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { loadConfig } from "../config.js";
+import { type AutoForkConfig } from "../config.js";
 import { runAutoFork } from "../runner.js";
 import { getFinalAssistantText } from "../runner-events.js";
 import { saveSession } from "../history.js";
@@ -24,25 +21,13 @@ import {
   resolveStageProfiles,
   logError,
 } from "../extension-context.js";
+import { writeAgentSetting } from "../settings-helpers.js";
 
-function writeAgentSetting(key: string, value: unknown): void {
-  const agentDir = getAgentDir();
-  const settingsPath = join(agentDir, "settings.json");
-  let settings: Record<string, unknown> = {};
-  if (existsSync(settingsPath)) {
-    settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-  }
-  if (!settings["pi-chain-dev"]) settings["pi-chain-dev"] = {};
-  (settings["pi-chain-dev"] as Record<string, unknown>)[key] = value;
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
-}
-
-export async function handleMemory(args: string, ctx: ExtensionContext): Promise<boolean> {
+export async function handleMemory(args: string, ctx: ExtensionContext, config: AutoForkConfig): Promise<boolean> {
   const trimmed = args.trim();
 
   const recallMatch = trimmed.match(/^recall(?:\s+(.+))?$/);
   if (recallMatch) {
-    const config = loadConfig(ctx.cwd);
     if (!config.memory) {
       ctx.ui.notify("Project memory is disabled. /cdev memory on to enable.", "warn");
       return true;
@@ -100,7 +85,6 @@ export async function handleMemory(args: string, ctx: ExtensionContext): Promise
 
   const memoryRefreshMatch = trimmed.match(/^memory refresh\s+(.+)$/);
   if (memoryRefreshMatch) {
-    const config = loadConfig(ctx.cwd);
     if (!config.memory) {
       ctx.ui.notify("Project memory is disabled. /cdev memory on to enable.", "warn");
       return true;

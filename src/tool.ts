@@ -17,6 +17,7 @@ import {
   checkCostBudget,
   recordForkCost,
   estimateForkCost,
+  formatCost,
 } from "./extension-context.js";
 
 export interface AutoForkParamsType {
@@ -27,6 +28,35 @@ export interface AutoForkParamsType {
   recall?: string;
   reviewFile?: string;
   diffSpec?: string;
+}
+
+function writeReportFile(opts: {
+  cwd: string;
+  fileName: string;
+  title: string;
+  reviewer?: string;
+  body: string;
+  appendTo?: string;
+  appendBody?: string;
+}): { reportRelPath: string; written: boolean } {
+  const { cwd, fileName, title, reviewer, body, appendTo, appendBody } = opts;
+  const reportsDir = join(cwd, ".pi", "cdev", "reports");
+  let written = false;
+  try {
+    mkdirSync(reportsDir, { recursive: true });
+    const reportPath = join(reportsDir, fileName);
+    const reportRelPath = `.pi/cdev/reports/${fileName}`;
+    const date = new Date().toISOString().split("T")[0];
+    const header = reviewer ? `# ${title}\n\n**Date:** ${date}\n**Reviewer:** ${reviewer}\n\n` : `# ${title}\n\n**Date:** ${date}\n\n`;
+    writeFileSync(reportPath, `${header}${body}\n`, "utf-8");
+    if (appendTo && appendBody) {
+      try { appendFileSync(appendTo, appendBody, "utf-8"); } catch { /* ignore */ }
+    }
+    written = true;
+    return { reportRelPath, written };
+  } catch {
+    return { reportRelPath: appendTo ?? "", written };
+  }
 }
 
 export async function executeCdevTool(
@@ -121,16 +151,17 @@ export async function executeCdevTool(
         let reportRelPath = p.reviewFile;
         if (reviewText && !result.errorMessage) {
           const appendText = `\n\n---\n\n## Review (${reviewDate})\n\n**Reviewer:** ${details.stage2?.model ?? "?"}\n\n${reviewText}\n`;
-          try { appendFileSync(filePath, appendText, "utf-8"); } catch { /* ignore */ }
-
-          const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
-          try {
-            mkdirSync(reportsDir, { recursive: true });
-            const reviewSlug = `review-${p.reviewFile.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 40)}-${Date.now().toString(36)}.md`;
-            const standalonePath = join(reportsDir, reviewSlug);
-            reportRelPath = `.pi/cdev/reports/${reviewSlug}`;
-            writeFileSync(standalonePath, `# Review: ${p.reviewFile}\n\n**Date:** ${reviewDate}\n**Reviewer:** ${details.stage2?.model ?? "?"}\n\n${reviewText}\n`, "utf-8");
-          } catch { /* ignore */ }
+          const reviewSlug = `review-${p.reviewFile.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 40)}-${Date.now().toString(36)}.md`;
+          const { reportRelPath: standaloneRel } = writeReportFile({
+            cwd: ctx.cwd,
+            fileName: reviewSlug,
+            title: `Review: ${p.reviewFile}`,
+            reviewer: details.stage2?.model ?? "?",
+            body: reviewText,
+            appendTo: filePath,
+            appendBody: appendText,
+          });
+          reportRelPath = standaloneRel;
         }
 
         saveSession(ctx.cwd, `review ${p.reviewFile}`, true, startTime, details, result);
@@ -235,15 +266,13 @@ export async function executeCdevTool(
         const ts = Date.now().toString(36);
         const reportFileName = `diff-${diffSlug}-${ts}.md`;
         const reviewText = getFinalAssistantText(result.messages);
-        const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
-        mkdirSync(reportsDir, { recursive: true });
-        const reportPath = join(reportsDir, reportFileName);
-        const reportRelPath = `.pi/cdev/reports/${reportFileName}`;
-        if (reviewText && !result.errorMessage) {
-          try {
-            writeFileSync(reportPath, `# Diff Review: ${diffSpec}\n\n**Date:** ${new Date().toISOString().split("T")[0]}\n**Reviewer:** ${details.stage2?.model ?? "?"}\n\n${reviewText}\n`, "utf-8");
-          } catch { /* ignore */ }
-        }
+        const { reportRelPath } = writeReportFile({
+          cwd: ctx.cwd,
+          fileName: reportFileName,
+          title: `Diff Review: ${diffSpec}`,
+          reviewer: details.stage2?.model ?? "?",
+          body: reviewText || "(no review output)",
+        });
 
         saveSession(ctx.cwd, `review diff ${diffSpec}`, true, startTime, details, result);
         if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
@@ -306,17 +335,16 @@ export async function executeCdevTool(
       ctx.ui.setWidget("cdev-progress", undefined);
 
       const reviewText = getFinalAssistantText(result.messages);
-      let reviewReportPath = "";
-      if (reviewText && !result.errorMessage) {
-        try {
-          const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
-          mkdirSync(reportsDir, { recursive: true });
-          const reviewSlug = `session-review-${Date.now().toString(36)}.md`;
-          const standalonePath = join(reportsDir, reviewSlug);
-          reviewReportPath = `.pi/cdev/reports/${reviewSlug}`;
-          writeFileSync(standalonePath, `# Session Review\n\n**Date:** ${new Date().toISOString().split("T")[0]}\n**Reviewer:** ${details.stage2?.model ?? "?"}\n\n${reviewText}\n`, "utf-8");
-        } catch { /* ignore */ }
-      }
+      const reviewSlug = `session-review-${Date.now().toString(36)}.md`;
+      const { reportRelPath: reviewReportPath } = reviewText && !result.errorMessage
+        ? writeReportFile({
+            cwd: ctx.cwd,
+            fileName: reviewSlug,
+            title: "Session Review",
+            reviewer: details.stage2?.model ?? "?",
+            body: reviewText,
+          })
+        : { reportRelPath: "" };
 
       saveSession(ctx.cwd, reviewTask, true, startTime, details, result);
       if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
@@ -387,7 +415,7 @@ export async function executeCdevTool(
     const budgetCheck = checkCostBudget(config, ctx.cwd, estimate.cost);
     if (!budgetCheck.allowed) {
       return {
-        content: [{ type: "text" as const, text: `cdev budget error: ${budgetCheck.reason}\nEstimated: ~$${estimate.cost.toFixed(4)} (${estimate.inputTokens} input / ${estimate.outputTokens} output tokens)` }],
+        content: [{ type: "text" as const, text: `cdev budget error: ${budgetCheck.reason}\nEstimated: ~${formatCost(estimate.cost)} (${estimate.inputTokens} input / ${estimate.outputTokens} output tokens)` }],
         details: { stage1: null, stage2: null },
         isError: true,
       };
@@ -429,24 +457,23 @@ export async function executeCdevTool(
 
     saveSession(ctx.cwd, p.task, false, startTime, details, result);
 
-    const slugBase = p.task
-      .replace(/[^a-zA-Z0-9]+/g, "-")
-      .replace(/^-|-$/g, "")
-      .toLowerCase()
-      .slice(0, 60);
-    const ts = Date.now().toString(36);
-    const slug = `${slugBase}-${ts}`;
     let reportRelPath = "";
     if (!quick && details.stage2 && !result.errorMessage) {
       const reportText = getFinalAssistantText(result.messages);
       if (reportText) {
-        const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
-        try {
-          mkdirSync(reportsDir, { recursive: true });
-          const reportPath = join(reportsDir, `${slug}.md`);
-          reportRelPath = `.pi/cdev/reports/${slug}.md`;
-          writeFileSync(reportPath, `# cdev report\n\n**Task:** ${p.task}\n**Scout:** ${details.stage1?.model ?? "?"}\n**Forge:** ${details.stage2?.model ?? "?"}\n**Date:** ${new Date().toISOString().split("T")[0]}\n\n---\n\n${reportText}\n`, "utf-8");
-        } catch { /* ignore */ }
+        const slugBase = p.task
+          .replace(/[^a-zA-Z0-9]+/g, "-")
+          .replace(/^-|-$/g, "")
+          .toLowerCase()
+          .slice(0, 60);
+        const slug = `${slugBase}-${Date.now().toString(36)}`;
+        const { reportRelPath: savedPath } = writeReportFile({
+          cwd: ctx.cwd,
+          fileName: `${slug}.md`,
+          title: "cdev report",
+          body: reportText,
+        });
+        reportRelPath = savedPath;
       }
     }
     if (result.errorMessage) logError(ctx.cwd, "full-mode", new Error(result.errorMessage));

@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "../config.js";
 import { listSessions, getSession, formatHistory, formatSessionRecord, purgeOldSessions } from "../history.js";
 import { memoryClear, getErrorCount, clearErrorLog } from "../memory.js";
@@ -12,29 +11,11 @@ import {
 } from "../extension-context.js";
 import { handleScan } from "./cdev-scan.js";
 import { handleMemory, memoryTopicCount } from "./cdev-memory.js";
-
-function writeAgentSetting(key: string, value: unknown): void {
-  const agentDir = getAgentDir();
-  const settingsPath = join(agentDir, "settings.json");
-  let settings: Record<string, unknown> = {};
-  if (existsSync(settingsPath)) {
-    settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-  }
-  if (!settings["pi-chain-dev"]) settings["pi-chain-dev"] = {};
-  (settings["pi-chain-dev"] as Record<string, unknown>)[key] = value;
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf-8");
-}
+import { writeAgentSetting, writeProjectSetting } from "../settings-helpers.js";
+import { formatCost } from "../extension-context.js";
 
 function writeProjectThemed(cwd: string, enable: boolean): void {
-  const projSettingsPath = join(cwd, ".pi", "settings.json");
-  if (existsSync(projSettingsPath)) {
-    const projSettings = JSON.parse(readFileSync(projSettingsPath, "utf-8"));
-    const projCdev = projSettings?.["pi-chain-dev"] as Record<string, unknown> | undefined;
-    if (projCdev && "themed" in projCdev) {
-      projCdev.themed = enable;
-      writeFileSync(projSettingsPath, JSON.stringify(projSettings, null, 2) + "\n", "utf-8");
-    }
-  }
+  writeProjectSetting(cwd, "themed", enable);
 }
 
 export function registerCdevCommand(
@@ -66,11 +47,13 @@ export function registerCdevCommand(
         return;
       }
 
+      const config = loadConfig(ctx.cwd);
+
       // ── Subcommands: scan, scan deep ──
-      if (await handleScan(trimmed, ctx, updatePromptsStatus)) return;
+      if (await handleScan(trimmed, ctx, config, updatePromptsStatus)) return;
 
       // ── Subcommands: recall, view, memory *, memory on/off ──
-      if (await handleMemory(trimmed, ctx)) return;
+      if (await handleMemory(trimmed, ctx, config)) return;
 
       // ── Subcommand: clear ──
       if (trimmed === "clear") {
@@ -159,7 +142,6 @@ export function registerCdevCommand(
           }
           cleanArg = cleanArg.replace(/\s*(--audit|-a)\b/gi, "").trim();
         }
-        const config = loadConfig(ctx.cwd);
         const reviewProfile = config.review ?? config.stage2;
         if (!reviewProfile.provider || !reviewProfile.id) {
           ctx.ui.notify("Review model not configured. Use /cdev-model to set models.", "warn");
@@ -216,7 +198,6 @@ export function registerCdevCommand(
 
       // ── Subcommand: status ──
       if (trimmed === "status" || trimmed === "info") {
-        const config = loadConfig(ctx.cwd);
         const lines: string[] = [
           "── cdev status ─────────────────────────────────────",
           "",
@@ -240,7 +221,7 @@ export function registerCdevCommand(
         if (sessions.length > 0) {
           let totalCost = 0;
           for (const s of sessions) totalCost += (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
-          lines.push(`  Sessions:         ${sessions.length} (7-day window, $${totalCost.toFixed(4)} total)`);
+          lines.push(`  Sessions:         ${sessions.length} (7-day window, ${formatCost(totalCost)} total)`);
         }
         const topicCount = memoryTopicCount(ctx.cwd);
         if (topicCount > 0 && config.memory) {

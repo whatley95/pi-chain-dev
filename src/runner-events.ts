@@ -48,7 +48,7 @@ export function summarizePiEvent(event: ParsedPiEvent): string | undefined {
       if (cost !== undefined || tokens !== undefined) {
         const parts: string[] = [];
         if (tokens !== undefined) parts.push(`${tokens} tokens`);
-        if (cost !== undefined) parts.push(`$${cost.toFixed(4)}`);
+        if (cost !== undefined) parts.push(formatCost(cost));
         return `usage: ${parts.join(", ")}`;
       }
       return undefined;
@@ -62,6 +62,7 @@ export function summarizePiEvent(event: ParsedPiEvent): string | undefined {
  * Helpers for parsing Pi JSON mode events and summarizing fork results.
  */
 
+import { formatCost } from "./extension-context.js";
 import type { ForkResult, UsageStats } from "./types.js";
 
 const MAX_TOOL_PREVIEW_CHARS = 1200;

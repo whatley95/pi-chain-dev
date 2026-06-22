@@ -1,7 +1,5 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig } from "../config.js";
+import { type AutoForkConfig } from "../config.js";
 import { runAutoFork } from "../runner.js";
 import { getFinalAssistantText } from "../runner-events.js";
 import { saveSession } from "../history.js";
@@ -14,6 +12,7 @@ import {
   resolveStageProfiles,
   logError,
 } from "../extension-context.js";
+import { writeProjectSetting } from "../settings-helpers.js";
 
 const DEEP_SCAN_TASK = `Scan this project's architecture, conventions, and patterns. Generate 3 focused prompts for future cdev use:
 1. explore — what to focus on during exploration (stack-specific patterns, conventions, key areas)
@@ -32,24 +31,14 @@ REVIEW_PROMPT:
 <text>`;
 
 function savePrompts(cwd: string, prompts: { explore: string; synthesize: string; review: string }): void {
-  const projectDir = join(cwd, ".pi");
-  if (!existsSync(projectDir)) mkdirSync(projectDir, { recursive: true });
-  const projectSettingsPath = join(projectDir, "settings.json");
-  let projSettings: Record<string, unknown> = {};
-  if (existsSync(projectSettingsPath)) {
-    projSettings = JSON.parse(readFileSync(projectSettingsPath, "utf-8"));
-  }
-  if (!projSettings["pi-chain-dev"]) projSettings["pi-chain-dev"] = {};
-  (projSettings["pi-chain-dev"] as Record<string, unknown>).prompts = prompts;
-  (projSettings["pi-chain-dev"] as Record<string, unknown>).promptsEnabled = true;
-  writeFileSync(projectSettingsPath, JSON.stringify(projSettings, null, 2) + "\n", "utf-8");
+  writeProjectSetting(cwd, "prompts", prompts);
+  writeProjectSetting(cwd, "promptsEnabled", true);
 }
 
-export async function handleScan(args: string, ctx: ExtensionContext, updatePromptsStatus: (ctx: ExtensionContext) => void): Promise<boolean> {
+export async function handleScan(args: string, ctx: ExtensionContext, config: AutoForkConfig, updatePromptsStatus: (ctx: ExtensionContext) => void): Promise<boolean> {
   const trimmed = args.trim();
 
   if (trimmed === "scan deep") {
-    const config = loadConfig(ctx.cwd);
     const profiles = resolveStageProfiles(config);
     const themedBg = makeThemedBg(ctx, config.themed);
     if (profiles.warning) {
