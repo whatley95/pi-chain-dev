@@ -1430,13 +1430,15 @@ REVIEW_PROMPT:
       // For huge providers with slash-prefixed IDs (e.g. OpenRouter), group by prefix first.
       const prefixes = new Map<string, typeof providerModels>();
       for (const m of providerModels) {
-        const prefix = m.id.includes("/") ? m.id.split("/")[0] : "(other)";
+        let prefix = m.id.includes("/") ? m.id.split("/")[0] : "(other)";
+        prefix = prefix.replace(/^~+/, "");
         const list = prefixes.get(prefix);
         if (list) list.push(m);
         else prefixes.set(prefix, [m]);
       }
       if (providerModels.length > MAX_SHOWN && prefixes.size > 1) {
-        const prefixEntries = Array.from(prefixes.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+        const prefixEntries = Array.from(prefixes.entries())
+          .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
         const prefixItems = prefixEntries.map(([p, list]) => `${p}/ (${list.length})`);
         const prefixPick = await ctx.ui.select(
           `Pick ${provider} model group (${prefixes.size} groups):`,
