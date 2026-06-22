@@ -26,6 +26,7 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 |---|---|
 | `/cdev <task>` | Full two-stage: cheap model gathers evidence, powerful model writes structured report |
 | `/cdev quick <task>` | Scout only — cheap model returns raw findings, skip forge (synthesis) |
+| `/cdev verify <task>` | Scout ×2 with different temperatures + forge — higher accuracy, ~2× stage 1 cost |
 | `/cdev review` | Forge only — reviews recent code changes for bugs, edge cases, and improvements |
 | `/cdev auto on` | Auto-trigger mode — LLM proactively uses `cdev` for exploration tasks |
 | `/cdev auto off` | Disable auto-trigger |
@@ -57,6 +58,7 @@ The LLM can also call `cdev` via a registered tool — no typing commands:
 |---|---|---|
 | `task` | string | Full two-stage fork |
 | `quick` | boolean | Scout only (raw findings, skip forge) |
+| `verify` | boolean | Scout ×2 + forge (self-consistency, higher accuracy) |
 | `review` | boolean | Forge only (code review, skip scout) |
 | `recall` | string | Retrieve past findings from project memory (e.g. `"auth"`) — $0, no fork |
 | `recall` | `""` (empty) | List all known topics |
@@ -67,6 +69,7 @@ Auto-trigger mode tells the LLM to use the tool proactively. The agent also rece
 - Use `recall=""` to list all known topics when starting in a project
 - Use `review:true` after significant code changes
 - Use `quick:true` for quick file tracing
+- Use `verify:true` for high-stakes exploration where accuracy matters more than speed or cost
 - Prefer cdev over bash/grep for understanding relationships
 
 ## Project memory
@@ -143,18 +146,22 @@ Logged for: tool crashes, review failures, full-mode failures, deep-scan failure
   ┌──────────────────────────────────────────────┐
   │  SCOUT — cheap model (deepseek-v4-flash)     │
   │  Reads files, traces deps, gathers evidence  │
-  │  Returns raw unfiltered findings             │
+  │  Returns structured JSON findings:           │
+  │  summary, findings[], deadEnds[],            │
+  │  assumptions[], openQuestions[]              │
   └──────────────────┬───────────────────────────┘
-                     │ raw findings
-  ┌──────────────────▼───────────────────────────┐
-  │  FORGE — powerful model (deepseek-v4-pro)    │
-  │  Synthesizes into structured report          │
-  │  Result / Output / Evidence / Learnings      │
-  └──────────────────┬───────────────────────────┘
-                     │ report
-                     ▼
-              PARENT reads report, decides, codes
+                     │ validated findings
+   ┌──────────────────▼───────────────────────────┐
+   │  FORGE — powerful model (deepseek-v4-pro)    │
+   │  Synthesizes into structured report          │
+   │  Result / Output / Evidence / Learnings      │
+   └──────────────────┬───────────────────────────┘
+                      │ report
+                      ▼
+               PARENT reads report, decides, codes
 ```
+
+If stage 1 output is invalid or empty, cdev retries the scout stage once automatically. If it still fails, cdev falls back to passing the raw text to forge rather than failing completely.
 
 ### Quick mode (`/cdev quick <task>`)
 
@@ -164,13 +171,41 @@ Logged for: tool crashes, review failures, full-mode failures, deep-scan failure
        ▼
   ┌──────────────────────────────────────────────┐
   │  SCOUT only — cheap model                    │
-  │  Traces files, returns raw paths/findings    │
+  │  Traces files, returns structured findings   │
   │  No forge — just raw data                    │
   └──────────────────┬───────────────────────────┘
-                     │ raw findings
+                     │ findings
                      ▼
               PARENT uses findings, continues
 ```
+
+### Verify mode (`/cdev verify <task>`)
+
+```
+  Parent: "I need high-confidence exploration before a big refactor"
+       │
+       ▼
+  ┌──────────────────────────────────────────────┐
+  │  SCOUT A — cheap model  (temperature 0.2)    │
+  │  Returns structured findings                 │
+  └──────────────────┬───────────────────────────┘
+                     │
+  ┌──────────────────┼───────────────────────────┐
+  │  SCOUT B — same model (temperature 0.7)      │
+  │  Returns structured findings                 │
+  └──────────────────┬───────────────────────────┘
+                     │ merge unique / deduplicate
+                     ▼
+  ┌──────────────────────────────────────────────┐
+  │  FORGE — powerful model                      │
+  │  Synthesizes merged findings into report     │
+  └──────────────────┬───────────────────────────┘
+                     │ report
+                     ▼
+              PARENT reads report, decides, codes
+```
+
+If one scout run produces invalid findings, cdev uses the valid run. If both are invalid, cdev falls back to the raw text from the first run.
 
 ### Review mode (`/cdev review`)
 
@@ -366,16 +401,24 @@ If scout/forge aren't configured, pi-chain-dev falls back to `pi-fork`'s effort 
 
 ```
 pi-chain-dev/
-├── index.ts          # Extension entry point — registers cdev tool + commands
-├── runner.ts         # Two-stage fork runner + review mode
-├── history.ts        # Session telemetry — save, list, purge (7 days)
-├── memory.ts         # Project memory — cross-session findings, file fingerprinting, staleness
-├── scan.ts           # Project scanner — stack detection + prompt generator
-├── types.ts          # Type definitions
-├── config.ts         # Configuration loading
-├── env.ts            # Child environment builder
-├── runner-events.js  # JSON line parsing from child processes
-└── runner-cli.js     # CLI arg inheritance
+├── src/
+│   ├── index.ts              # Extension entry point — registers cdev tool + commands
+│   ├── tool.ts               # cdev tool execution (recall/review/fork)
+│   ├── commands/
+│   │   ├── cdev.ts           # /cdev command + lifecycle handlers
+│   │   └── cdev-model.ts     # /cdev-model interactive model picker
+│   ├── extension-context.ts  # Shared helpers, snapshots, cost footer, profiles
+│   ├── runner.ts             # Two-stage fork runner + review mode
+│   ├── history.ts            # Session telemetry — save, list, purge (7 days)
+│   ├── memory.ts             # Project memory — cross-session findings, staleness
+│   ├── scan.ts               # Project scanner — stack detection + prompts
+│   ├── types.ts              # Type definitions
+│   ├── config.ts             # Configuration loading
+│   ├── env.ts                # Child environment builder
+│   ├── runner-events.ts      # JSON line parsing from child processes
+│   └── runner-cli.ts         # CLI arg inheritance
+├── test/                     # Unit tests
+└── README.md
 ```
 
 ## Status footer
@@ -390,6 +433,29 @@ When `costFooter: true`, the status bar shows a combined compact line:
 ```
 
 All managed via single key `"cdev-cost"`. Shows cost across current session.
+
+## Structured findings
+
+Stage 1 now returns structured JSON findings. This makes stage 2 synthesis more reliable and enables validation + merging.
+
+```json
+{
+  "summary": "Auth uses JWT middleware plus Redis sessions",
+  "findings": [
+    {
+      "file": "src/auth/middleware.ts",
+      "observation": "JWT verification happens here",
+      "evidence": "verify(token, JWT_SECRET)",
+      "confidence": "high"
+    }
+  ],
+  "deadEnds": ["looked for oauth1 usage — none found"],
+  "assumptions": ["JWT_SECRET is set in env"],
+  "openQuestions": ["how are refresh tokens rotated?"]
+}
+```
+
+Each finding has an optional `file`, `evidence`, and `confidence` (`high`/`medium`/`low`).
 
 ## Session history
 
