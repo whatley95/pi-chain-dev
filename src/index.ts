@@ -39,8 +39,19 @@ import { renderCall, renderResult } from "./render.js";
 import { bg } from "./theme-utils.js";
 
 // ── Constants ──────────────────────────────────────────────
-/** Regex to detect "check only", "don't change", etc. in user task text */
-const AUDIT_ONLY_RE = /\b(check|audit|look|inspect|analyze)\s+only\b|\bdon'?t\s+(change|implement|modify|write|edit|touch)\b|\bno\s+(changes?|implementation|modification)\b|\bjust\s+(check|look|audit|review|inspect)\b/i;
+/** Audit guard appended to ALL stage prompts — stages never modify code */
+const AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
+
+function getCdevVersion(cwd: string): string {
+  const git = spawnSync("git", ["describe", "--tags", "--always", "--dirty", "--abbrev=7"], { cwd, timeout: 3000 });
+  if (git.status === 0 && git.stdout) return git.stdout.toString().trim();
+  const sha = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd, timeout: 3000 });
+  if (sha.status === 0 && sha.stdout) return sha.stdout.toString().trim();
+  try {
+    const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf-8"));
+    return pkg.version ?? "unknown";
+  } catch { return "unknown"; }
+}
 
 const AutoForkParams = Type.Object({
   task: Type.Optional(Type.String({
@@ -55,10 +66,6 @@ const AutoForkParams = Type.Object({
   quick: Type.Optional(Type.Boolean({
     description:
       "If true, run scout only (exploration) and return raw findings. Skip the forge (synthesis). Use for quick follow-up file tracing, grep-style lookups, or narrow questions.",
-  })),
-  auditOnly: Type.Optional(Type.Boolean({
-    description:
-      "If true, append a hard guard instructing the fork model NOT to implement or modify any code — only report findings and suggestions.",
   })),
   recall: Type.Optional(Type.String({
     description:
@@ -337,7 +344,7 @@ export default function (pi: ExtensionAPI) {
       "Use cdev with quick:true for follow-up file tracing, grep-style lookups, or when raw findings suffice.",
       "Prefer cdev over bash/grep when you need to understand file relationships, not just find text matches.",
       "Tell cdev to surface ambiguities back to you — don't resolve them in the fork.",
-      "Use cdev with auditOnly=true when asked to review/check only — prevents the fork from modifying code.",
+      "cdev stages never modify code — the main agent handles all changes.",
     ],
     parameters: AutoForkParams,
     renderCall,
@@ -346,11 +353,6 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       try {
       const config = loadConfig(ctx.cwd);
-
-      // Audit guard helper
-      const AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
-      const withAuditGuard = (t: string): string =>
-        (params.auditOnly || AUDIT_ONLY_RE.test(t)) ? t + AUDIT_GUARD : t;
 
       // Themed background helper (graceful fallback to ANSI if token missing)
       const themedBg = (token: string, text: string): string => {
@@ -665,6 +667,9 @@ export default function (pi: ExtensionAPI) {
       }
 
       // ── Full two-stage mode ──
+      // Always append audit guard — stages never modify code
+      const withAuditGuard = (t: string): string => t + AUDIT_GUARD;
+
       if (!params.task) {
         return {
           content: [{ type: "text" as const, text: "cdev error: task is required for fork mode." }],
@@ -802,10 +807,6 @@ ${reportText}
     description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, status, prompts on|off, history, scan [deep], recall [topic], memory on|off, themed on|off",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
-
-      // Detect audit-only language ("check only", "don't change", etc.)
-      const isAuditOnly = AUDIT_ONLY_RE.test(trimmed);
-      const auditGuard = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
 
       // ── Subcommand: auto on ──
       if (trimmed === "auto on" || trimmed === "auto") {
@@ -1164,32 +1165,22 @@ REVIEW_PROMPT:
         return;
       }
 
-      // ── Subcommand: review [path|diff] [--audit] ──
+      // ── Subcommand: review [path|diff] ──
       const reviewFileMatch = trimmed.match(/^review\s+(.+)$/);
       if (trimmed === "review" || reviewFileMatch) {
-        // Extract --audit flag and clean arg
-        let isAudit = false;
         let cleanArg = "";
         if (reviewFileMatch) {
           cleanArg = reviewFileMatch[1].trim();
-          if (cleanArg.endsWith(" --audit")) { cleanArg = cleanArg.slice(0, -8).trim(); isAudit = true; }
-          else if (cleanArg.endsWith(" -a")) { cleanArg = cleanArg.slice(0, -3).trim(); isAudit = true; }
-          else if (cleanArg === "--audit" || cleanArg === "-a") {
-            // Just --audit without a path/diff — session audit review
-            ctx.ui.notify(`Queuing audit-only code review…`, "info");
-            pi.sendUserMessage(`Run a code review using the cdev tool with review=true and auditOnly=true.`, {
+          // Tolerate old --audit flags gracefully (now no-op, stages never modify code)
+          if (cleanArg === "--audit" || cleanArg === "-a") {
+            ctx.ui.notify(`Queuing code review…`, "info");
+            pi.sendUserMessage(`Run a code review using the cdev tool with review=true.`, {
               triggerTurn: true,
               deliverAs: "steer",
             });
             return;
           }
-          // Only set isAudit from --audit flag embedded in text (not suffix — suffix handled above)
-          if (!isAudit && /\b--audit\b|\baudit.only\b|\bcheck.only\b/i.test(cleanArg)) {
-            isAudit = true;
-            cleanArg = cleanArg.replace(/\s*--audit\b|\s*\baudit.only\b|\s*\bcheck.only\b/gi, "").trim();
-          }
-        } else if (trimmed === "review --audit" || trimmed === "review -a") {
-          isAudit = true;
+          cleanArg = cleanArg.replace(/\s*(--audit|-a)\b/gi, "").trim();
         }
         const config = loadConfig(ctx.cwd);
         const reviewProfile = config.review ?? config.stage2;
@@ -1205,7 +1196,7 @@ REVIEW_PROMPT:
           if (isDiff) {
             // Diff review
             ctx.ui.notify(`Reviewing diff ${cleanArg}…`, "info");
-            pi.sendUserMessage(`Review the diff ${cleanArg} using cdev with review=true, diffSpec="${cleanArg}"${isAudit ? ", and auditOnly=true" : ""}.`, {
+            pi.sendUserMessage(`Review the diff ${cleanArg} using cdev with review=true, diffSpec="${cleanArg}".`, {
               triggerTurn: true,
               deliverAs: "steer",
             });
@@ -1217,22 +1208,22 @@ REVIEW_PROMPT:
               return;
             }
             ctx.ui.notify(`Reviewing ${cleanArg}…`, "info");
-            pi.sendUserMessage(`Review the file ${cleanArg} using cdev with review=true, reviewFile="${cleanArg}"${isAudit ? ", and auditOnly=true" : ""}.`, {
+            pi.sendUserMessage(`Review the file ${cleanArg} using cdev with review=true, reviewFile="${cleanArg}".`, {
               triggerTurn: true,
               deliverAs: "steer",
             });
           } else {
             // Plain text — treat as session review with a custom task hint
             ctx.ui.notify(`Queuing code review…`, "info");
-            pi.sendUserMessage(`Run a code review using the cdev tool with review=true${isAudit ? " and auditOnly=true" : ""}. Focus on: ${cleanArg}`, {
+            pi.sendUserMessage(`Run a code review using the cdev tool with review=true. Focus on: ${cleanArg}`, {
               triggerTurn: true,
               deliverAs: "steer",
             });
           }
         } else {
           // Session review
-          ctx.ui.notify(`Queuing code review (forge only)${isAudit ? " — audit only" : ""}…`, "info");
-          pi.sendUserMessage(`Run a code review using the cdev tool with review=true${isAudit ? " and auditOnly=true" : ""}. Review the recent changes in this session for bugs, edge cases, and improvements.`, {
+          ctx.ui.notify(`Queuing code review (forge only)…`, "info");
+          pi.sendUserMessage(`Run a code review using the cdev tool with review=true. Review the recent changes in this session for bugs, edge cases, and improvements.`, {
             triggerTurn: true,
             deliverAs: "steer",
           });
@@ -1248,7 +1239,7 @@ REVIEW_PROMPT:
           return;
         }
         ctx.ui.notify(`Queuing quick exploration (stage 1 only)...`, "info");
-        pi.sendUserMessage(`Use cdev with quick=true to: ${quickTask}${AUDIT_ONLY_RE.test(quickTask) ? auditGuard : ""}`, {
+        pi.sendUserMessage(`Use cdev with quick=true to: ${quickTask}`, {
           triggerTurn: true,
           deliverAs: "steer",
         });
@@ -1262,6 +1253,7 @@ REVIEW_PROMPT:
           "── cdev status ─────────────────────────────────────",
           "",
           `  👤 ${resolveSignature(config)}`,
+          `  Version:          ${getCdevVersion(ctx.cwd)}`,
           "",
           `  Current model:    ${ctx.model ? ctx.model.id : "none"}`,
           `  Scout:  ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`,
@@ -1375,7 +1367,7 @@ REVIEW_PROMPT:
 
       // Not a subcommand → treat as task
       ctx.ui.notify("Queuing cdev task...", "info");
-      pi.sendUserMessage(`Use cdev to: ${trimmed}${isAuditOnly ? auditGuard : ""}`, {
+      pi.sendUserMessage(`Use cdev to: ${trimmed}`, {
         triggerTurn: true,
         deliverAs: "steer",
       });

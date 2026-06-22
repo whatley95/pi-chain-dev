@@ -211,13 +211,16 @@ function cleanupTempDir(dir: string | null): void {
 
 // ── Prompts ────────────────────────────────────────────────
 
+/** Audit guard — stages never modify code */
+const STAGE_AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
+
 function buildStage1Prompt(task: string, customPrompt?: string): string {
   if (customPrompt) {
     return `${customPrompt}
 
 Task: ${task}
 
-Do NOT write a report. Return raw findings only.`;
+Do NOT write a report. Return raw findings only.${STAGE_AUDIT_GUARD}`;
   }
   return `${task}
 
@@ -231,7 +234,7 @@ Instructions:
 - Do NOT write a decision-useful report
 - Just return what you found — raw data, observations, and preliminary notes
 
-After exploring, simply return your findings as plain text.`;
+After exploring, simply return your findings as plain text.${STAGE_AUDIT_GUARD}`;
 }
 
 function buildStage2Prompt(task: string, stage1Output: string, customPrompt?: string): string {
@@ -242,7 +245,7 @@ Task: ${task}
 
 <previous_findings>
 ${stage1Output}
-</previous_findings>`;
+</previous_findings>${STAGE_AUDIT_GUARD}`;
   }
   return `${task}
 
@@ -286,13 +289,13 @@ Assembly rules:
 - Do not narrate tool calls
 - If no files changed, say "No changes made" once
 - Report what changes future decisions, trust, or behavior
-- Action Items should be concrete, verifiable tasks the agent can check off`;
+- Action Items should be concrete, verifiable tasks the agent can check off${STAGE_AUDIT_GUARD}`;
 }
 
 // ── Review mode prompts ────────────────────────────────────
 
 function buildReviewPrompt(customPrompt?: string): string {
-  if (customPrompt) return customPrompt;
+  if (customPrompt) return customPrompt + STAGE_AUDIT_GUARD;
   return `Review the code changes made in this session. Your job is to find issues the developer may have missed.
 
 Instructions:
@@ -316,7 +319,7 @@ Improvements that aren't bugs: refactors, patterns, tests to add.
 ## Evidence
 Files reviewed, diff locations, edge cases verified, assumptions checked.
 
-Be direct. Flag real problems loudly. Don't praise trivial things.`;
+Be direct. Flag real problems loudly. Don't praise trivial things.${STAGE_AUDIT_GUARD}`;
 }
 
 function buildFileReviewPrompt(
@@ -324,6 +327,7 @@ function buildFileReviewPrompt(
   reportContent: string,
   referencedFiles: Record<string, string>,
 ): string {
+  const auditSuffix = STAGE_AUDIT_GUARD;
   const fileList = Object.keys(referencedFiles);
   const filesSection = fileList.length > 0
     ? fileList.map(f => {
@@ -381,7 +385,7 @@ ${reportContent}
 
 <actual-files>
 ${filesSection}
-</actual-files>`;
+</actual-files>${auditSuffix}`;
 }
 
 function buildDiffReviewPrompt(diffSpec: string, diffContent: string): string {
@@ -424,7 +428,7 @@ Improvements that aren't bugs: refactors, tests, patterns.
 
 <diff>
 ${truncated}
-</diff>`;
+</diff>${STAGE_AUDIT_GUARD}`;
 }
 
 // ── Stage runner ────────────────────────────────────────────
@@ -436,6 +440,7 @@ function buildPiArgs(
   forkSessionPath: string,
   extensions: string[] | null,
   stageProfile: StageProfile,
+  noTools = false,
 ): string[] {
   const args: string[] = [
     "--mode", "json",
@@ -456,7 +461,9 @@ function buildPiArgs(
   if (inheritedCliArgs.fallbackThinking && !stageProfile.thinking) {
     args.push("--thinking", inheritedCliArgs.fallbackThinking);
   }
-  if (!stageProfile.id) {
+  if (noTools) {
+    args.push("--no-tools");
+  } else if (!stageProfile.id) {
     if (inheritedCliArgs.fallbackTools) {
       args.push("--tools", inheritedCliArgs.fallbackTools);
     }
@@ -490,11 +497,13 @@ export interface RunStageOptions {
   environment: Record<string, string>;
   offline: boolean;
   signal?: AbortSignal;
+  /** If true, pass --no-tools so the child process cannot modify files */
+  noTools?: boolean;
 }
 
 async function runStage(opts: RunStageOptions): Promise<ForkResult> {
   const { cwd, task, stageLabel, forkSessionJsonl, stageProfile, extensions,
-          environment, offline, signal } = opts;
+          environment, offline, signal, noTools = false } = opts;
 
   const result: ForkResult = {
     task,
@@ -509,7 +518,7 @@ async function runStage(opts: RunStageOptions): Promise<ForkResult> {
     result.stderr += `[cdev] stripped ${stripped} orphaned tool message(s) from session snapshot\n`;
   }
   const tmp = writeTempSessionJsonl(sanitizedJsonl);
-  const piArgs = buildPiArgs(task, tmp.filePath, extensions, stageProfile);
+  const piArgs = buildPiArgs(task, tmp.filePath, extensions, stageProfile, noTools);
 
   const exitCode = await new Promise<number>((resolve) => {
     const { command, prefixArgs } = resolvePiSpawn();
@@ -693,6 +702,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       environment,
       offline,
       signal,
+      noTools: true,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -762,6 +772,7 @@ export async function runCdevReview(opts: {
       environment,
       offline,
       signal,
+      noTools: true,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -826,6 +837,7 @@ export async function runFileReview(opts: {
       environment,
       offline,
       signal,
+      noTools: true,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -869,6 +881,7 @@ export async function runDiffReview(opts: {
       environment,
       offline,
       signal,
+      noTools: true,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
