@@ -1425,16 +1425,40 @@ REVIEW_PROMPT:
 
       const providerModels = configuredModels.filter(m => m.provider === provider);
       const MAX_SHOWN = 50;
+
+      // For huge providers (e.g. OpenRouter), ask for a search term first.
+      let shownModels = providerModels;
+      if (providerModels.length > MAX_SHOWN) {
+        const raw = await ctx.ui.input(
+          `${provider} has ${providerModels.length} models. Search to narrow it down:`,
+          "type to filter..."
+        );
+        if (raw === undefined) return;
+        const term = raw.trim().toLowerCase();
+        if (term) {
+          shownModels = providerModels.filter(m =>
+            m.id.toLowerCase().includes(term) ||
+            (m.name && m.name.toLowerCase().includes(term))
+          );
+          if (shownModels.length === 0) {
+            ctx.ui.notify(`No models match "${raw.trim()}" in ${provider}.`, "info");
+            return;
+          }
+        } else {
+          shownModels = providerModels.slice(0, MAX_SHOWN);
+        }
+      }
+
       const currentModel = ctx.model;
-      const modelItems = providerModels.slice(0, MAX_SHOWN).map(m => {
+      const modelItems = shownModels.slice(0, MAX_SHOWN).map(m => {
         const isCurrent = currentModel && currentModel.provider === m.provider && currentModel.id === m.id;
         return `${m.id}${isCurrent ? " ✓" : ""}`;
       });
-      if (providerModels.length > MAX_SHOWN) {
-        modelItems.push(`… ${providerModels.length - MAX_SHOWN} more models hidden`);
+      if (shownModels.length > MAX_SHOWN) {
+        modelItems.push(`… ${shownModels.length - MAX_SHOWN} more — refine your search`);
       }
       const modelPick = await ctx.ui.select(
-        `Pick ${stage} model from ${provider} (${providerModels.length} available):`,
+        `Pick ${stage} model from ${provider} (${shownModels.length} shown):`,
         modelItems
       );
       if (!modelPick || modelPick.startsWith("…")) return;
