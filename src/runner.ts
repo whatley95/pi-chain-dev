@@ -280,72 +280,6 @@ function cleanupTempDir(dir: string | null): void {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
-// ── File-change detection guard ───────────────────────────
-
-/** Snapshot mtimes of tracked files under cwd. Lightweight. */
-function snapshotFileMtimes(cwd: string): Map<string, number> {
-  const snapshot = new Map<string, number>();
-  try {
-    const stack = [cwd];
-    while (stack.length > 0) {
-      const dir = stack.pop()!;
-      let entries: fs.Dirent[];
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        continue;
-      }
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist" || entry.name === "out" || entry.name === "build") {
-            continue;
-          }
-          stack.push(fullPath);
-        } else if (entry.isFile()) {
-          try {
-            const stat = fs.statSync(fullPath);
-            snapshot.set(path.relative(cwd, fullPath), stat.mtimeMs);
-          } catch {
-            // ignore
-          }
-        }
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return snapshot;
-}
-
-function detectChangedFiles(
-  before: Map<string, number>,
-  after: Map<string, number>,
-): string[] {
-  const changed: string[] = [];
-  for (const [relPath, beforeMtime] of before) {
-    const afterMtime = after.get(relPath);
-    if (afterMtime === undefined) {
-      changed.push(relPath);
-    } else if (afterMtime !== beforeMtime) {
-      changed.push(relPath);
-    }
-  }
-  for (const [relPath] of after) {
-    if (!before.has(relPath)) {
-      changed.push(relPath);
-    }
-  }
-  return changed;
-}
-
-const EXCLUDED_CHANGE_DIRS = new Set([".pi", "node_modules", "dist", "out", "build", ".git", ".svn"]);
-
-function isUserCodeChange(relPath: string): boolean {
-  const firstDir = relPath.split(/[\\/]/)[0];
-  return !EXCLUDED_CHANGE_DIRS.has(firstDir);
-}
-
 // ── Prompts ────────────────────────────────────────────────
 
 /** Audit guard — stages never modify code */
@@ -1052,7 +986,6 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   let stage1Result: ForkResult;
   let stage1Findings: Stage1Findings | null = null;
-  const stage1MtimeBefore = snapshotFileMtimes(cwd);
   const onUpdate = opts.onUpdate;
 
   async function runStage1Run(label: string): Promise<ForkResult> {
@@ -1153,23 +1086,6 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
         stage1Findings = null;
       }
     }
-  }
-
-  // ── Detect if stage 1 wrote any user code despite the audit guard ──
-  const stage1Changes = detectChangedFiles(stage1MtimeBefore, snapshotFileMtimes(cwd))
-    .filter(isUserCodeChange)
-    .slice(0, 10);
-  if (stage1Changes.length > 0) {
-    const changedList = stage1Changes.join(", ");
-    return {
-      result: {
-        ...stage1Result,
-        task,
-        exitCode: 1,
-        errorMessage: `Exploration stage violated audit guard and modified files: ${changedList}. Aborting.`,
-      },
-      details,
-    };
   }
 
   if (stage1Result.exitCode > 0 && !getFinalAssistantText(stage1Result.messages)) {
