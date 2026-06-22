@@ -276,17 +276,28 @@ function buildStage1Prompt(task: string, customPrompt?: string): string {
 Task: ${task}
 
 Return your findings as a single JSON object matching this schema (no markdown fences, no extra prose):
-${jsonSchema}${STAGE_AUDIT_GUARD}`;
+${jsonSchema}
+
+Efficiency rules:
+- Batch reads: use \`bash\`, \`cat\`, \`grep\`, \`find\`, \`ls\`, or globs instead of many individual \`read\` calls.
+- Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
+- Read a file individually only when you need the full content of a specific, named file.${STAGE_AUDIT_GUARD}`;
   }
   return `${task}
 
 You are in EXPLORATION MODE. Your job is to gather information, not to write a final report.
 
 Instructions:
-- Explore thoroughly using available tools (read, bash, ls, grep, etc.)
+- Explore thoroughly using available tools (read, bash, ls, grep, find, etc.)
 - Gather concrete evidence: file contents, command outputs, config values
 - Return your findings as a single JSON object matching this schema (no markdown fences, no extra prose):
 ${jsonSchema}
+
+Efficiency rules:
+- Batch reads: use \`bash\`, \`cat\`, \`grep\`, \`find\`, \`ls\`, or globs instead of many individual \`read\` calls.
+- Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
+- Read a file individually only when you need the full content of a specific, named file.
+- Stop exploring once you have enough evidence to answer the task.
 
 Rules:
 - "summary" is required and must be one sentence.
