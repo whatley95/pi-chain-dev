@@ -6,6 +6,7 @@ import { loadConfig } from "./config.js";
 import { runAutoFork, runCdevReview, runFileReview, runDiffReview, runYoloLoop } from "./runner.js";
 import { computeReportDiff, formatReportDiff } from "./json-extract.js";
 import { writeReportFile } from "./report.js";
+import { isPathUnderCwd } from "./path-guards.js";
 import { getFinalAssistantText } from "./runner-events.js";
 import { emptyFailedResult, normalizeYoloConfig } from "./types.js";
 import { saveSession, findPreviousSession } from "./history.js";
@@ -125,6 +126,13 @@ export async function executeCdevTool(
       if (typeof p.reviewFile === "string" && p.reviewFile.trim()) {
         const arg = p.reviewFile.trim();
         const filePath = isAbsolute(arg) ? arg : join(ctx.cwd, arg);
+        if (!isPathUnderCwd(ctx.cwd, filePath)) {
+          return {
+            content: [{ type: "text" as const, text: `cdev review error: reviewFile must be inside the project workspace: ${p.reviewFile}` }],
+            details: { stage1: null, stage2: null },
+            isError: true,
+          };
+        }
         const MAX_REVIEW_FILE_BYTES = 2 * 1024 * 1024;
         let fileContent: string;
         try {
