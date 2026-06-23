@@ -27,9 +27,13 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 | `/cdev <task>` | Full two-stage: cheap model gathers evidence, powerful model writes structured report |
 | `/cdev quick <task>` | Scout only — cheap model returns raw findings, skip forge (synthesis) |
 | `/cdev verify <task>` | Scout ×2 + forge — higher accuracy, ~2× stage 1 cost |
-| `/cdev yolo <task>` | Scout + forge, then auto review → fix loops (configurable, expensive) |
-| `/cdev yolo on` | Enable YOLO review-fix loops |
+| `/cdev plan <task>` | Scout + planner forge — returns implementation roadmap with checklist |
+| `/cdev yolo <task>` | Scout + forge, then auto review loops. Who edits is configurable (default: you) |
+| `/cdev yolo on` | Enable YOLO review loops |
 | `/cdev yolo off` | Disable YOLO mode (default) |
+| `/cdev yolo manual` | Default — cdev reviews, you apply fixes between rounds |
+| `/cdev yolo propose` | cdev reviews and writes a fix plan; you apply it |
+| `/cdev yolo auto` | cdev reviews and edits files automatically between rounds (high trust) |
 | `/cdev auto on` | Auto-trigger mode — LLM proactively uses `cdev` for exploration tasks |
 | `/cdev auto off` | Disable auto-trigger |
 | `/cdev auto-verify on` | Automatic scout ×2 for every `/cdev <task>` (default) — ~2× stage 1 cost |
@@ -68,7 +72,8 @@ The LLM can also call `cdev` via a registered tool — no typing commands:
 | `review` | boolean | Forge only (code review, skip scout) |
 | `recall` | string | Retrieve past findings from project memory (e.g. `"auth"`) — $0, no fork |
 | `recall` | `""` (empty) | List all known topics |
-| `yolo` | boolean | Scout + forge, then auto review-fix loops up to `pi-chain-dev.yolo.maxRounds` |
+| `yolo` | boolean | Scout + forge, then auto review loops up to `pi-chain-dev.yolo.maxRounds`. Default mode leaves edits to the main agent. |
+| `plan` | boolean | Scout + planner forge — returns risks, files, steps, checklist, and test commands |
 
 Auto-trigger mode tells the LLM to use the tool proactively. The agent also receives prompt guidelines:
 - Use `recall=<topic>` before re-exploring — costs $0, avoids duplicate work
@@ -262,34 +267,74 @@ If one scout run produces invalid findings, cdev uses the valid run. If both are
 
 If the file or diff is too large to fit on the command line, cdev automatically offloads the review prompt into the session snapshot file and passes only a short continuation prompt to the child Pi process. Very large files are also truncated with a clear notice so the review stays within model context limits.
 
-### YOLO mode (`/cdev yolo <task>`)
+### Plan mode (`/cdev plan <task>`)
 
-YOLO runs scout + forge once, then loops review → fix up to `maxRounds` times. It stops early when the review returns `pass` (if `stopOnPass` is true).
+Same scout → forge pipeline as full mode, but the forge prompt asks for an implementation plan instead of a research report.
 
 ```
-  Parent: "Implement this feature and keep fixing until review passes"
+  /cdev plan refactor auth to middleware
        │
        ▼
   ┌──────────────────────────────────────────────┐
-  │  SCOUT + FORGE — initial implementation      │
+  │  SCOUT — cheap model                         │
+  │  Gathers evidence: files, deps, edge cases   │
+  └──────────────────┬───────────────────────────┘
+                     │ validated findings
+   ┌──────────────────▼───────────────────────────┐
+   │  FORGE — powerful model (planner prompt)     │
+   │  Returns PlanReport:                         │
+   │  • risks[]                                   │
+   │  • files { read[], toModify[], toCreate[] }  │
+   │  • steps[] with verification                 │
+   │  • checklist[] — ordered, actionable tasks   │
+   │  • testCommands[]                            │
+   └──────────────────┬───────────────────────────┘
+                      │ plan
+                      ▼
+               PARENT implements checklist
+```
+
+Use this before a refactor when you want a concrete roadmap. The checklist is designed to be checked off one item at a time.
+
+### YOLO mode (`/cdev yolo <task>`)
+
+YOLO runs scout + forge once, then loops review up to `maxRounds` times. It stops early when the review returns `pass` (if `stopOnPass` is true).
+
+The key difference is **who applies fixes between reviews**:
+
+| Mode | Who edits | Command |
+|---|---|---|
+| `manual` (default) | **You / main agent** | `/cdev yolo manual` |
+| `propose` | cdev writes a fix plan; you apply it | `/cdev yolo propose` |
+| `auto` | cdev edits files directly | `/cdev yolo auto` |
+
+```
+  Parent: "Implement this feature and keep reviewing until it passes"
+       │
+       ▼
+  ┌──────────────────────────────────────────────┐
+  │  SCOUT + FORGE — initial plan/report         │
   └──────────────────┬───────────────────────────┘
                      │
                      ▼
   ┌──────────────────────────────────────────────┐
-  │  REVIEW — check the implementation           │
+  │  YOU implement (manual/propose)              │
+  │  OR cdev auto-fixes (auto)                   │
+  └──────────────────┬───────────────────────────┘
+                     │
+                     ▼
+  ┌──────────────────────────────────────────────┐
+  │  REVIEW — check the current state            │
   │  Verdict: pass / needs-work / blocked        │
   └──────────────────┬───────────────────────────┘
                      │
-         ┌───────────┴───────────┐
-         │ pass                  │ needs-work / blocked
-         ▼                       ▼
-       DONE                 ┌─────────────────┐
-                              │  FIX — apply    │
-                              │  review fixes   │
-                              └────────┬────────┘
-                                       │
-                                       ▼
-                              repeat up to maxRounds
+          ┌───────────┴───────────┐
+          │ pass                  │ needs-work / blocked
+          ▼                       ▼
+        DONE                 apply fixes
+                                 │
+                                 ▼
+                        repeat up to maxRounds
 ```
 
 Configuration (default safe):
@@ -301,7 +346,7 @@ Configuration (default safe):
       "enabled": false,
       "maxRounds": 3,
       "stopOnPass": true,
-      "autoApply": "off"
+      "autoApply": "manual"
     }
   }
 }
@@ -309,11 +354,11 @@ Configuration (default safe):
 
 | `autoApply` | Behaviour |
 |---|---|
-| `off` | Run reviews only; never auto-apply fixes. Parent decides. |
-| `safe` | Run review + fix rounds. Child Pi is allowed tools so it can edit files. |
-| `all` | Same as `safe` currently; reserved for future aggressive application. |
+| `manual` | cdev reviews; you apply fixes. Default and safest. |
+| `propose` | cdev reviews and outputs a concrete fix plan; you apply it. |
+| `auto` | cdev reviews and edits files directly between rounds. Use with caution. |
 
-`maxRounds` is clamped to 7. Each round costs roughly one review fork + one fix fork, so YOLO can be very expensive. Enable only when you want the agent to iterate unsupervised.
+`maxRounds` is clamped to 7. Each round costs roughly one review fork (plus a fix fork in `propose`/`auto` mode), so YOLO can be very expensive. Enable only when you want the agent to iterate unsupervised.
 
 ### Auto-trigger mode
 
@@ -417,7 +462,7 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
       "enabled": false,
       "maxRounds": 3,
       "stopOnPass": true,
-      "autoApply": "off"
+      "autoApply": "manual"
     }
   }
 }
@@ -446,7 +491,7 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `yolo.enabled` | boolean | `false` | Enable `/cdev yolo` command |
 | `yolo.maxRounds` | number | `3` | Max review-fix rounds (clamped to 7) |
 | `yolo.stopOnPass` | boolean | `true` | Stop looping when review returns pass |
-| `yolo.autoApply` | `"off"` \| `"safe"` \| `"all"` | `"off"` | Whether to auto-apply fixes each round |
+| `yolo.autoApply` | `"manual"` \| `"propose"` \| `"auto"` | `"manual"` | Who applies fixes each round. `manual` = main agent, `propose` = cdev plan, `auto` = cdev edits files |
 | `yolo.reviewProfile` | object | — | Optional model profile for yolo review rounds |
 | `yolo.fixProfile` | object | — | Optional model profile for yolo fix rounds |
 | `signature` | string | `"whatley.xyz"` | Override status signature |
@@ -485,6 +530,9 @@ LLM: reads report, decides approach, writes code
 LLM: needs follow-up → calls cdev({ task: "trace auth middleware imports", quick: true })
      → Scout only: returns raw file paths
      → Cheaper, faster
+
+LLM: wants a roadmap → calls cdev({ task: "plan auth middleware refactor", plan: true })
+     → Scout + planner forge: checklist, risks, test commands
 
 /cdev review                               # or LLM calls cdev({ review: true })
      → Forge only: custom review prompt — checks NestJS-specific issues
