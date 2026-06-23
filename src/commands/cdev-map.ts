@@ -267,7 +267,8 @@ export async function handleMap(args: string, ctx: ExtensionContext, config: Aut
       ctx.ui.notify("No project map found. Run `/cdev map` to generate one.", "warn");
       return true;
     }
-    ctx.ui.notify(formatMapReport(map), "info");
+    const yaml = stringifyYaml(map, { indent: 2, lineWidth: 0 });
+    ctx.ui.notify(`── cdev project map (.pi/cdev/map.yaml) ──────────────\n\n${yaml}`, "info");
     return true;
   }
 
