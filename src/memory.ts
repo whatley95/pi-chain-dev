@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import type { CdevMemory, CdevTopic, CdevFindingRecord } from "./types.js";
 import { formatCost } from "./extension-context.js";
+import { logWarn, logError } from "./logger.js";
 
 // ── Storage ──────────────────────────────────────────────
 
@@ -38,8 +39,10 @@ export function loadMemory(cwd: string): CdevMemory {
     if (raw && raw.version === 1 && raw.topics) {
       return raw as CdevMemory;
     }
+    logWarn(cwd, "loadMemory", "memory.json had unexpected shape; starting fresh");
     return { version: 1, topics: {} };
-  } catch {
+  } catch (err) {
+    logError(cwd, "loadMemory", err, { path });
     return { version: 1, topics: {} };
   }
 }
@@ -51,16 +54,29 @@ function saveMemory(cwd: string, memory: CdevMemory): void {
   // Atomic write via temp + rename; fall back to direct write on Windows
   // (renameSync can fail on Win32 when target has open handles)
   if (process.platform === "win32") {
-    try { writeFileSync(path, content, "utf-8"); } catch { /* ignore */ }
+    try {
+      writeFileSync(path, content, "utf-8");
+    } catch (err) {
+      logError(cwd, "saveMemory", err, { path });
+    }
   } else {
     const tmpPath = path + ".tmp";
     try {
       writeFileSync(tmpPath, content, "utf-8");
       renameSync(tmpPath, path);
-    } catch {
+    } catch (err) {
       // Rename failed — fall back to direct write so we don't lose data
-      try { writeFileSync(path, content, "utf-8"); } catch { /* ignore */ }
-      try { unlinkSync(tmpPath); } catch { /* ignore */ }
+      logWarn(cwd, "saveMemory", "atomic rename failed; falling back to direct write", { path, error: String(err) });
+      try {
+        writeFileSync(path, content, "utf-8");
+      } catch (writeErr) {
+        logError(cwd, "saveMemory", writeErr, { path });
+      }
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        // tmp file may not exist; ignore
+      }
     }
   }
   _topicCountCache = null;
@@ -548,36 +564,17 @@ export function memoryTopicCount(cwd: string): number {
       } else if (_topicCountCache.count === 0) {
         return 0;
       }
-    } catch { /* fall through to reload */ }
+    } catch (err) {
+      logWarn(cwd, "memoryTopicCount", "failed to read memory mtime", { error: String(err) });
+    }
   }
   const memory = loadMemory(cwd);
   const count = Object.keys(memory.topics).length;
   try {
     const mtime = existsSync(memoryPath) ? statSync(memoryPath).mtimeMs : 0;
     _topicCountCache = { cwd, count, mtime };
-  } catch { /* ignore */ }
+  } catch (err) {
+    logWarn(cwd, "memoryTopicCount", "failed to update topic count cache", { error: String(err) });
+  }
   return count;
-}
-
-// ── Error log helpers ─────────────────────────────────────
-
-export function getErrorCount(cwd: string): number {
-  try {
-    const path = join(cwd, ".pi", "cdev", "errors.jsonl");
-    if (!existsSync(path)) return 0;
-    const content = readFileSync(path, "utf-8").trim();
-    if (!content) return 0;
-    return content.split("\n").length;
-  } catch {
-    return 0;
-  }
-}
-
-export function clearErrorLog(cwd: string): void {
-  try {
-    const path = join(cwd, ".pi", "cdev", "errors.jsonl");
-    if (existsSync(path)) writeFileSync(path, "", "utf-8");
-  } catch {
-    // ignore
-  }
 }

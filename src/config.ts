@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { homedir } from "node:os";
 import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig, YoloConfig } from "./types.js";
 import { normalizeYoloConfig } from "./types.js";
+import { logError } from "./logger.js";
 
 let getAgentDirImpl: () => string;
 try {
@@ -91,7 +92,8 @@ function resolveEffortProfilesFromPiFork(
       if (profile) profiles[level] = profile;
     }
     return Object.keys(profiles).length > 0 ? profiles : undefined;
-  } catch {
+  } catch (err) {
+    // No cwd available here; log to console is not allowed. Caller will use defaults.
     return undefined;
   }
 }
@@ -103,8 +105,8 @@ export function loadConfig(cwd: string): AutoForkConfig {
   const projectPath = path.join(projectSettingsDir, "settings.json");
 
   // Load our namespace from global and project settings
-  const globalConfig = readNamespacedConfig(globalPath);
-  const projectConfig = readNamespacedConfig(projectPath);
+  const globalConfig = readNamespacedConfig(cwd, globalPath);
+  const projectConfig = readNamespacedConfig(cwd, projectPath);
 
   const resolved: AutoForkConfig = {
     ...DEFAULT_CONFIG,
@@ -153,7 +155,7 @@ export function loadConfig(cwd: string): AutoForkConfig {
   return resolved;
 }
 
-function readNamespacedConfig(settingsPath: string): Partial<AutoForkConfig> {
+function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoForkConfig> {
   if (!existsSync(settingsPath)) return {};
 
   try {
@@ -239,7 +241,8 @@ function readNamespacedConfig(settingsPath: string): Partial<AutoForkConfig> {
     }
 
     return parsed;
-  } catch {
+  } catch (err) {
+    logError(cwd, "readNamespacedConfig", err, { settingsPath });
     return {};
   }
 }

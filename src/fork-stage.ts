@@ -7,6 +7,7 @@ import { parseInheritedCliArgs } from "./runner-cli.js";
 import { processPiJsonLine, getFinalAssistantText, summarizePiEvent } from "./runner-events.js";
 import type { StageProfile, ForkResult } from "./types.js";
 import { emptyUsage, emptyFailedResult } from "./types.js";
+import { logWarn } from "./logger.js";
 
 const SIGKILL_TIMEOUT_MS = 5000;
 
@@ -46,7 +47,15 @@ class Semaphore {
 
 const stageSemaphore = new Semaphore(2);
 
+let testPiSpawnResolver: (() => { command: string; prefixArgs: string[] }) | null = null;
+
+/** Test hook: override the Pi binary used by runStageCore. */
+export function setPiSpawnResolver(resolver: (() => { command: string; prefixArgs: string[] }) | null): void {
+  testPiSpawnResolver = resolver;
+}
+
 function resolvePiSpawn(): { command: string; prefixArgs: string[] } {
+  if (testPiSpawnResolver) return testPiSpawnResolver();
   const isNode = /[\\/]node(?:\.exe)?$/i.test(process.execPath);
   const isBun = /[\\/]bun(?:\.exe)?$/i.test(process.execPath);
   if ((isNode || isBun) && process.argv[1]) {
@@ -214,9 +223,13 @@ export function sanitizeSessionJsonl(sessionJsonl: string): { jsonl: string; str
   };
 }
 
-function cleanupTempDir(dir: string | null): void {
+function cleanupTempDir(cwd: string, dir: string | null): void {
   if (!dir) return;
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch (err) {
+    logWarn(cwd, "cleanupTempDir", "failed to remove temp session dir", { dir, error: String(err) });
+  }
 }
 
 const inheritedCliArgs = parseInheritedCliArgs(process.argv);
@@ -458,6 +471,6 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
 
   return result;
 } finally {
-  cleanupTempDir(tmp.dir);
-}
+    cleanupTempDir(cwd, tmp.dir);
+  }
 }

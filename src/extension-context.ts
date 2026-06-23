@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync, appendFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -10,6 +10,7 @@ import { parseStage2Report, formatStage2Report } from "./json-extract.js";
 import type { AutoForkDetails, ForkResult, StageProfile } from "./types.js";
 import { memoryTopicCount } from "./memory.js";
 import { BUILD_DATE } from "./build-date.js";
+import { logError as logErrorToFile, logWarn } from "./logger.js";
 
 export const AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
 export const DEFAULT_SIGNATURE = "whatley.xyz";
@@ -31,8 +32,8 @@ export function recordForkCost(cwd: string, cost: number): void {
     const path = sessionCostFilePath(cwd);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, String(next), "utf-8");
-  } catch {
-    // ignore persistence failure
+  } catch (err) {
+    logWarn(cwd, "recordForkCost", "failed to persist session cost", { cost: next, error: String(err) });
   }
 }
 
@@ -49,8 +50,8 @@ export function getSessionForkCost(cwd: string): number {
         return parsed;
       }
     }
-  } catch {
-    // ignore read failure
+  } catch (err) {
+    logWarn(cwd, "getSessionForkCost", "failed to read session cost", { error: String(err) });
   }
   return 0;
 }
@@ -62,8 +63,8 @@ export function resetSessionForkCost(cwd: string): void {
     if (existsSync(path)) {
       writeFileSync(path, "0", "utf-8");
     }
-  } catch {
-    // ignore
+  } catch (err) {
+    logWarn(cwd, "resetSessionForkCost", "failed to reset session cost", { error: String(err) });
   }
 }
 
@@ -432,17 +433,5 @@ export function updateForkCostStatus(ctx: ExtensionContext): void {
 }
 
 export function logError(cwd: string, context: string, err: unknown): void {
-  try {
-    const cdevDir = join(cwd, ".pi", "cdev");
-    mkdirSync(cdevDir, { recursive: true });
-    const record = JSON.stringify({
-      ts: new Date().toISOString(),
-      context,
-      message: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
-    });
-    appendFileSync(join(cdevDir, "errors.jsonl"), record + "\n", "utf-8");
-  } catch {
-    // fail silently
-  }
+  logErrorToFile(cwd, context, err);
 }

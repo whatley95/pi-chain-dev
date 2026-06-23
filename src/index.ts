@@ -24,9 +24,8 @@ import {
   memoryForget,
   memoryGetTopic,
   memoryTopicCount,
-  getErrorCount,
-  clearErrorLog,
 } from "./memory.js";
+import { getErrorCount, clearErrorLog } from "./logger.js";
 import { listSessions } from "./history.js";
 
 export default function (pi: ExtensionAPI) {

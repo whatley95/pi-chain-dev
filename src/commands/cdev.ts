@@ -4,7 +4,8 @@ import { join, isAbsolute } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "../config.js";
 import { listSessions, getSession, formatHistory, formatSessionRecord, purgeOldSessions } from "../history.js";
-import { memoryClear, getErrorCount, clearErrorLog } from "../memory.js";
+import { memoryClear } from "../memory.js";
+import { getErrorCount, clearErrorLog } from "../logger.js";
 import {
   getCdevVersion,
   resolveSignature,

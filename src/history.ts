@@ -11,6 +11,7 @@ import { join } from "node:path";
 import type { AutoForkDetails, ForkResult } from "./types.js";
 import { getFinalAssistantText } from "./runner-events.js";
 import { logError, formatCost } from "./extension-context.js";
+import { logWarn } from "./logger.js";
 
 // ── Types ──────────────────────────────────────────────
 
@@ -136,8 +137,8 @@ export function listSessions(cwd: string): SessionRecord[] {
     try {
       const raw = JSON.parse(readFileSync(join(dir, file), "utf-8"));
       records.push(raw as SessionRecord);
-    } catch {
-      // Skip corrupted files
+    } catch (err) {
+      logWarn(cwd, "listSessions", `skipping corrupted session file ${file}`, { error: String(err) });
     }
   }
   return records;
@@ -178,12 +179,12 @@ export function purgeOldSessions(cwd: string, maxAgeDays = 7): number {
           unlinkSync(filePath);
           purged++;
         }
-      } catch {
-        // Skip if can't delete
+      } catch (err) {
+        logWarn(cwd, "purgeOldSessions", `failed to purge ${file}`, { error: String(err) });
       }
     }
-  } catch {
-    // Directory may not exist
+  } catch (err) {
+    logWarn(cwd, "purgeOldSessions", "failed to list sessions dir", { error: String(err) });
   }
 
   return purged;
