@@ -177,18 +177,14 @@ export async function executeCdevTool(
         ctx.ui.setWidget("cdev-progress", undefined);
 
         const reviewText = getFinalAssistantText(result.messages);
-        let reportRelPath = "";
-        if (reviewText && !result.errorMessage) {
-          const reviewSlug = `review-${p.reviewFile.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 40)}-${Date.now().toString(36)}.md`;
-          const { reportRelPath: standaloneRel } = writeReportFile({
-            cwd: ctx.cwd,
-            fileName: reviewSlug,
-            title: `Review: ${p.reviewFile}`,
-            reviewer: details.stage2?.model ?? "?",
-            body: reviewText,
-          });
-          reportRelPath = standaloneRel;
-        }
+        const reviewSlug = `review-${p.reviewFile.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 40)}-${Date.now().toString(36)}.md`;
+        const { reportRelPath } = writeReportFile({
+          cwd: ctx.cwd,
+          fileName: reviewSlug,
+          title: `Review: ${p.reviewFile}`,
+          reviewer: details.stage2?.model ?? "?",
+          body: reviewText || "(no review output)",
+        });
 
         saveSession(ctx.cwd, `review ${p.reviewFile}`, true, startTime, details, result);
         if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
@@ -199,7 +195,7 @@ export async function executeCdevTool(
         if (config.memory) {
           indexFindingsAsync({
             task: `review ${p.reviewFile}`,
-            resultText: getFinalAssistantText(result.messages) || "",
+            resultText: reviewText || "",
             stage2Model: reviewProfile.id,
             isReview: true,
             quick: false,
@@ -207,7 +203,7 @@ export async function executeCdevTool(
             cwd: ctx.cwd,
           });
         }
-        const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);
+        const isError = result.exitCode > 0 && !reviewText;
         const reviewOutput = formatForkResultOutput(result, details);
         const hasIssues = reviewText && (
           reviewText.includes("❌ missing") ||
@@ -216,12 +212,13 @@ export async function executeCdevTool(
           reviewText.includes("## Gaps") ||
           reviewText.includes("needs-work") ||
           reviewText.includes("## Issues Found") ||
-          reviewText.includes("# Issues") ||
-          isError
+          reviewText.includes("# Issues")
         );
-        const actionNote = hasIssues
-          ? `\n\n---\n⚠️  Review found issues. Read the report at ${reportRelPath}\nand address the new Action Items. Check them off in the report file when done.`
-          : `\n\n---\n✅ Review passed. Report saved at ${reportRelPath}`;
+        const actionNote = isError
+          ? `\n\n---\n⚠️  Review failed. Report saved at ${reportRelPath}`
+          : hasIssues
+            ? `\n\n---\n⚠️  Review found issues. Read the report at ${reportRelPath}\nand address the new Action Items. Check them off in the report file when done.`
+            : `\n\n---\n✅ Review passed. Report saved at ${reportRelPath}`;
 
         return {
           content: [{ type: "text" as const, text: reviewOutput + actionNote }],
