@@ -50,7 +50,10 @@ if (existsSync(target)) {
 copyFileSync(source, target);
 
 // Force Node to treat the extensionless hook as CommonJS despite repo "type": "module".
-writeFileSync(hooksPackageJson, JSON.stringify({ type: "commonjs" }) + "\n", "utf-8");
+// Only create the file if absent; never overwrite an existing hooks/package.json.
+if (!existsSync(hooksPackageJson)) {
+  writeFileSync(hooksPackageJson, JSON.stringify({ type: "commonjs" }) + "\n", "utf-8");
+}
 
 if (process.platform !== "win32") {
   chmodSync(target, 0o755);

@@ -49,11 +49,24 @@ export function isDebugEnabled(): boolean {
 
 function formatError(err: unknown): { message: string; stack?: string } {
   if (err instanceof Error) return { message: err.message, stack: err.stack };
+  if (err && typeof err === "object" && "message" in err && typeof (err as Record<string, unknown>).message === "string") {
+    return { message: (err as Record<string, unknown>).message as string };
+  }
   return { message: String(err) };
 }
 
 function cdevDir(cwd: string): string {
   return join(cwd, ".pi", "cdev");
+}
+
+const ensuredDirs = new Set<string>();
+
+function ensureCdevDir(cwd: string): void {
+  const dir = cdevDir(cwd);
+  if (!ensuredDirs.has(dir)) {
+    mkdirSync(dir, { recursive: true });
+    ensuredDirs.add(dir);
+  }
 }
 
 export function debugLogPath(cwd: string): string {
@@ -73,8 +86,7 @@ function writeDebugLog(
 ): void {
   if (LEVELS[level] < LEVELS[globalMinLevel]) return;
   try {
-    const dir = cdevDir(cwd);
-    mkdirSync(dir, { recursive: true });
+    ensureCdevDir(cwd);
     const record = JSON.stringify({
       ts: new Date().toISOString(),
       level,
@@ -95,8 +107,7 @@ function writeErrorLog(
   meta?: Record<string, unknown>,
 ): void {
   try {
-    const dir = cdevDir(cwd);
-    mkdirSync(dir, { recursive: true });
+    ensureCdevDir(cwd);
     const { message, stack } = formatError(err);
     const record = JSON.stringify({
       ts: new Date().toISOString(),

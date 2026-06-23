@@ -180,6 +180,11 @@ export function registerCdevCommand(
           return;
         }
         if (cleanArg) {
+          if (/^(changes|change|uncommitted|uncommitted changes|working tree|worktree)$/i.test(cleanArg)) {
+            ctx.ui.notify("Reviewing uncommitted changes…", "info");
+            pi.sendUserMessage(`Review uncommitted changes using cdev with review=true, diffSpec="HEAD".`, { triggerTurn: true, deliverAs: "steer" });
+            return;
+          }
           // Diff specs look like "HEAD~3..HEAD", "main..feature", "r1234:1235", or "r1234-1235".
           // A plain relative path such as "../src/foo.ts" should not match.
           const isDiff = (/^[^/\\]+\.\.[^/\\]*$/.test(cleanArg) || /^r\d+[-:]\d+$/.test(cleanArg)) &&
@@ -376,32 +381,48 @@ export function registerCdevCommand(
 
       // ── Default: task mode ──
       if (!trimmed) {
-        await ctx.ui.select("cdev — Model-chained development fork", [
-          "Usage: /cdev <task>",
-          "",
-          "Scout (cheap) explores → Forge (powerful) writes",
-          "",
-          "Subcommands:",
-          "  quick <task>     Scout only (fast findings)",
-          "  verify <task>    Scout ×2 + forge (higher accuracy)",
-          "  plan <task>      Scout + planner (implementation plan only)",
-          "  yolo <task>      Scout + forge, then review-fix loops",
-          "  review [path]    Forge review session, file, or diff",
-          "  scan [deep]      Generate custom prompts",
-          "  history [n]      Past fork sessions",
-          "  recall [topic]   Check project memory",
-          "  memory refresh <topic>  Re-explore stale topic",
-          "  replay <n>        Re-run a past session",
-          "  status           Full config overview",
-          "  memory on|off    Toggle memory",
-          "  prompts on|off   Toggle custom prompts",
-          "  themed on|off    Toggle themed TUI",
-          "  auto on|off      Toggle auto-trigger",
-          "  auto-verify on|off  Toggle automatic scout ×2",
-          "  yolo on|off      Toggle YOLO review-fix loops",
-          "",
-          "More: /cdev-help  /cdev-model",
+        const choice = await ctx.ui.select("cdev — choose workflow", [
+          "Review uncommitted changes",
+          "Quick explore",
+          "Deep verify",
+          "Plan implementation",
+          "Review current session",
+          "Review file or diff",
+          "Show status",
+          "Show history",
+          "Help",
         ]);
+        if (!choice) return;
+        if (choice === "Review uncommitted changes") {
+          ctx.ui.notify("Reviewing uncommitted changes…", "info");
+          pi.sendUserMessage(`Review uncommitted changes using cdev with review=true, diffSpec="HEAD".`, { triggerTurn: true, deliverAs: "steer" });
+          return;
+        }
+        if (choice === "Review current session") {
+          ctx.ui.notify("Queuing current session review…", "info");
+          pi.sendUserMessage("Run a code review using the cdev tool with review=true.", { triggerTurn: true, deliverAs: "steer" });
+          return;
+        }
+        if (choice === "Show history") {
+          const sessions = listSessions(ctx.cwd);
+          ctx.ui.notify(formatHistory(sessions), "info");
+          return;
+        }
+        if (choice === "Show status") {
+          ctx.ui.notify("Use /cdev status for the full config, model, budget, memory, and session overview.", "info");
+          return;
+        }
+        if (choice === "Help") {
+          ctx.ui.notify("Use /cdev-help for all subcommands, or /cdev-model to pick scout and forge models.", "info");
+          return;
+        }
+        const usage: Record<string, string> = {
+          "Quick explore": "/cdev quick <task>",
+          "Deep verify": "/cdev verify <task>",
+          "Plan implementation": "/cdev plan <task>",
+          "Review file or diff": "/cdev review <path-or-diff>",
+        };
+        ctx.ui.notify(`${choice}: ${usage[choice] ?? "/cdev <task>"}`, "info");
         return;
       }
 

@@ -7,8 +7,10 @@ import { describe, it } from "node:test";
 import {
   extractJsonFromText,
   parseJsonObject,
+  parsePlanReport,
   parseStage1Findings,
   parseStage2Report,
+  formatPlanReport,
   formatStage2Report,
 } from "../src/json-extract.js";
 
@@ -81,6 +83,15 @@ describe("parseStage1Findings", () => {
     const text = JSON.stringify({ summary: "summary" });
     assert.strictEqual(parseStage1Findings(text), null);
   });
+
+  it("rejects malformed coverage metadata", () => {
+    const text = JSON.stringify({
+      summary: "summary",
+      findings: [{ observation: "obs", confidence: "high" }],
+      coverage: { filesInspected: "many", filesCited: 1, commandsRun: 1 },
+    });
+    assert.strictEqual(parseStage1Findings(text), null);
+  });
 });
 
 describe("parseStage2Report", () => {
@@ -110,6 +121,19 @@ describe("parseStage2Report", () => {
       actionItems: ["task"],
     });
     assert.strictEqual(parseStage2Report(text), null);
+  });
+
+  it("rejects out-of-range quality and grounding scores", () => {
+    const base = {
+      status: "ok",
+      summary: "summary",
+      output: "output",
+      evidence: "evidence",
+      learnings: "learnings",
+      actionItems: ["task"],
+    };
+    assert.strictEqual(parseStage2Report(JSON.stringify({ ...base, groundingScore: 1.5 })), null);
+    assert.strictEqual(parseStage2Report(JSON.stringify({ ...base, qualityScore: -0.1 })), null);
   });
 });
 
@@ -141,5 +165,58 @@ describe("formatStage2Report", () => {
       ungroundedClaims: [],
     });
     assert.match(text, /All claims are grounded/);
+  });
+});
+
+describe("parsePlanReport", () => {
+  it("parses a valid plan report", () => {
+    const text = JSON.stringify({
+      status: "ok",
+      summary: "plan summary",
+      risks: ["risk"],
+      files: { read: ["src/a.ts"], toModify: ["src/b.ts"], toCreate: [] },
+      steps: [{ order: 1, description: "change b", verification: "npm test" }],
+      testCommands: ["npm test"],
+      groundingScore: 0.9,
+      ungroundedClaims: [],
+      qualityScore: 0.8,
+      qualityNotes: "actionable",
+    });
+    const report = parsePlanReport(text);
+    assert.ok(report);
+    assert.strictEqual(report!.files.toModify[0], "src/b.ts");
+  });
+
+  it("rejects plan steps without verification", () => {
+    const text = JSON.stringify({
+      status: "ok",
+      summary: "plan summary",
+      risks: [],
+      files: { read: [], toModify: [], toCreate: [] },
+      steps: [{ order: 1, description: "change b" }],
+      testCommands: [],
+    });
+    assert.strictEqual(parsePlanReport(text), null);
+  });
+});
+
+describe("formatPlanReport", () => {
+  it("formats a plan into actionable markdown", () => {
+    const text = formatPlanReport({
+      status: "ok",
+      summary: "plan summary",
+      risks: ["risk"],
+      files: { read: ["src/a.ts"], toModify: ["src/b.ts"], toCreate: ["src/c.ts"] },
+      steps: [{ order: 1, description: "change b", verification: "npm test" }],
+      testCommands: ["npm test"],
+      groundingScore: 1,
+      ungroundedClaims: [],
+      qualityScore: 0.75,
+      qualityNotes: "mostly actionable",
+    });
+    assert.match(text, /## Steps/);
+    assert.match(text, /Verification: npm test/);
+    assert.match(text, /`npm test`/);
+    assert.match(text, /Quality/);
   });
 });

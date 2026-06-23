@@ -82,8 +82,14 @@ export function renderCall(args: any, theme: Theme, _context?: { cwd?: string })
     label = args.recall ? `cdev-recall "${args.recall}"` : "cdev-recall (list)";
   } else if (args?.review) {
     label = "cdev-review";
+  } else if (args?.plan) {
+    label = task ? `cdev-plan "${task}"` : "cdev-plan";
+  } else if (args?.yolo) {
+    label = task ? `cdev-yolo "${task}"` : "cdev-yolo";
   } else if (args?.quick) {
     label = task ? `cdev-quick "${task}"` : "cdev-quick";
+  } else if (args?.verify) {
+    label = task ? `cdev-verify "${task}"` : "cdev-verify";
   } else {
     label = task ? `cdev "${task}"` : "cdev";
   }
@@ -107,12 +113,13 @@ export function renderResult(
   const isErr = Boolean(result?.isError);
   const content = result?.content;
   const details = result?.details;
+  const ui = details?.ui ?? {};
   const textOut = Array.isArray(content)
     ? content.map((p: any) => p?.text ?? "").join("\n").trim()
     : "";
 
-  const taskText = details?.task
-    ? trunc(String(details.task).replace(/\s+/g, " ").trim(), MAX_TASK_CHARS)
+  const taskText = ui?.task
+    ? trunc(String(ui.task).replace(/\s+/g, " ").trim(), MAX_TASK_CHARS)
     : "";
 
   const stage1Model = details?.stage1?.model ?? "";
@@ -121,6 +128,8 @@ export function renderResult(
 
   const costNum = (details?.stage1?.usage?.cost ?? 0) + (details?.stage2?.usage?.cost ?? 0);
   const costStr = fmtCost(costNum);
+  const modeLabel = formatModeLabel(ui?.mode, details);
+  const metrics = formatUiMetrics(ui);
 
   // Build lines
   const lines: string[] = [];
@@ -131,9 +140,13 @@ export function renderResult(
   const statusText = `${statusIcon} ${statusLabel}  ${modelChain}  ${costStr}`.trimEnd();
 
   lines.push(bg(statusBgToken, fg(isErr ? "error" : "success", statusText), theme, themed));
+  if (modeLabel || metrics) {
+    lines.push(fg("dim", `  ${[modeLabel, metrics].filter(Boolean).join(" | ")}`));
+  }
 
   if (opts.expanded) {
     if (taskText) lines.push(fg("dim", `  task: ${taskText}`));
+    if (ui?.reportPath) lines.push(fg("dim", `  report: ${ui.reportPath}`));
     if (details?.stage1?.model) {
       const s1 = details.stage1;
       const s1Text = `  Scout: ${s1.model} (exit ${s1.exitCode ?? "?"})`;
@@ -184,4 +197,40 @@ class SimpleText implements Component {
 
   invalidate(): void {}
   dispose(): void {}
+}
+
+function formatModeLabel(mode: unknown, details: any): string {
+  if (typeof mode === "string" && mode) return mode;
+  if (details?.stage1 && !details?.stage2) return "quick";
+  if (!details?.stage1 && details?.stage2) return "review";
+  if (details?.stage1 && details?.stage2) return "fork";
+  return "";
+}
+
+function formatScore(score: unknown): string | null {
+  if (typeof score !== "number" || !Number.isFinite(score)) return null;
+  return `${Math.round(score * 10)}/10`;
+}
+
+function formatUiMetrics(ui: any): string {
+  const parts: string[] = [];
+  if (typeof ui?.status === "string") parts.push(ui.status);
+  const quality = formatScore(ui?.qualityScore);
+  if (quality) parts.push(`quality ${quality}`);
+  const grounding = formatScore(ui?.groundingScore);
+  if (grounding) parts.push(`grounding ${grounding}`);
+  const coverage = ui?.coverage;
+  if (coverage && typeof coverage === "object") {
+    const cited = typeof coverage.filesCited === "number" ? coverage.filesCited : 0;
+    const inspected = typeof coverage.filesInspected === "number" ? coverage.filesInspected : 0;
+    const commands = typeof coverage.commandsRun === "number" ? coverage.commandsRun : 0;
+    parts.push(`coverage ${cited}/${inspected} files, ${commands} cmds`);
+  }
+  if (typeof ui?.ungroundedClaimCount === "number" && ui.ungroundedClaimCount > 0) {
+    parts.push(`${ui.ungroundedClaimCount} ungrounded`);
+  }
+  if (typeof ui?.actionItemCount === "number" && ui.actionItemCount > 0) {
+    parts.push(`${ui.actionItemCount} action${ui.actionItemCount === 1 ? "" : "s"}`);
+  }
+  return parts.join(" | ");
 }

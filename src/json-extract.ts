@@ -1,7 +1,7 @@
-import type { Stage1Findings, Stage2Report } from "./types.js";
-import { isStage1Findings, isStage2Report } from "./types.js";
+import type { PlanReport, Stage1Findings, Stage2Report } from "./types.js";
+import { isPlanReport, isStage1Findings, isStage2Report } from "./types.js";
 
-export { isStage1Findings, isStage2Report };
+export { isPlanReport, isStage1Findings, isStage2Report };
 
 export function extractJsonFromText(text: string): string | null {
   const trimmed = text.trim();
@@ -53,6 +53,39 @@ export function parseStage2Report(text: string): Stage2Report | null {
   return parseJsonObject(text, isStage2Report);
 }
 
+export function parsePlanReport(text: string): PlanReport | null {
+  return parseJsonObject(text, isPlanReport);
+}
+
+function formatScoreSection(
+  lines: string[],
+  title: string,
+  score: number | undefined,
+  notes?: string,
+  ungroundedClaims?: string[],
+): void {
+  if (score === undefined) return;
+  const pct = Math.round(score * 100);
+  const icon = pct >= 80 ? "✅" : pct >= 50 ? "⚠️" : "❌";
+  lines.push(`## ${title} ${icon} ${pct}%${notes ? ` — ${notes}` : ""}`);
+  if (ungroundedClaims && ungroundedClaims.length > 0) {
+    for (const claim of ungroundedClaims.slice(0, 10)) lines.push(`- ${claim}`);
+  } else if (title === "Grounding") {
+    lines.push("All claims are grounded in the exploration evidence.");
+  }
+  lines.push("");
+}
+
+function formatCoverage(lines: string[], coverage: Stage2Report["coverage"]): void {
+  if (!coverage) return;
+  lines.push(`## Coverage`);
+  lines.push(`- Files inspected: ${coverage.filesInspected}`);
+  lines.push(`- Files cited: ${coverage.filesCited}`);
+  lines.push(`- Commands run: ${coverage.commandsRun}`);
+  if (coverage.unreadLikelyFiles) lines.push(`- Unread likely files: ${coverage.unreadLikelyFiles}`);
+  lines.push("");
+}
+
 export function formatStage2Report(report: Stage2Report): string {
   const lines: string[] = [];
   lines.push(`Status: ${report.status}`);
@@ -65,34 +98,9 @@ export function formatStage2Report(report: Stage2Report): string {
   lines.push(`## Evidence`);
   lines.push(report.evidence);
   lines.push("");
-  if (report.coverage) {
-    const c = report.coverage;
-    lines.push(`## Coverage`);
-    lines.push(`- Files inspected: ${c.filesInspected}`);
-    lines.push(`- Files cited: ${c.filesCited}`);
-    lines.push(`- Commands run: ${c.commandsRun}`);
-    if (c.unreadLikelyFiles) lines.push(`- Unread likely files: ${c.unreadLikelyFiles}`);
-    lines.push("");
-  }
-  if (report.groundingScore !== undefined) {
-    const pct = Math.round(report.groundingScore * 100);
-    const icon = pct >= 80 ? "✅" : pct >= 50 ? "⚠️" : "❌";
-    lines.push(`## Grounding ${icon} ${pct}%`);
-    if (report.ungroundedClaims && report.ungroundedClaims.length > 0) {
-      for (const claim of report.ungroundedClaims.slice(0, 10)) {
-        lines.push(`- ${claim}`);
-      }
-    } else {
-      lines.push("All claims are grounded in the exploration evidence.");
-    }
-    lines.push("");
-  }
-  if (report.qualityScore !== undefined) {
-    const pct = Math.round(report.qualityScore * 100);
-    const icon = pct >= 80 ? "✅" : pct >= 50 ? "⚠️" : "❌";
-    lines.push(`## Quality ${icon} ${pct}%${report.qualityNotes ? ` — ${report.qualityNotes}` : ""}`);
-    lines.push("");
-  }
+  formatCoverage(lines, report.coverage);
+  formatScoreSection(lines, "Grounding", report.groundingScore, undefined, report.ungroundedClaims);
+  formatScoreSection(lines, "Quality", report.qualityScore, report.qualityNotes);
   lines.push(`## Learnings`);
   lines.push(report.learnings);
   if (report.actionItems.length > 0) {
@@ -104,6 +112,46 @@ export function formatStage2Report(report: Stage2Report): string {
     }
   }
   return lines.join("\n");
+}
+
+export function formatPlanReport(report: PlanReport): string {
+  const lines: string[] = [];
+  lines.push(`Status: ${report.status}`);
+  lines.push("");
+  lines.push(report.summary);
+  lines.push("");
+  if (report.risks.length > 0) {
+    lines.push("## Risks");
+    for (const risk of report.risks) lines.push(`- ${risk}`);
+    lines.push("");
+  }
+  lines.push("## Files");
+  if (report.files.read.length > 0) lines.push(`- Read: ${report.files.read.join(", ")}`);
+  if (report.files.toModify.length > 0) lines.push(`- Modify: ${report.files.toModify.join(", ")}`);
+  if (report.files.toCreate.length > 0) lines.push(`- Create: ${report.files.toCreate.join(", ")}`);
+  lines.push("");
+  if (report.steps.length > 0) {
+    lines.push("## Steps");
+    for (const step of [...report.steps].sort((a, b) => a.order - b.order)) {
+      lines.push(`${step.order}. ${step.description}`);
+      lines.push(`   Verification: ${step.verification}`);
+    }
+    lines.push("");
+  }
+  if (report.testCommands.length > 0) {
+    lines.push("## Test Commands");
+    for (const command of report.testCommands) lines.push(`- \`${command}\``);
+    lines.push("");
+  }
+  if (report.openQuestions?.length) {
+    lines.push("## Open Questions");
+    for (const question of report.openQuestions) lines.push(`- ${question}`);
+    lines.push("");
+  }
+  formatCoverage(lines, report.coverage);
+  formatScoreSection(lines, "Grounding", report.groundingScore, undefined, report.ungroundedClaims);
+  formatScoreSection(lines, "Quality", report.qualityScore, report.qualityNotes);
+  return lines.join("\n").trimEnd();
 }
 
 export function computeReportDiff(oldText: string, newText: string): { added: string[]; removed: string[] } {

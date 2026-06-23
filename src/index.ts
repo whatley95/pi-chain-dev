@@ -133,6 +133,10 @@ export default function (pi: ExtensionAPI) {
         description:
           "If true, run the scout stage twice and merge the findings before sending them to the forge stage. The two independent runs increase coverage for high-stakes tasks at ~2x stage 1 cost and slower speed.",
       })),
+      plan: Type.Optional(Type.Boolean({
+        description:
+          "If true, run scout plus a planner-style forge response that returns an implementation plan only. Use before editing when you want risks, files, steps, and verification commands.",
+      })),
       yolo: Type.Optional(Type.Boolean({
         description:
           "If true, run scout+forge once, then automatically run review-fix loops up to the configured maxRounds. Stops early when review passes. Configure with /cdev yolo on|off and settings.json pi-chain-dev.yolo.",
@@ -164,8 +168,10 @@ export default function (pi: ExtensionAPI) {
         "/cdev <task>           Scout + Forge explore",
         "/cdev quick <task>     Scout only (fast)",
         "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
+        "/cdev plan <task>      Scout + planner (implementation plan only)",
         "/cdev yolo <task>     Scout + forge, then review-fix loops",
         "/cdev review [path]    Forge review session/file",
+        "/cdev review changes   Review uncommitted changes",
         "/cdev review A..B      Review git/svn diff",
         "/cdev scan [deep]      Generate custom prompts",
         "/cdev history [n]      Past session details",

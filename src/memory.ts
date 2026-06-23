@@ -13,7 +13,7 @@
  *   /cdev clear            — alias for memory clear
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, statSync, copyFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import type { CdevMemory, CdevTopic, CdevFindingRecord } from "./types.js";
@@ -66,17 +66,28 @@ function saveMemory(cwd: string, memory: CdevMemory): void {
       writeFileSync(tmpPath, content, "utf-8");
       renameSync(tmpPath, path);
     } catch (err) {
-      // Rename failed — fall back to direct write so we don't lose data
-      logWarn(cwd, "saveMemory", "atomic rename failed; falling back to direct write", { path, error: String(err) });
-      try {
-        writeFileSync(path, content, "utf-8");
-      } catch (writeErr) {
-        logError(cwd, "saveMemory", writeErr, { path });
-      }
-      try {
-        unlinkSync(tmpPath);
-      } catch {
-        // tmp file may not exist; ignore
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EXDEV") {
+        // Cross-device temp: copy then remove temp.
+        try {
+          copyFileSync(tmpPath, path);
+          unlinkSync(tmpPath);
+        } catch (copyErr) {
+          logError(cwd, "saveMemory", copyErr, { path });
+        }
+      } else {
+        // Rename failed for another reason — fall back to direct write so we don't lose data.
+        logWarn(cwd, "saveMemory", "atomic rename failed; falling back to direct write", { path, error: String(err) });
+        try {
+          writeFileSync(path, content, "utf-8");
+        } catch (writeErr) {
+          logError(cwd, "saveMemory", writeErr, { path });
+        }
+        try {
+          unlinkSync(tmpPath);
+        } catch {
+          // tmp file may not exist; ignore
+        }
       }
     }
   }
@@ -95,10 +106,12 @@ function fileFingerprint(filePath: string): string | null {
 }
 
 export function extractFilePaths(text: string, cwd: string): string[] {
-  // Multiple patterns to catch different path representations
+  // Multiple patterns to catch different path representations.
+  // Each pattern's LAST capture group must be the path; the second-to-last (if present)
+  // is an optional prefix like ./ or ../. Keep this invariant when adding patterns.
   const patterns = [
     // Explicit paths: src/foo/bar.ts, app/models/user.rb
-    /(?:^|\s|[`'"([{<])(\.{0,2}[/\\])?([\w@.-]+(?:[/\\][\w@.-]+)+(?:\.\w{1,8}))(?:[:"',)}\]>\s]|$)/gm,
+    /(?:^|\s|[`'"([{<])(\.{0,2}[/\\])?([\w@.-]+(?:[/\\][\w@.-]+)+(?:\.\w{1,8}))(?=[:"',)}\]>\s]|$)/gm,
     // Paths after common markers: "in file X", "at path X", "the file X"
     /(?:file|path|module|package|class)\s+[`'"]?(\.{0,2}[/\\])?([\w@.-]+(?:[/\\][\w@.-]+)+(?:\.\w{1,8}))[`'"]?/gi,
     // Backtick-enclosed paths with directory: `src/foo/bar.ts`
@@ -116,19 +129,11 @@ export function extractFilePaths(text: string, cwd: string): string[] {
     let match: RegExpExecArray | null;
     pattern.lastIndex = 0;
     while ((match = pattern.exec(text)) !== null) {
-      // Extract the full path from capture groups
-      let raw: string;
-      if (match.length === 4) {
-        // Pattern with prefix + path
-        raw = (match[2] || "") + match[3];
-      } else if (match.length === 3) {
-        // Pattern with optional prefix + path
-        raw = (match[1] || "") + match[2];
-      } else {
-        raw = match[1];
-      }
-
-      if (!raw) continue;
+      // Last capture group is the path; optional prefix is second-to-last.
+      const pathGroup = match[match.length - 1];
+      const prefixGroup = match.length >= 3 ? match[match.length - 2] : "";
+      if (!pathGroup) continue;
+      let raw = (prefixGroup || "") + pathGroup;
       raw = raw.replace(/\\/g, "/");
 
       // Strip line numbers: src/foo/bar.ts:42 → src/foo/bar.ts
@@ -137,7 +142,8 @@ export function extractFilePaths(text: string, cwd: string): string[] {
       // Strip trailing punctuation
       raw = raw.replace(/[,;.]+$/, "");
 
-      // Normalize leading ./ or ../
+      if (!raw) continue;
+
       const resolved = join(cwd, raw);
 
       if (!seen.has(resolved)) {

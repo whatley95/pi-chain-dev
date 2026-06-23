@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type AutoForkConfig } from "./config.js";
 import { getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
-import { parseStage2Report, formatStage2Report } from "./json-extract.js";
+import { parsePlanReport, parseStage2Report, formatPlanReport, formatStage2Report } from "./json-extract.js";
 import type { AutoForkDetails, ForkResult, StageProfile } from "./types.js";
 import { memoryTopicCount } from "./memory.js";
 import { BUILD_DATE } from "./build-date.js";
@@ -292,8 +292,13 @@ export function buildSessionSnapshotJsonl(sessionManager: SessionSnapshotSource)
   const header = sessionManager.getHeader();
   if (!header || typeof header !== "object") return null;
   const branchEntries = sessionManager.getBranch();
-  const lines = [JSON.stringify(header)];
-  for (const entry of branchEntries) lines.push(JSON.stringify(entry));
+  const lines: string[] = [];
+  try {
+    lines.push(JSON.stringify(header));
+    for (const entry of branchEntries) lines.push(JSON.stringify(entry));
+  } catch {
+    return null;
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -380,6 +385,10 @@ export function formatForkResultOutput(result: ForkResult, details: AutoForkDeta
   if (report) {
     return formatStage2Report(report);
   }
+  const plan = parsePlanReport(stage2Text);
+  if (plan) {
+    return formatPlanReport(plan);
+  }
   return formatResultContent(result, details);
 }
 
@@ -415,7 +424,12 @@ export function updateForkCostStatus(ctx: ExtensionContext): void {
   const segments: string[] = [];
   if (config.auto) segments.push("⚡");
   segments.push("cdev");
-  if (totalCost > 0) segments.push(formatCost(totalCost));
+  const sessionCost = Math.max(totalCost, getSessionForkCost(ctx.cwd));
+  if (sessionCost > 0) segments.push(formatCost(sessionCost));
+  if ((config.maxSessionCost ?? 0) > 0 && sessionCost > 0) {
+    const percent = Math.round((sessionCost / (config.maxSessionCost ?? 1)) * 100);
+    segments.push(`${percent}% budget`);
+  }
   if (config.promptsEnabled && (config.prompts?.explore || config.prompts?.review)) segments.push("📋");
   if (config.memory) {
     const topicCount = memoryTopicCount(ctx.cwd);

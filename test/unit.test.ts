@@ -18,7 +18,7 @@ import { buildChildEnv } from "../src/env.js";
 import { stableStringify } from "../src/runner-events.js";
 
 // ── types.ts imports ──────────────────────────────────
-import { emptyUsage, emptyFailedResult } from "../src/types.js";
+import { emptyUsage, emptyFailedResult, evaluateConfidenceGates } from "../src/types.js";
 
 // ── memory.ts: extractFilePaths ───────────────────────────
 
@@ -264,5 +264,18 @@ describe("emptyFailedResult()", () => {
     assert.equal(result.exitCode, 1);
     assert.equal(result.errorMessage, "something went wrong");
     assert.equal(result.stopReason, "error");
+  });
+});
+
+describe("evaluateConfidenceGates()", () => {
+  it("flags sparse findings without file anchors or command evidence", () => {
+    const result = evaluateConfidenceGates({
+      summary: "explored auth",
+      findings: [{ observation: "JWT is used", confidence: "high" }],
+    });
+    assert.equal(result.passed, false);
+    assert.ok(result.reasons.some((reason) => reason.includes("finding")));
+    assert.ok(result.reasons.some((reason) => reason.includes("file anchor")));
+    assert.ok(result.reasons.some((reason) => reason.includes("command evidence")));
   });
 });

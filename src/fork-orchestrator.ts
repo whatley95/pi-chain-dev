@@ -158,7 +158,11 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
     const reExploreCheck = shouldReExplore(stage1Findings, verify);
     const gateCheck = stage1Findings ? evaluateConfidenceGates(stage1Findings, confidenceGates) : { passed: false, reasons: ["no valid findings"] };
-    const needsMoreExploration = reExploreCheck.should || !gateCheck.passed;
+    const gateAutoReExplore = confidenceGates?.autoReExplore ?? true;
+    const needsMoreExploration = reExploreCheck.should || (!gateCheck.passed && gateAutoReExplore);
+    if (!gateCheck.passed && !gateAutoReExplore) {
+      stage1Result.stderr += `\n[cdev] confidence gate failed but autoReExplore is off: ${gateCheck.reasons.join("; ")}\n`;
+    }
     if (needsMoreExploration && !verify) {
       const reason = gateCheck.passed ? reExploreCheck.reason : `confidence gate failed: ${gateCheck.reasons.join("; ")}`;
       stage1Result.stderr += `\n[cdev] ${reason}; running a second exploration pass\n`;
@@ -366,6 +370,24 @@ export function formatStage1FindingsForStage2(findings: Stage1Findings): string 
     lines.push("Open questions:");
     for (const q of findings.openQuestions) lines.push(`- ${q}`);
   }
+  if (findings.contradictions?.length) {
+    lines.push("");
+    lines.push("Contradictions between scout runs:");
+    for (const c of findings.contradictions) {
+      lines.push(`- ${c.summary}`);
+      lines.push(`  A: ${c.observationA}`);
+      lines.push(`  B: ${c.observationB}`);
+    }
+  }
+  if (findings.coverage) {
+    const c = findings.coverage;
+    lines.push("");
+    lines.push("Coverage:");
+    lines.push(`- Files inspected: ${c.filesInspected}`);
+    lines.push(`- Files cited: ${c.filesCited}`);
+    lines.push(`- Commands run: ${c.commandsRun}`);
+    if (c.unreadLikelyFiles !== undefined) lines.push(`- Unread likely files: ${c.unreadLikelyFiles}`);
+  }
   return lines.join("\n");
 }
 
@@ -418,6 +440,7 @@ export function mergeStage1Findings(a: Stage1Findings, b: Stage1Findings): Stage
     deadEnds: [...(a.deadEnds ?? [])],
     assumptions: [...(a.assumptions ?? [])],
     openQuestions: [...(a.openQuestions ?? [])],
+    contradictions: a.contradictions ? [...a.contradictions] : undefined,
   };
   for (const f of b.findings) {
     if (!merged.findings.some(existing => findingsOverlap(existing.observation, f.observation))) {

@@ -1,14 +1,14 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, isAbsolute } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config.js";
 import { runAutoFork, runCdevReview, runFileReview, runDiffReview, runYoloLoop } from "./runner.js";
-import { computeReportDiff, formatReportDiff } from "./json-extract.js";
+import { computeReportDiff, formatReportDiff, parsePlanReport, parseStage2Report } from "./json-extract.js";
 import { writeReportFile } from "./report.js";
 import { isPathUnderCwd } from "./path-guards.js";
 import { getFinalAssistantText } from "./runner-events.js";
-import { emptyFailedResult, normalizeYoloConfig } from "./types.js";
+import { emptyFailedResult, normalizeYoloConfig, type AutoForkDetails, type AutoForkUiDetails } from "./types.js";
 import { saveSession, findPreviousSession } from "./history.js";
 import { indexFindingsAsync, memoryGetTopic, formatTopicDetail, loadMemory, formatMemoryTopics } from "./memory.js";
 import {
@@ -36,6 +36,40 @@ export interface AutoForkParamsType {
   recall?: string;
   reviewFile?: string;
   diffSpec?: string;
+}
+
+function buildReportUiDetails(text: string | undefined, base: AutoForkUiDetails): AutoForkUiDetails {
+  if (!text) return base;
+  const report = parseStage2Report(text);
+  if (report) {
+    return {
+      ...base,
+      status: report.status,
+      groundingScore: report.groundingScore,
+      qualityScore: report.qualityScore,
+      ungroundedClaimCount: report.ungroundedClaims?.length ?? 0,
+      actionItemCount: report.actionItems.length,
+      coverage: report.coverage,
+    };
+  }
+  const plan = parsePlanReport(text);
+  if (plan) {
+    return {
+      ...base,
+      mode: base.mode ?? "plan",
+      status: plan.status,
+      groundingScore: plan.groundingScore,
+      qualityScore: plan.qualityScore,
+      ungroundedClaimCount: plan.ungroundedClaims?.length ?? 0,
+      actionItemCount: plan.steps.length,
+      coverage: plan.coverage,
+    };
+  }
+  return base;
+}
+
+function withUiDetails(details: AutoForkDetails, ui: AutoForkUiDetails): AutoForkDetails {
+  return { ...details, ui };
 }
 
 function validateAutoForkParams(params: Record<string, unknown>): { valid: true; value: AutoForkParamsType } | { valid: false; error: string } {
@@ -95,19 +129,19 @@ export async function executeCdevTool(
           const detail = formatTopicDetail(entry, ctx.cwd);
           return {
             content: [{ type: "text" as const, text: `🧠 cdev memory hit: ${p.recall}\n\n${detail}` }],
-            details: { stage1: null, stage2: null },
+            details: { stage1: null, stage2: null, ui: { mode: "recall", task: p.recall } },
           };
         }
         return {
           content: [{ type: "text" as const, text: `🧠 cdev memory miss: no findings for "${p.recall}".` }],
-          details: { stage1: null, stage2: null },
+          details: { stage1: null, stage2: null, ui: { mode: "recall", task: p.recall } },
         };
       }
       const memory = loadMemory(ctx.cwd);
       const listing = formatMemoryTopics(memory);
       return {
         content: [{ type: "text" as const, text: `🧠 cdev memory\n\n${listing}` }],
-        details: { stage1: null, stage2: null },
+        details: { stage1: null, stage2: null, ui: { mode: "recall" } },
       };
     }
 
@@ -137,19 +171,17 @@ export async function executeCdevTool(
         const MAX_REVIEW_FILE_BYTES = 2 * 1024 * 1024;
         let fileContent: string;
         try {
-          if (!existsSync(filePath)) {
+          const stats = statSync(filePath);
+          if (!stats.isFile()) {
             return {
-              content: [{ type: "text" as const, text: `cdev review error: File not found: ${filePath}` }],
+              content: [{ type: "text" as const, text: `cdev review error: Not a regular file: ${filePath}` }],
               details: { stage1: null, stage2: null },
               isError: true,
             };
           }
-          const fileSize = (() => {
-            try { return statSync(filePath).size; } catch { return undefined; }
-          })();
-          if (fileSize !== undefined && fileSize > MAX_REVIEW_FILE_BYTES) {
+          if (stats.size > MAX_REVIEW_FILE_BYTES) {
             return {
-              content: [{ type: "text" as const, text: `cdev review error: File too large (${(fileSize / 1024 / 1024).toFixed(1)} MB > ${MAX_REVIEW_FILE_BYTES / 1024 / 1024} MB): ${filePath}` }],
+              content: [{ type: "text" as const, text: `cdev review error: File too large (${(stats.size / 1024 / 1024).toFixed(1)} MB > ${MAX_REVIEW_FILE_BYTES / 1024 / 1024} MB): ${filePath}` }],
               details: { stage1: null, stage2: null },
               isError: true,
             };
@@ -231,7 +263,11 @@ export async function executeCdevTool(
 
         return {
           content: [{ type: "text" as const, text: reviewOutput + actionNote }],
-          details,
+          details: withUiDetails(details, buildReportUiDetails(reviewText, {
+            mode: "review",
+            task: `review ${p.reviewFile}`,
+            reportPath: reportRelPath,
+          })),
           isError,
         };
       }
@@ -239,6 +275,13 @@ export async function executeCdevTool(
       // Diff review
       if (typeof p.diffSpec === "string" && p.diffSpec.trim()) {
         const diffSpec = p.diffSpec.trim();
+        if (diffSpec.startsWith("-")) {
+          return {
+            content: [{ type: "text" as const, text: `cdev review error: diffSpec must not start with '-': ${diffSpec}` }],
+            details: { stage1: null, stage2: null },
+            isError: true,
+          };
+        }
         let diffContent: string;
         try {
           const gitResult = spawnSync("git", ["diff", diffSpec], { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
@@ -333,7 +376,11 @@ export async function executeCdevTool(
 
         return {
           content: [{ type: "text" as const, text: reviewOutput + actionNote }],
-          details,
+          details: withUiDetails(details, buildReportUiDetails(reviewText, {
+            mode: "review",
+            task: `review diff ${diffSpec}`,
+            reportPath: reportRelPath,
+          })),
           isError,
         };
       }
@@ -403,7 +450,11 @@ export async function executeCdevTool(
       const suffix = reviewReportPath ? `\n\n---\n📄 Review report saved: ${reviewReportPath}` : "";
       return {
         content: [{ type: "text" as const, text: formatForkResultOutput(result, details) + suffix }],
-        details,
+        details: withUiDetails(details, buildReportUiDetails(reviewText, {
+          mode: "review",
+          task: reviewTask,
+          reportPath: reviewReportPath || undefined,
+        })),
         isError,
       };
     }
@@ -537,7 +588,15 @@ export async function executeCdevTool(
 
       return {
         content: [{ type: "text" as const, text: summary }],
-        details: yoloResult.rounds.length > 0 ? yoloResult.rounds[yoloResult.rounds.length - 1].review.details : yoloResult.initial.details,
+        details: withUiDetails(
+          yoloResult.rounds.length > 0 ? yoloResult.rounds[yoloResult.rounds.length - 1].review.details : yoloResult.initial.details,
+          {
+            mode: "yolo",
+            task: p.task,
+            reportPath: yoloResult.finalReportPath,
+            status: yoloResult.finalVerdict === "pass" ? "ok" : yoloResult.finalVerdict === "blocked" ? "blocked" : "needs-work",
+          },
+        ),
         isError: yoloResult.finalVerdict !== "pass",
       };
     }
@@ -656,7 +715,11 @@ export async function executeCdevTool(
 
     return {
       content: [{ type: "text" as const, text: resultText + reportNote }],
-      details,
+      details: withUiDetails(details, buildReportUiDetails(getFinalAssistantText(result.messages), {
+        mode: isPlan ? "plan" : quick ? "quick" : verify ? "verify" : "fork",
+        task: p.task,
+        reportPath: reportRelPath || undefined,
+      })),
       isError,
     };
   } catch (err) {

@@ -195,6 +195,21 @@ export interface AutoForkState {
 export interface AutoForkDetails {
   stage1: ForkResult | null;
   stage2: ForkResult | null;
+  ui?: AutoForkUiDetails;
+}
+
+export type CdevUiMode = "fork" | "quick" | "verify" | "plan" | "review" | "yolo" | "recall";
+
+export interface AutoForkUiDetails {
+  mode?: CdevUiMode;
+  task?: string;
+  reportPath?: string;
+  status?: Stage2Report["status"] | PlanReport["status"];
+  groundingScore?: number;
+  qualityScore?: number;
+  ungroundedClaimCount?: number;
+  actionItemCount?: number;
+  coverage?: SourceCoverageStats;
 }
 
 export function emptyUsage(): UsageStats {
@@ -289,7 +304,14 @@ export function isStage1Findings(value: unknown): value is Stage1Findings {
     const finding = f as Record<string, unknown>;
     if (typeof finding.observation !== "string") return false;
     if (finding.confidence !== undefined && !["high", "medium", "low"].includes(finding.confidence as string)) return false;
+    if (finding.file !== undefined && typeof finding.file !== "string") return false;
+    if (finding.evidence !== undefined && typeof finding.evidence !== "string") return false;
   }
+  if (v.deadEnds !== undefined && (!Array.isArray(v.deadEnds) || !v.deadEnds.every((item) => typeof item === "string"))) return false;
+  if (v.assumptions !== undefined && (!Array.isArray(v.assumptions) || !v.assumptions.every((item) => typeof item === "string"))) return false;
+  if (v.openQuestions !== undefined && (!Array.isArray(v.openQuestions) || !v.openQuestions.every((item) => typeof item === "string"))) return false;
+  if (v.coverage !== undefined && !isSourceCoverageStats(v.coverage)) return false;
+  if (v.contradictions !== undefined && (!Array.isArray(v.contradictions) || !v.contradictions.every(isFindingContradiction))) return false;
   return true;
 }
 
@@ -338,6 +360,62 @@ export interface FindingContradiction {
   summary: string;
 }
 
+/** Structured output expected from plan mode. */
+export interface PlanReport {
+  /** Overall status of the plan. */
+  status: "ok" | "needs-work" | "blocked" | "exploratory";
+  /** One-paragraph plan summary. */
+  summary: string;
+  /** Concrete implementation risks and mitigations. */
+  risks: string[];
+  /** File sets relevant to implementation. */
+  files: {
+    read: string[];
+    toModify: string[];
+    toCreate: string[];
+  };
+  /** Ordered implementation steps. */
+  steps: Array<{
+    order: number;
+    description: string;
+    verification: string;
+  }>;
+  /** Commands to run after implementation. */
+  testCommands: string[];
+  /** Questions the main agent/user should resolve before editing. */
+  openQuestions?: string[];
+  /** 0-1 score of how well plan claims are grounded in scout evidence. */
+  groundingScore?: number;
+  /** Claims not backed by scout evidence. */
+  ungroundedClaims?: string[];
+  /** Coverage statistics collected by the scout stage. */
+  coverage?: SourceCoverageStats;
+  /** Plan quality score. */
+  qualityScore?: number;
+  /** Human-readable quality assessment. */
+  qualityNotes?: string;
+}
+
+function isSourceCoverageStats(value: unknown): value is SourceCoverageStats {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  for (const key of ["filesInspected", "filesCited", "commandsRun"] as const) {
+    if (typeof v[key] !== "number" || !Number.isFinite(v[key]) || v[key] < 0) return false;
+  }
+  if (v.unreadLikelyFiles !== undefined && (typeof v.unreadLikelyFiles !== "number" || !Number.isFinite(v.unreadLikelyFiles) || v.unreadLikelyFiles < 0)) {
+    return false;
+  }
+  return true;
+}
+
+function isFindingContradiction(value: unknown): value is FindingContradiction {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.observationA === "string"
+    && typeof v.observationB === "string"
+    && typeof v.summary === "string";
+}
+
 export function isStage2Report(value: unknown): value is Stage2Report {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const v = value as Record<string, unknown>;
@@ -350,11 +428,41 @@ export function isStage2Report(value: unknown): value is Stage2Report {
   for (const item of v.actionItems) {
     if (typeof item !== "string") return false;
   }
-  if (v.groundingScore !== undefined && typeof v.groundingScore !== "number") return false;
+  if (v.groundingScore !== undefined && (typeof v.groundingScore !== "number" || !Number.isFinite(v.groundingScore) || v.groundingScore < 0 || v.groundingScore > 1)) return false;
   if (v.ungroundedClaims !== undefined && !Array.isArray(v.ungroundedClaims)) return false;
-  if (v.qualityScore !== undefined && typeof v.qualityScore !== "number") return false;
+  if (v.ungroundedClaims !== undefined && !v.ungroundedClaims.every((claim) => typeof claim === "string")) return false;
+  if (v.qualityScore !== undefined && (typeof v.qualityScore !== "number" || !Number.isFinite(v.qualityScore) || v.qualityScore < 0 || v.qualityScore > 1)) return false;
   if (v.qualityNotes !== undefined && typeof v.qualityNotes !== "string") return false;
-  if (v.coverage !== undefined && (typeof v.coverage !== "object" || Array.isArray(v.coverage))) return false;
+  if (v.coverage !== undefined && !isSourceCoverageStats(v.coverage)) return false;
+  return true;
+}
+
+export function isPlanReport(value: unknown): value is PlanReport {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  if (!["ok", "needs-work", "blocked", "exploratory"].includes(v.status as string)) return false;
+  if (typeof v.summary !== "string") return false;
+  if (!Array.isArray(v.risks) || !v.risks.every((risk) => typeof risk === "string")) return false;
+  if (!v.files || typeof v.files !== "object" || Array.isArray(v.files)) return false;
+  const files = v.files as Record<string, unknown>;
+  for (const key of ["read", "toModify", "toCreate"] as const) {
+    if (!Array.isArray(files[key]) || !(files[key] as unknown[]).every((file) => typeof file === "string")) return false;
+  }
+  if (!Array.isArray(v.steps)) return false;
+  for (const step of v.steps) {
+    if (!step || typeof step !== "object" || Array.isArray(step)) return false;
+    const s = step as Record<string, unknown>;
+    if (typeof s.order !== "number" || !Number.isFinite(s.order)) return false;
+    if (typeof s.description !== "string") return false;
+    if (typeof s.verification !== "string") return false;
+  }
+  if (!Array.isArray(v.testCommands) || !v.testCommands.every((command) => typeof command === "string")) return false;
+  if (v.openQuestions !== undefined && (!Array.isArray(v.openQuestions) || !v.openQuestions.every((question) => typeof question === "string"))) return false;
+  if (v.groundingScore !== undefined && (typeof v.groundingScore !== "number" || !Number.isFinite(v.groundingScore) || v.groundingScore < 0 || v.groundingScore > 1)) return false;
+  if (v.ungroundedClaims !== undefined && (!Array.isArray(v.ungroundedClaims) || !v.ungroundedClaims.every((claim) => typeof claim === "string"))) return false;
+  if (v.coverage !== undefined && !isSourceCoverageStats(v.coverage)) return false;
+  if (v.qualityScore !== undefined && (typeof v.qualityScore !== "number" || !Number.isFinite(v.qualityScore) || v.qualityScore < 0 || v.qualityScore > 1)) return false;
+  if (v.qualityNotes !== undefined && typeof v.qualityNotes !== "string") return false;
   return true;
 }
 
