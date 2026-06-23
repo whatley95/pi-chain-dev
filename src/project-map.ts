@@ -65,6 +65,13 @@ export interface ProjectMap {
     boundaries?: string[];
     [key: string]: unknown;
   };
+  dependencies: Record<string, string[]>;
+  files: {
+    tree: string[];
+    keyFiles: string[];
+  };
+  routes?: Record<string, string[]>;
+  workspaces?: { packages: string[] };
   notes: string[];
   generatedAt: string;
   generatedBy: string;
@@ -237,22 +244,29 @@ function detectEnvFiles(cwd: string): string[] {
   return files;
 }
 
-function detectCommands(_cwd: string, pkgManager: string[], languages: string[]): {
+function detectCommands(cwd: string, pkgManager: string[], languages: string[]): {
   build: string[];
   test: string[];
   run: string[];
   lint: string[];
+  [key: string]: string[];
 } {
   const build: string[] = [];
   const test: string[] = [];
   const run: string[] = [];
   const lint: string[] = [];
+  const pkgJson = readJsonSafe(join(cwd, "package.json"));
+  const scripts = (pkgJson?.scripts as Record<string, string>) || {};
 
   if (pkgManager.includes("npm") || pkgManager.includes("pnpm") || pkgManager.includes("yarn") || pkgManager.includes("bun")) {
-    build.push("npm run build");
-    test.push("npm test");
-    run.push("npm start");
-    lint.push("npm run lint");
+    const pkgBuild = scripts.build ? "npm run build" : "npm run build";
+    const pkgTest = scripts.test ? "npm test" : "npm test";
+    const pkgRun = scripts.start ? "npm start" : "npm start";
+    const pkgLint = scripts.lint ? "npm run lint" : "npm run lint";
+    build.push(pkgBuild);
+    test.push(pkgTest);
+    run.push(pkgRun);
+    lint.push(pkgLint);
   }
 
   if (languages.includes("Dart")) {
@@ -294,11 +308,13 @@ function detectFrameworks(cwd: string, languages: string[]): {
   backend: string[];
   frontend: string[];
   mobile: string[];
+  vite: boolean;
 } {
   const framework: string[] = [];
   const backend: string[] = [];
   const frontend: string[] = [];
   const mobile: string[] = [];
+  let vite = false;
 
   if (languages.includes("Java") || languages.includes("Kotlin")) {
     const gradle = tryReadText(join(cwd, "build.gradle")) || tryReadText(join(cwd, "build.gradle.kts"));
@@ -343,6 +359,8 @@ function detectFrameworks(cwd: string, languages: string[]): {
         bucket.push(name);
       }
     }
+
+    vite = !!deps["vite"];
   }
 
   return {
@@ -350,6 +368,7 @@ function detectFrameworks(cwd: string, languages: string[]): {
     backend: Array.from(new Set(backend)),
     frontend: Array.from(new Set(frontend)),
     mobile: Array.from(new Set(mobile)),
+    vite,
   };
 }
 
@@ -421,6 +440,231 @@ function detectFromPackageJson(cwd: string): {
       "@changesets/cli": "Changesets",
     }),
   };
+}
+
+function extractTopDependencies(cwd: string, languages: string[]): Record<string, string[]> {
+  const deps: Record<string, string[]> = {};
+
+  const pkgJson = readJsonSafe(join(cwd, "package.json"));
+  if (pkgJson) {
+    const runtime = Object.keys((pkgJson.dependencies as Record<string, string>) || {});
+    const dev = Object.keys((pkgJson.devDependencies as Record<string, string>) || {});
+    deps.node = runtime.slice(0, 30);
+    if (dev.length) deps.nodeDev = dev.slice(0, 20);
+  }
+
+  const pubspec = tryReadText(join(cwd, "pubspec.yaml"));
+  if (pubspec) {
+    try {
+      const parsed = parseYaml(pubspec) as Record<string, Record<string, string>>;
+      if (parsed.dependencies) deps.flutter = Object.keys(parsed.dependencies).slice(0, 30);
+      if (parsed.dev_dependencies) deps.flutterDev = Object.keys(parsed.dev_dependencies).slice(0, 20);
+    } catch { /* ignore */ }
+  }
+
+  const gradle = tryReadText(join(cwd, "build.gradle")) || tryReadText(join(cwd, "build.gradle.kts"));
+  if (gradle && (languages.includes("Java") || languages.includes("Kotlin"))) {
+    const starterRe = /(?:implementation|api)\s+['"](org\.springframework\.boot:spring-boot-starter-[\w-]+)['"]/g;
+    const starters: string[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = starterRe.exec(gradle)) !== null) {
+      const name = m[1].split("-").pop() ?? m[1];
+      starters.push(`Spring Boot Starter: ${name}`);
+    }
+    if (starters.length) deps.springBoot = Array.from(new Set(starters)).slice(0, 30);
+  }
+
+  const pom = tryReadText(join(cwd, "pom.xml"));
+  if (pom && (languages.includes("Java") || languages.includes("Kotlin"))) {
+    const starterRe = /<artifactId>(spring-boot-starter-[\w-]+)<\/artifactId>/g;
+    const starters: string[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = starterRe.exec(pom)) !== null) {
+      const name = m[1].split("-").pop() ?? m[1];
+      starters.push(`Spring Boot Starter: ${name}`);
+    }
+    if (starters.length) {
+      const existing = new Set(deps.springBoot || []);
+      for (const s of starters) existing.add(s);
+      deps.springBoot = Array.from(existing).slice(0, 30);
+    }
+  }
+
+  const cargo = tryReadText(join(cwd, "Cargo.toml"));
+  if (cargo && languages.includes("Rust")) {
+    try {
+      const parsed = parseYaml(cargo) as { dependencies?: Record<string, unknown> };
+      if (parsed.dependencies) deps.rust = Object.keys(parsed.dependencies).slice(0, 30);
+    } catch { /* ignore */ }
+  }
+
+  const requirements = tryReadText(join(cwd, "requirements.txt"));
+  if (requirements && languages.includes("Python")) {
+    deps.python = requirements
+      .split("\n")
+      .map((line) => line.trim().split(/[=<>!~]/)[0])
+      .filter(Boolean)
+      .slice(0, 30);
+  }
+
+  const pyproject = tryReadText(join(cwd, "pyproject.toml"));
+  if (pyproject && languages.includes("Python")) {
+    try {
+      const parsed = parseYaml(pyproject) as { dependencies?: Record<string, string>, "dev-dependencies"?: Record<string, string> };
+      if (parsed.dependencies) deps.python = Object.keys(parsed.dependencies).slice(0, 30);
+    } catch { /* ignore */ }
+  }
+
+  return deps;
+}
+
+function buildBoundedTree(cwd: string, sourceRoots: string[], maxEntries = 40): string[] {
+  const tree: string[] = [];
+  const skipDirs = new Set(["node_modules", ".git", ".pi", "dist", "build", ".next", ".turbo", "coverage", "target"]);
+  let entriesLeft = maxEntries;
+
+  function walk(dir: string, prefix: string, depth: number): void {
+    if (entriesLeft <= 0 || depth > 2) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    const dirs: string[] = [];
+    const files: string[] = [];
+    for (const e of entries) {
+      if (e.startsWith(".") && e !== ".env") continue;
+      if (skipDirs.has(e)) continue;
+      const full = join(dir, e);
+      try {
+        if (statSync(full).isDirectory()) dirs.push(e);
+        else files.push(e);
+      } catch { /* ignore */ }
+    }
+    dirs.sort((a, b) => a.localeCompare(b));
+    files.sort((a, b) => a.localeCompare(b));
+    for (const d of dirs) {
+      if (entriesLeft <= 0) return;
+      tree.push(`${prefix}${d}/`);
+      entriesLeft--;
+      walk(join(dir, d), `${prefix}  ${d}/`, depth + 1);
+    }
+    for (const f of files.slice(0, Math.max(0, entriesLeft))) {
+      tree.push(`${prefix}${f}`);
+      entriesLeft--;
+    }
+  }
+
+  const roots = sourceRoots.length ? sourceRoots : ["."];
+  for (const root of roots) {
+    if (entriesLeft <= 0) break;
+    if (existsSync(join(cwd, root))) {
+      tree.push(`${root}/`);
+      entriesLeft--;
+      walk(join(cwd, root), `  ${root}/`, 1);
+    }
+  }
+
+  return tree;
+}
+
+function detectKeyFiles(cwd: string, entryPoints: string[], configFiles: string[]): string[] {
+  const key: string[] = [];
+  const candidates = [
+    ...entryPoints,
+    ...configFiles,
+    ".github/workflows/ci.yml",
+    ".github/workflows/test.yml",
+    ".github/workflows/build.yml",
+    ".dockerignore",
+    "docker-compose.override.yml",
+    "vite.config.ts",
+    "vite.config.js",
+    "next.config.js",
+    "next.config.ts",
+    "vue.config.js",
+    "angular.json",
+    "tailwind.config.js",
+    "tailwind.config.ts",
+    "jest.config.js",
+    "vitest.config.ts",
+    "playwright.config.ts",
+    "prisma/schema.prisma",
+    "src/main/resources/application.properties",
+    "src/main/resources/application.yml",
+  ];
+  for (const file of candidates) {
+    if (existsSync(join(cwd, file))) key.push(file);
+  }
+  return Array.from(new Set(key)).slice(0, 30);
+}
+
+function detectRoutes(cwd: string, framework: string[]): Record<string, string[]> {
+  const routes: Record<string, string[]> = {};
+  if (framework.includes("Next.js")) {
+    const nextRoutes: string[] = [];
+    if (existsSync(join(cwd, "app"))) nextRoutes.push("app/");
+    if (existsSync(join(cwd, "pages"))) nextRoutes.push("pages/");
+    if (existsSync(join(cwd, "app", "api"))) nextRoutes.push("app/api/");
+    if (existsSync(join(cwd, "pages", "api"))) nextRoutes.push("pages/api/");
+    if (nextRoutes.length) routes.next = nextRoutes;
+  }
+  if (framework.includes("NestJS")) {
+    routes.nestjs = ["src/**/*.controller.ts"];
+  }
+  if (framework.includes("Express") || framework.includes("Fastify")) {
+    const expr: string[] = [];
+    if (existsSync(join(cwd, "src", "routes"))) expr.push("src/routes/");
+    if (existsSync(join(cwd, "routes"))) expr.push("routes/");
+    if (expr.length) routes.express = expr;
+  }
+  if (framework.includes("Spring Boot")) {
+    routes.spring = [
+      "src/main/java/**/controller/",
+      "src/main/java/**/api/",
+      "src/main/java/**/rest/",
+    ];
+  }
+  if (framework.includes("Flutter")) {
+    routes.flutter = ["lib/"];
+  }
+  if (framework.includes("Angular")) {
+    routes.angular = ["src/app/"];
+  }
+  if (framework.includes("Vue") && existsSync(join(cwd, "src", "views"))) {
+    routes.vue = ["src/views/"];
+  }
+  if (framework.includes("React") && existsSync(join(cwd, "src", "pages"))) {
+    routes.react = ["src/pages/"];
+  }
+  return routes;
+}
+
+function detectWorkspaces(cwd: string): { packages: string[] } | undefined {
+  const packages: string[] = [];
+  const pnpmWorkspace = tryReadText(join(cwd, "pnpm-workspace.yaml"));
+  if (pnpmWorkspace) {
+    try {
+      const parsed = parseYaml(pnpmWorkspace) as { packages?: string[] };
+      if (parsed.packages) packages.push(...parsed.packages);
+    } catch { /* ignore */ }
+  }
+  const pkgJson = readJsonSafe(join(cwd, "package.json"));
+  if (pkgJson?.workspaces) {
+    const ws = pkgJson.workspaces as string[] | { packages?: string[] };
+    if (Array.isArray(ws)) packages.push(...ws);
+    else if (Array.isArray(ws.packages)) packages.push(...ws.packages);
+  }
+  if (existsSync(join(cwd, "packages"))) {
+    try {
+      for (const entry of readdirSync(join(cwd, "packages"))) {
+        const full = join(cwd, "packages", entry);
+        if (statSync(full).isDirectory()) packages.push(`packages/${entry}`);
+      }
+    } catch { /* ignore */ }
+  }
+  return packages.length ? { packages: Array.from(new Set(packages)) } : undefined;
 }
 
 function detectDatabases(cwd: string, languages: string[]): string[] {
@@ -532,7 +776,7 @@ function inferArchitecture(framework: string[], _languages: string[]): ProjectMa
 export function generateProjectMap(cwd: string): ProjectMap {
   const languages = detectLanguages(cwd);
   const packageManager = detectPackageManagers(cwd);
-  const { framework, backend, frontend, mobile } = detectFrameworks(cwd, languages);
+  const { framework, backend, frontend, mobile, vite } = detectFrameworks(cwd, languages);
   const pkgData = detectFromPackageJson(cwd);
   const db = detectDatabases(cwd, languages);
   const entryPoints = detectEntryPoints(cwd, languages);
@@ -544,6 +788,13 @@ export function generateProjectMap(cwd: string): ProjectMap {
   const commands = detectCommands(cwd, packageManager, languages);
   const conventions = inferConventions(cwd, languages, framework);
   const architecture = inferArchitecture(framework, languages);
+  const dependencies = extractTopDependencies(cwd, languages);
+  const tree = buildBoundedTree(cwd, sourceRoots, 40);
+  const keyFiles = detectKeyFiles(cwd, entryPoints, configFiles);
+  const routes = detectRoutes(cwd, framework);
+  const workspaces = detectWorkspaces(cwd);
+
+  if (vite && !pkgData.build.includes("Vite")) pkgData.build.push("Vite");
 
   const pkgJson = readJsonSafe(join(cwd, "package.json"));
   const pubspec = tryReadText(join(cwd, "pubspec.yaml"));
@@ -598,6 +849,13 @@ export function generateProjectMap(cwd: string): ProjectMap {
       lintCommands: commands.lint,
     },
     architecture,
+    dependencies,
+    files: {
+      tree,
+      keyFiles,
+    },
+    routes,
+    workspaces,
     notes: [
       "This map is a starting point. Run `/cdev map refresh` after major structural changes.",
       "Scout will use this map when available to focus exploration.",
@@ -677,6 +935,30 @@ export function summarizeMapForPrompt(map: ProjectMap): string {
     lines.push("Layers:");
     for (const [layer, globs] of Object.entries(map.architecture.layers ?? {})) {
       lines.push(`  - ${layer}: ${globs.join(", ")}`);
+    }
+  }
+  if (Object.keys(map.dependencies).length) {
+    lines.push("Key dependencies:");
+    for (const [source, items] of Object.entries(map.dependencies)) {
+      if (items.length) lines.push(`  - ${source}: ${items.slice(0, 10).join(", ")}`);
+    }
+  }
+  if (map.files.keyFiles.length) {
+    lines.push(`Key files: ${map.files.keyFiles.slice(0, 15).join(", ")}`);
+  }
+  if (map.routes && Object.keys(map.routes).length) {
+    lines.push("Routes/API locations:");
+    for (const [fw, paths] of Object.entries(map.routes)) {
+      if (paths.length) lines.push(`  - ${fw}: ${paths.join(", ")}`);
+    }
+  }
+  if (map.workspaces?.packages.length) {
+    lines.push(`Workspaces: ${map.workspaces.packages.join(", ")}`);
+  }
+  if (map.files.tree.length) {
+    lines.push("Directory skeleton:");
+    for (const line of map.files.tree.slice(0, 30)) {
+      lines.push(`  ${line}`);
     }
   }
   lines.push("</project_map>");

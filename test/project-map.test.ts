@@ -40,17 +40,44 @@ describe("project-map", () => {
     assert.ok(map.project.languages.includes("Java"));
     assert.ok(map.stack.backend.includes("Spring Boot"));
     assert.ok(map.config.runCommands.includes("./gradlew bootRun"));
+    assert.ok(map.dependencies.springBoot?.some((d) => d.includes("web")));
+    assert.ok(map.routes?.spring?.length);
   });
 
-  it("detects a Python project", () => {
+  it("detects JS/TS dependencies and file tree", () => {
+    const cwd = makeTempDir("cdev-node-");
+    writeFileSync(
+      join(cwd, "package.json"),
+      JSON.stringify({
+        name: "node-app",
+        dependencies: { react: "^18", zustand: "^4" },
+        devDependencies: { vite: "^4", jest: "^29" },
+      }),
+      "utf-8"
+    );
+    mkdirSync(join(cwd, "src", "components"), { recursive: true });
+    writeFileSync(join(cwd, "src", "main.tsx"), "export {}\n", "utf-8");
+    writeFileSync(join(cwd, "src", "components", "App.tsx"), "export {}\n", "utf-8");
+
+    const map = generateProjectMap(cwd);
+    assert.ok(map.project.languages.includes("JavaScript"));
+    assert.ok(map.dependencies.node?.includes("react"));
+    assert.ok(map.dependencies.nodeDev?.includes("vite"));
+    assert.ok(map.files.tree.some((l) => l.includes("components/")));
+    assert.ok(map.files.keyFiles.includes("package.json"));
+    assert.ok(map.stack.build.includes("Vite"));
+  });
+
+  it("detects Python dependencies", () => {
     const cwd = makeTempDir("cdev-python-");
-    writeFileSync(join(cwd, "requirements.txt"), "flask\n", "utf-8");
+    writeFileSync(join(cwd, "requirements.txt"), "flask\nrequests\n", "utf-8");
     writeFileSync(join(cwd, "app.py"), "from flask import Flask\n", "utf-8");
 
     const map = generateProjectMap(cwd);
     assert.ok(map.project.languages.includes("Python"));
     assert.ok(map.project.entryPoints.includes("app.py"));
     assert.ok(map.config.testCommands.includes("pytest"));
+    assert.ok(map.dependencies.python?.includes("flask"));
   });
 
   it("saves and loads a project map", () => {
