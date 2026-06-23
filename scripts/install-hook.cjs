@@ -6,7 +6,7 @@
  * Refuses to overwrite an existing pre-commit hook unless --force is passed.
  */
 
-const { copyFileSync, existsSync, mkdirSync, chmodSync, readFileSync, statSync } = require("node:fs");
+const { copyFileSync, existsSync, mkdirSync, chmodSync, readFileSync, statSync, writeFileSync } = require("node:fs");
 const { join } = require("node:path");
 
 const repoRoot = process.cwd();
@@ -14,6 +14,7 @@ const gitDir = join(repoRoot, ".git");
 const hooksDir = join(gitDir, "hooks");
 const source = join(repoRoot, "scripts", "update-build-date.cjs");
 const target = join(hooksDir, "pre-commit");
+const hooksPackageJson = join(hooksDir, "package.json");
 
 function isGitWorktreeOrRepo(dir) {
   try {
@@ -47,6 +48,9 @@ if (existsSync(target)) {
 }
 
 copyFileSync(source, target);
+
+// Force Node to treat the extensionless hook as CommonJS despite repo "type": "module".
+writeFileSync(hooksPackageJson, JSON.stringify({ type: "commonjs" }) + "\n", "utf-8");
 
 if (process.platform !== "win32") {
   chmodSync(target, 0o755);
