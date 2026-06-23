@@ -8,6 +8,7 @@ import { loadConfig, type AutoForkConfig } from "./config.js";
 import { getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
 import type { AutoForkDetails, ForkResult, StageProfile } from "./types.js";
 import { memoryTopicCount } from "./memory.js";
+import { BUILD_DATE } from "./build-date.js";
 
 export const AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
 export const DEFAULT_SIGNATURE = "whatley.xyz";
@@ -273,7 +274,7 @@ function computeCdevVersion(): string {
 const _cdevVersion = computeCdevVersion();
 
 export function getCdevVersion(_cwd?: string): string {
-  return _cdevVersion;
+  return `${_cdevVersion} · ${BUILD_DATE}`;
 }
 
 export function resolveSignature(config: AutoForkConfig): string {
