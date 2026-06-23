@@ -3,7 +3,7 @@ import { parseStage1Findings, parseStage2Report } from "./json-extract.js";
 import { runStageWithRetry, sanitizeSessionJsonl } from "./fork-stage.js";
 import { getFinalAssistantText } from "./runner-events.js";
 import { runCdevReview } from "./review.js";
-import { withAuditGuard, formatCost, estimateForkCost, getSessionForkCost } from "./extension-context.js";
+import { withAuditGuard, formatCost, estimateForkCost, getSessionForkCost, recordForkCost } from "./extension-context.js";
 import { saveSession } from "./history.js";
 import { writeReportFile } from "./report.js";
 import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, AutoForkConfig, YoloConfig, ConfidenceGateConfig } from "./types.js";
@@ -191,7 +191,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     }
   }
 
-  if (stage1Result.exitCode > 0 && !getFinalAssistantText(stage1Result.messages)) {
+  if (stage1Result.exitCode > 0 && !getFinalAssistantText(stage1Result.messages) && !stage1Findings) {
     return {
       result: {
         ...stage1Result,
@@ -208,9 +208,6 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       task,
       stopReason: "quick",
     };
-    if (stage1Findings) {
-      quickResult.messages = [...stage1Result.messages];
-    }
     return { result: quickResult, details };
   }
 
@@ -464,7 +461,7 @@ export function mergeStage1Findings(a: Stage1Findings, b: Stage1Findings): Stage
       filesInspected: Math.max(a.coverage.filesInspected, b.coverage.filesInspected),
       filesCited: Math.max(a.coverage.filesCited, b.coverage.filesCited),
       commandsRun: Math.max(a.coverage.commandsRun, b.coverage.commandsRun),
-      unreadLikelyFiles: Math.min(a.coverage.unreadLikelyFiles ?? 0, b.coverage.unreadLikelyFiles ?? 0),
+      unreadLikelyFiles: Math.max(a.coverage.unreadLikelyFiles ?? 0, b.coverage.unreadLikelyFiles ?? 0),
     };
   } else if (a.coverage || b.coverage) {
     merged.coverage = a.coverage ?? b.coverage;
@@ -582,6 +579,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
     acc.cost += usage.cost || 0;
     acc.turns += usage.turns || 0;
     acc.contextTokens = Math.max(acc.contextTokens, usage.contextTokens || 0);
+    recordForkCost(cwd, usage.cost || 0);
   }
 
   const totalUsage: UsageStats = emptyUsage();

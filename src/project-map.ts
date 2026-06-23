@@ -8,6 +8,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { parse as parseToml } from "smol-toml";
 
 export interface ProjectMap {
   project: {
@@ -244,6 +245,30 @@ function detectEnvFiles(cwd: string): string[] {
   return files;
 }
 
+function isRecordString(value: unknown): value is Record<string, string> {
+  if (typeof value !== "object" || value === null) return false;
+  for (const v of Object.values(value)) {
+    if (typeof v !== "string") return false;
+  }
+  return true;
+}
+
+function packageJsonDeps(pkgJson: Record<string, unknown> | null): Record<string, string> {
+  if (!pkgJson) return {};
+  const runtime = pkgJson.dependencies;
+  const dev = pkgJson.devDependencies;
+  return {
+    ...(isRecordString(runtime) ? runtime : {}),
+    ...(isRecordString(dev) ? dev : {}),
+  };
+}
+
+function packageJsonScripts(pkgJson: Record<string, unknown> | null): Record<string, string> {
+  if (!pkgJson) return {};
+  const scripts = pkgJson.scripts;
+  return isRecordString(scripts) ? scripts : {};
+}
+
 function detectCommands(cwd: string, pkgManager: string[], languages: string[]): {
   build: string[];
   test: string[];
@@ -256,7 +281,7 @@ function detectCommands(cwd: string, pkgManager: string[], languages: string[]):
   const run: string[] = [];
   const lint: string[] = [];
   const pkgJson = readJsonSafe(join(cwd, "package.json"));
-  const scripts = (pkgJson?.scripts as Record<string, string>) || {};
+  const scripts = packageJsonScripts(pkgJson);
 
   if (pkgManager.includes("npm") || pkgManager.includes("pnpm") || pkgManager.includes("yarn") || pkgManager.includes("bun")) {
     if (scripts.build) build.push("npm run build");
@@ -272,7 +297,8 @@ function detectCommands(cwd: string, pkgManager: string[], languages: string[]):
     lint.push("flutter analyze");
   }
 
-  if (languages.includes("Java") || languages.includes("Kotlin")) {
+  const hasGradle = existsSync(join(cwd, "build.gradle")) || existsSync(join(cwd, "build.gradle.kts")) || existsSync(join(cwd, "settings.gradle")) || existsSync(join(cwd, "settings.gradle.kts"));
+  if ((languages.includes("Java") || languages.includes("Kotlin")) && hasGradle) {
     build.push("./gradlew build");
     test.push("./gradlew test");
     run.push("./gradlew bootRun");
@@ -332,10 +358,7 @@ function detectFrameworks(cwd: string, languages: string[]): {
 
   if (languages.includes("TypeScript") || languages.includes("JavaScript")) {
     const pkgJson = readJsonSafe(join(cwd, "package.json"));
-    const deps: Record<string, string> = {
-      ...((pkgJson?.dependencies as Record<string, string>) || {}),
-      ...((pkgJson?.devDependencies as Record<string, string>) || {}),
-    };
+    const deps = packageJsonDeps(pkgJson);
     const fwMap: Record<string, [string[], string[]]> = {
       NestJS: [["@nestjs/core"], backend],
       "Next.js": [["next"], frontend],
@@ -380,10 +403,7 @@ function detectFromPackageJson(cwd: string): {
   monorepo: string[];
 } {
   const pkgJson = readJsonSafe(join(cwd, "package.json"));
-  const deps: Record<string, string> = {
-    ...((pkgJson?.dependencies as Record<string, string>) || {}),
-    ...((pkgJson?.devDependencies as Record<string, string>) || {}),
-  };
+  const deps = packageJsonDeps(pkgJson);
 
   const detect = (patterns: Record<string, string>): string[] => {
     const found: string[] = [];
@@ -443,10 +463,12 @@ function extractTopDependencies(cwd: string, languages: string[]): Record<string
 
   const pkgJson = readJsonSafe(join(cwd, "package.json"));
   if (pkgJson) {
-    const runtime = Object.keys((pkgJson.dependencies as Record<string, string>) || {});
-    const dev = Object.keys((pkgJson.devDependencies as Record<string, string>) || {});
-    deps.node = runtime.slice(0, 30);
-    if (dev.length) deps.nodeDev = dev.slice(0, 20);
+    const runtime = pkgJson.dependencies;
+    const dev = pkgJson.devDependencies;
+    const runtimeKeys = isRecordString(runtime) ? Object.keys(runtime) : [];
+    const devKeys = isRecordString(dev) ? Object.keys(dev) : [];
+    deps.node = runtimeKeys.slice(0, 30);
+    if (devKeys.length) deps.nodeDev = devKeys.slice(0, 20);
   }
 
   const pubspec = tryReadText(join(cwd, "pubspec.yaml"));
@@ -496,7 +518,7 @@ function extractTopDependencies(cwd: string, languages: string[]): Record<string
   const cargo = tryReadText(join(cwd, "Cargo.toml"));
   if (cargo && languages.includes("Rust")) {
     try {
-      const parsed = parseYaml(cargo) as { dependencies?: Record<string, unknown> };
+      const parsed = parseToml(cargo) as { dependencies?: Record<string, unknown> };
       if (parsed.dependencies) deps.rust = Object.keys(parsed.dependencies).slice(0, 30);
     } catch { /* ignore */ }
   }
@@ -513,8 +535,11 @@ function extractTopDependencies(cwd: string, languages: string[]): Record<string
   const pyproject = tryReadText(join(cwd, "pyproject.toml"));
   if (pyproject && languages.includes("Python")) {
     try {
-      const parsed = parseYaml(pyproject) as { dependencies?: Record<string, string>, "dev-dependencies"?: Record<string, string> };
-      if (parsed.dependencies) deps.python = Object.keys(parsed.dependencies).slice(0, 30);
+      const parsed = parseToml(pyproject) as { project?: { dependencies?: string[] }; dependencies?: Record<string, string>; "dev-dependencies"?: Record<string, string> };
+      const pyDeps: string[] = [];
+      if (Array.isArray(parsed.project?.dependencies)) pyDeps.push(...parsed.project.dependencies);
+      if (parsed.dependencies) pyDeps.push(...Object.keys(parsed.dependencies));
+      if (pyDeps.length) deps.python = pyDeps.slice(0, 30);
     } catch { /* ignore */ }
   }
 
@@ -678,7 +703,7 @@ function detectWorkspaces(cwd: string): { packages: string[] } | undefined {
   return packages.length ? { packages: Array.from(new Set(packages)) } : undefined;
 }
 
-function detectDatabases(cwd: string, languages: string[]): string[] {
+function detectDatabases(cwd: string, languages: string[], pythonDeps?: string[]): string[] {
   const found: string[] = [];
   const dc = tryReadText(join(cwd, "docker-compose.yml")) || tryReadText(join(cwd, "docker-compose.yaml")) || "";
   if (dc.includes("postgres") || dc.includes("postgresql")) found.push("PostgreSQL");
@@ -702,15 +727,25 @@ function detectDatabases(cwd: string, languages: string[]): string[] {
     if (prisma.includes("mongodb")) found.push("MongoDB");
   }
 
+  if (languages.includes("Python")) {
+    const allPythonDeps = new Set(pythonDeps ?? []);
+    const depText = Array.from(allPythonDeps).join("\n").toLowerCase();
+    if (depText.includes("psycopg") || (depText.includes("sqlalchemy") && depText.includes("postgresql"))) found.push("PostgreSQL");
+    if (depText.includes("pymongo") || depText.includes("motor")) found.push("MongoDB");
+    if (depText.includes("pymysql") || depText.includes("mysql-connector")) found.push("MySQL");
+    if (depText.includes("redis") || depText.includes("aioredis")) found.push("Redis");
+    if (depText.includes("sqlite")) found.push("SQLite");
+  }
+
   return Array.from(new Set(found));
 }
 
 function inferType(languages: string[], framework: string[]): string {
   if (framework.includes("Flutter")) return "flutter-mobile";
   if (framework.includes("Spring Boot")) return "spring-boot-backend";
+  if (framework.includes("Next.js") && framework.includes("NestJS")) return "fullstack-web";
   if (framework.includes("NestJS") || framework.includes("Express") || framework.includes("Fastify")) return "node-backend";
   if (framework.includes("Next.js") || framework.includes("React") || framework.includes("Vue") || framework.includes("Angular")) return "web-frontend";
-  if (framework.includes("Next.js") && framework.includes("NestJS")) return "fullstack-web";
   if (languages.includes("Python")) return "python-backend";
   if (languages.includes("Go")) return "go-backend";
   if (languages.includes("Rust")) return "rust-cli";
@@ -789,7 +824,8 @@ export function generateProjectMap(cwd: string): ProjectMap {
   const packageManager = detectPackageManagers(cwd);
   const { framework, backend, frontend, mobile, vite } = detectFrameworks(cwd, languages);
   const pkgData = detectFromPackageJson(cwd);
-  const db = detectDatabases(cwd, languages);
+  const dependencies = extractTopDependencies(cwd, languages);
+  const db = detectDatabases(cwd, languages, dependencies.python);
   const entryPoints = detectEntryPoints(cwd, languages);
   const sourceRoots = detectSourceRoots(cwd, languages);
   const testRoots = detectTestRoots(cwd);
@@ -799,7 +835,6 @@ export function generateProjectMap(cwd: string): ProjectMap {
   const commands = detectCommands(cwd, packageManager, languages);
   const conventions = inferConventions(cwd, languages, framework);
   const architecture = inferArchitecture(framework, languages);
-  const dependencies = extractTopDependencies(cwd, languages);
   const tree = buildBoundedTree(cwd, sourceRoots, 40);
   const keyFiles = detectKeyFiles(cwd, entryPoints, configFiles);
   const routes = detectRoutes(cwd, framework);
@@ -808,16 +843,21 @@ export function generateProjectMap(cwd: string): ProjectMap {
   if (vite && !pkgData.build.includes("Vite")) pkgData.build.push("Vite");
 
   const pkgJson = readJsonSafe(join(cwd, "package.json"));
-  const pubspec = tryReadText(join(cwd, "pubspec.yaml"));
+  const pubspecText = tryReadText(join(cwd, "pubspec.yaml"));
+  const pubspec = pubspecText ? parseYaml(pubspecText) as Record<string, unknown> : null;
   const gradle = tryReadText(join(cwd, "build.gradle")) || tryReadText(join(cwd, "build.gradle.kts"));
+  const cargoText = tryReadText(join(cwd, "Cargo.toml"));
+  const cargo = cargoText ? parseToml(cargoText) as { package?: { name?: string } } : null;
+  const goMod = tryReadText(join(cwd, "go.mod"));
+  const pom = tryReadText(join(cwd, "pom.xml"));
 
   const projectName =
-    (pkgJson?.name as string) ||
-    (pubspec && parseYaml(pubspec)?.name) ||
-    (tryReadText(join(cwd, "Cargo.toml")) && parseYaml(tryReadText(join(cwd, "Cargo.toml")) as string)?.package?.name) ||
-    (tryReadText(join(cwd, "go.mod"))?.match(/^module\s+(\S+)/m)?.[1]) ||
+    (typeof pkgJson?.name === "string" ? pkgJson.name : "") ||
+    (typeof pubspec?.name === "string" ? pubspec.name : "") ||
+    cargo?.package?.name ||
+    goMod?.match(/^module\s+(\S+)/m)?.[1] ||
     (gradle?.match(/rootProject\.name\s*=\s*["']([^"']+)["']/)?.[1]) ||
-    (tryReadText(join(cwd, "pom.xml"))?.match(/<artifactId>([^<]+)<\/artifactId>/)?.[1]) ||
+    pom?.match(/<artifactId>([^<]+)<\/artifactId>/)?.[1] ||
     "unknown";
 
   return {
@@ -876,12 +916,27 @@ export function generateProjectMap(cwd: string): ProjectMap {
   };
 }
 
+function isValidProjectMap(value: unknown): value is ProjectMap {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.project !== "object" || v.project === null) return false;
+  const project = v.project as Record<string, unknown>;
+  if (typeof project.name !== "string" || typeof project.type !== "string" || !Array.isArray(project.languages)) return false;
+  if (typeof v.stack !== "object" || v.stack === null) return false;
+  if (typeof v.structure !== "object" || v.structure === null) return false;
+  if (typeof v.config !== "object" || v.config === null) return false;
+  if (typeof v.architecture !== "object" || v.architecture === null) return false;
+  if (typeof v.dependencies !== "object" || v.dependencies === null) return false;
+  if (typeof v.files !== "object" || v.files === null) return false;
+  return true;
+}
+
 export function loadProjectMap(cwd: string): ProjectMap | null {
   const path = getMapPath(cwd);
   if (!existsSync(path)) return null;
   try {
-    const parsed = parseYaml(readFileSync(path, "utf-8")) as ProjectMap;
-    if (parsed && typeof parsed.project === "object") return parsed;
+    const parsed = parseYaml(readFileSync(path, "utf-8"));
+    if (isValidProjectMap(parsed)) return parsed;
     return null;
   } catch {
     return null;

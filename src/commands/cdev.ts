@@ -475,7 +475,13 @@ export function registerCdevCommand(
           ]
         );
         if (!choice) return;
-        if (choice.startsWith("→")) return;
+        if (choice.startsWith("→")) {
+          const rest = trimmed.slice(firstWord.length).trim();
+          const newCmd = rest ? `/cdev ${fuzzy} ${rest}` : `/cdev ${fuzzy}`;
+          ctx.ui.notify(`Running ${newCmd}...`, "info");
+          pi.sendUserMessage(newCmd, { triggerTurn: true, deliverAs: "steer" });
+          return;
+        }
       }
 
       // Not a subcommand → treat as task
@@ -538,6 +544,8 @@ export function registerLifecycleHandlers(_pi: ExtensionAPI, ctx: ExtensionConte
         }
       } catch { /* svn not available */ }
     }
-    try { mkdirSync(join(ctx.cwd, ".pi"), { recursive: true }); writeFileSync(sentinelPath, "", "utf-8"); } catch { /* ignore */ }
+    if (!warned) {
+      try { mkdirSync(join(ctx.cwd, ".pi"), { recursive: true }); writeFileSync(sentinelPath, "", "utf-8"); } catch { /* ignore */ }
+    }
   }
 }

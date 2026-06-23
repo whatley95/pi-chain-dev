@@ -229,7 +229,8 @@ export function buildFileReviewPrompt(
         const truncated = content.length > 3000
           ? content.slice(0, 3000) + "\n\n... (truncated, full file is longer)"
           : content;
-        return `### ${f}\n\`\`\`\n${truncated}\n\`\`\``;
+        const safe = truncated.replace(/```/g, "` ` `");
+        return `### ${f}\n\`\`\`\n${safe}\n\`\`\``;
       }).join("\n\n")
     : "(no referenced files found in the report)";
 
