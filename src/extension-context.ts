@@ -3,6 +3,7 @@ import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { stableStringify } from "./stable-stringify.js";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type AutoForkConfig } from "./config.js";
 import { getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
@@ -224,14 +225,6 @@ function hashSessionEntries(entries: unknown[]): string {
   const sample = entries.slice(-50);
   const hash = createHash("sha256").update(String(entries.length)).update(stableStringify(sample)).digest("hex").slice(0, 16);
   return hash;
-}
-
-function stableStringify(value: unknown): string {
-  if (value === undefined) return "undefined";
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(",")}}`;
 }
 
 export function withAuditGuard(t: string): string {

@@ -351,13 +351,13 @@ export async function executeCdevTool(
           body: reviewText || "(no review output)",
         });
 
-      saveSession(ctx.cwd, `review diff ${diffSpec}`, true, startTime, details, result);
-      if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
-      const diffReviewCost = result.usage?.cost ?? 0;
-      recordForkCost(ctx.cwd, diffReviewCost);
-      maybeNotifyCostAlert(ctx, config);
-      maybeWarnSessionSize(ctx);
-      if (config.memory) {
+        saveSession(ctx.cwd, `review diff ${diffSpec}`, true, startTime, details, result);
+        if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
+        const diffReviewCost = result.usage?.cost ?? 0;
+        recordForkCost(ctx.cwd, diffReviewCost);
+        maybeNotifyCostAlert(ctx, config);
+        maybeWarnSessionSize(ctx);
+        if (config.memory) {
           indexFindingsAsync({
             task: `review diff ${diffSpec}`,
             resultText: reviewText || "",
