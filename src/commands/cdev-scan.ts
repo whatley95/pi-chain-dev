@@ -35,7 +35,7 @@ function savePrompts(cwd: string, prompts: { explore: string; synthesize: string
   writeProjectSetting(cwd, "promptsEnabled", true);
 }
 
-export async function handleScan(args: string, ctx: ExtensionContext, config: AutoForkConfig, updatePromptsStatus: (ctx: ExtensionContext) => void): Promise<boolean> {
+export async function handleScan(args: string, ctx: ExtensionContext, config: AutoForkConfig, updateAutoStatus: (ctx: ExtensionContext) => void): Promise<boolean> {
   const trimmed = args.trim();
 
   if (trimmed === "scan deep") {
@@ -106,10 +106,10 @@ export async function handleScan(args: string, ctx: ExtensionContext, config: Au
       savePrompts(ctx.cwd, { explore, synthesize, review });
 
       ctx.ui.notify(
-        `Deep scan complete!\nScout: ${scanDetails.stage1?.model || "?"}\nForge: ${scanDetails.stage2?.model || "?"}\n\nPrompts saved to .pi/settings.json\nToggle: /cdev prompts on|off`,
+        `Deep scan complete!\nScout: ${scanDetails.stage1?.model || "?"}\nForge: ${scanDetails.stage2?.model || "?"}\n\nUse these prompts with:\n  /cdev prompts on|off`,
         "info"
       );
-      updatePromptsStatus(ctx);
+      updateAutoStatus(ctx);
     } catch (err) {
       logError(ctx.cwd, "deep-scan", err);
       ctx.ui.notify(`Deep scan failed: ${err instanceof Error ? err.message : String(err)}`, "error");
@@ -128,7 +128,7 @@ export async function handleScan(args: string, ctx: ExtensionContext, config: Au
         review: result.prompts.review ?? "",
       });
       ctx.ui.notify(report, "info");
-      updatePromptsStatus(ctx);
+      updateAutoStatus(ctx);
     } catch (err) {
       logError(ctx.cwd, "template-scan", err);
       ctx.ui.notify(`Scan failed: ${err instanceof Error ? err.message : String(err)}`, "error");

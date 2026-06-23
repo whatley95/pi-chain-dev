@@ -168,7 +168,7 @@ export function computeReportDiff(oldText: string, newText: string): { added: st
     text
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.startsWith("- [ ]") && !line.startsWith("- [x]"));
+      .filter((line) => line.length > 0 && !line.startsWith("- [ ]") && !/^- \[[xX]\]/.test(line));
 
   const oldLines = new Set(normalize(oldText));
   const newLines = new Set(normalize(newText));

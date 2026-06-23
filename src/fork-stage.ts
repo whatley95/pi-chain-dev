@@ -99,7 +99,7 @@ const MAX_COMMAND_LINE_LENGTH = process.platform === "win32" ? 30000 : 200000;
 function redactSensitiveContent(text: string): string {
   if (!text) return text;
   let redacted = text;
-  redacted = redacted.replace(/\b(sk-[a-zA-Z0-9_]{20,})\b/g, "[REDACTED_API_KEY]");
+  redacted = redacted.replace(/\b(sk-[a-zA-Z0-9_-]{20,})\b/g, "[REDACTED_API_KEY]");
   redacted = redacted.replace(/\b([a-f0-9]{40,})\b/gi, "[REDACTED_HEX_KEY]");
   redacted = redacted.replace(/\b([A-Za-z0-9+/]{40,}={0,2})\b/g, "[REDACTED_B64_KEY]");
   redacted = redacted.replace(/(--api-key\s+)\S+/gi, "$1[REDACTED]");
@@ -442,7 +442,10 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
       result.stderr += chunk.toString();
     });
 
-    proc.on("close", (code) => settle(code ?? 0));
+    proc.on("close", (code, signal) => {
+      const effectiveCode = code ?? (signal ? 1 : 0);
+      settle(effectiveCode);
+    });
 
     proc.on("error", (err) => {
       if (!settled) {

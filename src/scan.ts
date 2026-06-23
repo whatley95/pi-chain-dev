@@ -383,8 +383,8 @@ export function formatScanReport(result: ScanResult): string {
   lines.push(`Synthesize: ${prompts.synthesize?.substring(0, 70)}...`);
   lines.push(`Review:     ${prompts.review?.substring(0, 70)}...`);
   lines.push("");
-  lines.push("✓ Saved to .pi/settings.json");
-  lines.push("  Toggle:  /cdev prompts on  |  /cdev prompts off");
+  lines.push("Use these prompts with:");
+  lines.push("  /cdev prompts on  |  /cdev prompts off");
 
   return lines.join("\n");
 }

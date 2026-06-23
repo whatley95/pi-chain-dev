@@ -371,7 +371,7 @@ export async function executeCdevTool(
         const isError = result.exitCode > 0 && !reviewText;
         const reviewOutput = formatForkResultOutput(result, details);
         const actionNote = isError
-          ? `\n\n---\n⚠️ Diff review found issues. Report saved at ${reportRelPath}`
+          ? `\n\n---\n⚠️ Diff review failed. Report saved at ${reportRelPath}`
           : `\n\n---\n✅ Diff review complete. Report saved at ${reportRelPath}`;
 
         return {
@@ -687,7 +687,7 @@ export async function executeCdevTool(
         task: p.task,
         resultText: getFinalAssistantText(result.messages) || "",
         stage1Model: config.stage1.id,
-        stage2Model: p.quick || isPlan ? undefined : config.stage2.id,
+        stage2Model: p.quick ? undefined : config.stage2.id,
         isReview: false,
         quick: p.quick ?? false,
         cost: result.usage?.cost ?? 0,

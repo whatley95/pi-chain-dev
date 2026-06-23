@@ -39,10 +39,6 @@ export default function (pi: ExtensionAPI) {
     updateForkCostStatus(ctx);
   }
 
-  function updatePromptsStatus(ctx: ExtensionContext): void {
-    updateForkCostStatus(ctx);
-  }
-
   pi.on("session_start", async (_event, ctx) => {
     try {
       updateForkCostStatus(ctx);
@@ -154,7 +150,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   // ── Register /cdev command ───────────────────────────────
-  registerCdevCommand(pi, resetAutoTurnCounter, updateAutoStatus, updatePromptsStatus);
+  registerCdevCommand(pi, resetAutoTurnCounter, updateAutoStatus);
 
   // ── Register /cdev-model command ─────────────────────────
   pi.registerCommand("cdev-model", {

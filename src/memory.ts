@@ -20,6 +20,7 @@ import type { CdevMemory, CdevTopic, CdevFindingRecord } from "./types.js";
 import { PROMPT_VERSION } from "./prompt-version.js";
 import { formatCost } from "./extension-context.js";
 import { logWarn, logError } from "./logger.js";
+import { isPathUnderCwd } from "./path-guards.js";
 
 // ── Storage ──────────────────────────────────────────────
 
@@ -32,14 +33,59 @@ function ensureDir(cwd: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
+function isValidFinding(value: unknown): value is CdevFindingRecord {
+  if (typeof value !== "object" || value === null) return false;
+  const f = value as Record<string, unknown>;
+  if (typeof f.text !== "string") return false;
+  if (typeof f.timestamp !== "number") return false;
+  if (typeof f.stage !== "string" || !["stage1", "stage2", "review"].includes(f.stage)) return false;
+  if (typeof f.models !== "string") return false;
+  if (typeof f.cost !== "number") return false;
+  if (f.promptVersion !== undefined && typeof f.promptVersion !== "string") return false;
+  if (f.fileFingerprints !== undefined) {
+    if (typeof f.fileFingerprints !== "object" || f.fileFingerprints === null) return false;
+    for (const v of Object.values(f.fileFingerprints)) {
+      if (typeof v !== "string") return false;
+    }
+  }
+  return true;
+}
+
+function isValidTopic(value: unknown): value is CdevTopic {
+  if (typeof value !== "object" || value === null) return false;
+  const t = value as Record<string, unknown>;
+  if (typeof t.name !== "string") return false;
+  if (!Array.isArray(t.findings)) return false;
+  for (const f of t.findings) {
+    if (!isValidFinding(f)) return false;
+  }
+  if (typeof t.forkCount !== "number") return false;
+  if (typeof t.firstSeen !== "number") return false;
+  if (typeof t.lastSeen !== "number") return false;
+  if (!Array.isArray(t.files)) return false;
+  for (const f of t.files) {
+    if (typeof f !== "string") return false;
+  }
+  return true;
+}
+
+function isValidMemory(value: unknown): value is CdevMemory {
+  if (typeof value !== "object" || value === null) return false;
+  const m = value as Record<string, unknown>;
+  if (m.version !== 1) return false;
+  if (typeof m.topics !== "object" || m.topics === null) return false;
+  for (const topic of Object.values(m.topics)) {
+    if (!isValidTopic(topic)) return false;
+  }
+  return true;
+}
+
 export function loadMemory(cwd: string): CdevMemory {
   const path = getMemoryPath(cwd);
   if (!existsSync(path)) return { version: 1, topics: {} };
   try {
     const raw = JSON.parse(readFileSync(path, "utf-8"));
-    if (raw && raw.version === 1 && raw.topics) {
-      return raw as CdevMemory;
-    }
+    if (isValidMemory(raw)) return raw;
     logWarn(cwd, "loadMemory", "memory.json had unexpected shape; starting fresh");
     return { version: 1, topics: {} };
   } catch (err) {
@@ -66,7 +112,7 @@ function saveMemory(cwd: string, memory: CdevMemory): void {
       writeFileSync(tmpPath, content, "utf-8");
       renameSync(tmpPath, path);
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
+      const code = err && typeof err === "object" ? (err as NodeJS.ErrnoException).code : undefined;
       if (code === "EXDEV") {
         // Cross-device temp: copy then remove temp.
         try {
@@ -145,6 +191,7 @@ export function extractFilePaths(text: string, cwd: string): string[] {
       if (!raw) continue;
 
       const resolved = join(cwd, raw);
+      if (!isPathUnderCwd(cwd, resolved)) continue;
 
       if (!seen.has(resolved)) {
         seen.add(resolved);
@@ -248,7 +295,9 @@ function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
   // Compute file fingerprints for existing files
   const fingerprints: Record<string, string> = {};
   for (const fp of filePaths.slice(0, 20)) { // cap at 20 files
-    const hash = fileFingerprint(join(cwd, fp));
+    const full = join(cwd, fp);
+    if (!isPathUnderCwd(cwd, full)) continue;
+    const hash = fileFingerprint(full);
     if (hash) fingerprints[fp] = hash;
   }
 
@@ -464,7 +513,7 @@ export function formatTopicDetail(topic: CdevTopic, cwd: string): string {
 }
 
 function formatTimeAgo(ts: number): string {
-  const seconds = Math.floor((Date.now() - ts) / 1000);
+  const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;

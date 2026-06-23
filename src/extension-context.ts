@@ -70,6 +70,7 @@ export function resetSessionForkCost(cwd: string): void {
 }
 
 export function formatCost(cost: number): string {
+  if (!Number.isFinite(cost)) return "$?";
   return `$${cost.toFixed(4)}`;
 }
 
@@ -153,7 +154,7 @@ function lookupModelPrice(modelId: string): { input: number; output: number } | 
   const normalized = modelId.toLowerCase();
   if (MODEL_PRICES[normalized]) return MODEL_PRICES[normalized];
   for (const [key, price] of Object.entries(MODEL_PRICES)) {
-    if (normalized.includes(key) || key.includes(normalized)) return price;
+    if (normalized === key) return price;
   }
   return undefined;
 }
@@ -282,17 +283,18 @@ export interface SessionSnapshotSource {
 }
 
 export function buildSessionSnapshotJsonl(sessionManager: SessionSnapshotSource): string | null {
-  const header = sessionManager.getHeader();
-  if (!header || typeof header !== "object") return null;
-  const branchEntries = sessionManager.getBranch();
-  const lines: string[] = [];
   try {
+    const header = sessionManager.getHeader();
+    if (!header || typeof header !== "object") return null;
+    const branchEntries = sessionManager.getBranch();
+    if (!Array.isArray(branchEntries)) return null;
+    const lines: string[] = [];
     lines.push(JSON.stringify(header));
     for (const entry of branchEntries) lines.push(JSON.stringify(entry));
+    return `${lines.join("\n")}\n`;
   } catch {
     return null;
   }
-  return `${lines.join("\n")}\n`;
 }
 
 /** Estimate the number of messages in the current Pi session. Read-only. */
@@ -386,57 +388,61 @@ export function formatForkResultOutput(result: ForkResult, details: AutoForkDeta
 }
 
 export function updateForkCostStatus(ctx: ExtensionContext): void {
-  const config = loadConfig(ctx.cwd);
-  if (!config.costFooter) {
-    ctx.ui.setStatus(FORK_COST_STATUS_KEY, undefined);
-    return;
-  }
+  try {
+    const config = loadConfig(ctx.cwd);
+    if (!config.costFooter) {
+      ctx.ui.setStatus(FORK_COST_STATUS_KEY, undefined);
+      return;
+    }
 
-  const entries = ctx.sessionManager.getEntries();
-  const cacheKey = ctx.cwd;
-  const entriesHash = hashSessionEntries(entries);
-  const cached = _costCache.get(cacheKey);
-  let totalCost: number;
-  if (cached && cached.key === entriesHash) {
-    totalCost = cached.totalCost;
-  } else {
-    totalCost = 0;
-    for (const entry of entries) {
-      if (entry && typeof entry === "object" && (entry as Record<string, unknown>).type === "message") {
-        const message = (entry as Record<string, unknown>).message as Record<string, unknown> | undefined;
-        if (message?.role === "toolResult" && message?.toolName === "cdev") {
-          const details = message.details as AutoForkDetails | undefined;
-          if (details?.stage1?.usage?.cost) totalCost += details.stage1.usage.cost;
-          if (details?.stage2?.usage?.cost) totalCost += details.stage2.usage.cost;
+    const entries = ctx.sessionManager.getEntries();
+    const cacheKey = ctx.cwd;
+    const entriesHash = hashSessionEntries(entries);
+    const cached = _costCache.get(cacheKey);
+    let totalCost: number;
+    if (cached && cached.key === entriesHash) {
+      totalCost = cached.totalCost;
+    } else {
+      totalCost = 0;
+      for (const entry of entries) {
+        if (entry && typeof entry === "object" && (entry as Record<string, unknown>).type === "message") {
+          const message = (entry as Record<string, unknown>).message as Record<string, unknown> | undefined;
+          if (message?.role === "toolResult" && message?.toolName === "cdev") {
+            const details = message.details as AutoForkDetails | undefined;
+            if (details?.stage1?.usage?.cost) totalCost += details.stage1.usage.cost;
+            if (details?.stage2?.usage?.cost) totalCost += details.stage2.usage.cost;
+          }
         }
       }
+      _costCache.set(cacheKey, { key: entriesHash, totalCost });
     }
-    _costCache.set(cacheKey, { key: entriesHash, totalCost });
-  }
 
-  const segments: string[] = [];
-  if (config.auto) segments.push("⚡");
-  segments.push("cdev");
-  const sessionCost = Math.max(totalCost, getSessionForkCost(ctx.cwd));
-  if (sessionCost > 0) segments.push(formatCost(sessionCost));
-  if ((config.maxSessionCost ?? 0) > 0 && sessionCost > 0) {
-    const percent = Math.round((sessionCost / (config.maxSessionCost ?? 1)) * 100);
-    segments.push(`${percent}% budget`);
-  }
-  if (config.promptsEnabled && (config.prompts?.explore || config.prompts?.review)) segments.push("📋");
-  if (config.memory) {
-    const topicCount = memoryTopicCount(ctx.cwd);
-    if (topicCount > 0) segments.push(`🧠 ${topicCount}`);
-  }
+    const segments: string[] = [];
+    if (config.auto) segments.push("⚡");
+    segments.push("cdev");
+    const sessionCost = Math.max(totalCost, getSessionForkCost(ctx.cwd));
+    if (sessionCost > 0) segments.push(formatCost(sessionCost));
+    if ((config.maxSessionCost ?? 0) > 0 && sessionCost > 0) {
+      const percent = Math.round((sessionCost / (config.maxSessionCost ?? 1)) * 100);
+      segments.push(`${percent}% budget`);
+    }
+    if (config.promptsEnabled && (config.prompts?.explore || config.prompts?.review)) segments.push("📋");
+    if (config.memory) {
+      const topicCount = memoryTopicCount(ctx.cwd);
+      if (topicCount > 0) segments.push(`🧠 ${topicCount}`);
+    }
 
-  if (segments.length <= 1) {
-    ctx.ui.setStatus(FORK_COST_STATUS_KEY, undefined);
+    if (segments.length <= 1) {
+      ctx.ui.setStatus(FORK_COST_STATUS_KEY, undefined);
+      ctx.ui.setStatus("cdev-memory", undefined);
+      return;
+    }
+
+    ctx.ui.setStatus(FORK_COST_STATUS_KEY, ctx.ui.theme.fg("dim", segments.join(" | ")));
     ctx.ui.setStatus("cdev-memory", undefined);
-    return;
+  } catch {
+    ctx.ui.setStatus(FORK_COST_STATUS_KEY, undefined);
   }
-
-  ctx.ui.setStatus(FORK_COST_STATUS_KEY, ctx.ui.theme.fg("dim", segments.join(" | ")));
-  ctx.ui.setStatus("cdev-memory", undefined);
 }
 
 export function logError(cwd: string, context: string, err: unknown): void {

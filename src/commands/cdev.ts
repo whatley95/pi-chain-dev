@@ -29,7 +29,6 @@ export function registerCdevCommand(
   pi: ExtensionAPI,
   resetAutoTurnCounter: () => void,
   updateAutoStatus: (ctx: ExtensionContext) => void,
-  updatePromptsStatus: (ctx: ExtensionContext) => void,
 ): void {
   pi.registerCommand("cdev", {
     description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, verify <task>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off",
@@ -65,7 +64,7 @@ export function registerCdevCommand(
       const config = loadConfig(ctx.cwd);
 
       // ── Subcommands: scan, scan deep ──
-      if (await handleScan(trimmed, ctx, config, updatePromptsStatus)) return;
+      if (await handleScan(trimmed, ctx, config, updateAutoStatus)) return;
 
       // ── Subcommands: map, map refresh, map show ──
       if (await handleMap(trimmed, ctx, config)) return;
@@ -128,7 +127,7 @@ export function registerCdevCommand(
         const enable = trimmed === "prompts on";
         writeAgentSetting("promptsEnabled", enable);
         ctx.ui.notify(`Custom prompts ${enable ? "ON" : "OFF"}`, "info");
-        updatePromptsStatus(ctx);
+        updateAutoStatus(ctx);
         return;
       }
 

@@ -105,6 +105,7 @@ export async function runFileReview(opts: {
   const referencedFiles: Record<string, string> = {};
   const MAX_REF_FILES = 15;
   const MAX_REF_BYTES = 100_000;
+  const MAX_SINGLE_FILE_BYTES = 50_000;
   let totalBytes = 0;
   for (const candidate of filePaths.slice(0, MAX_REF_FILES)) {
     if (totalBytes >= MAX_REF_BYTES) break;
@@ -112,6 +113,11 @@ export async function runFileReview(opts: {
     if (!isPathUnderCwd(cwd, fullPath)) continue;
     if (!fs.existsSync(fullPath)) continue;
     try {
+      const size = fs.statSync(fullPath).size;
+      if (size > MAX_SINGLE_FILE_BYTES) {
+        referencedFiles[candidate] = "(file too large; skipped)";
+        continue;
+      }
       const content = fs.readFileSync(fullPath, "utf-8");
       if (totalBytes + content.length > MAX_REF_BYTES) {
         referencedFiles[candidate] = content.slice(0, MAX_REF_BYTES - totalBytes) + "\n\n... (truncated, file too large)";
