@@ -233,7 +233,8 @@ export function registerCdevCommand(
       // ── Subcommand: yolo on|off ──
       if (trimmed === "yolo on" || trimmed === "yolo off") {
         const enable = trimmed === "yolo on";
-        writeAgentSetting("yolo", { enabled: enable, maxRounds: 3, stopOnPass: true, autoApply: "off" });
+        const currentYolo = normalizeYoloConfig(config.yolo);
+        writeAgentSetting("yolo", { ...currentYolo, enabled: enable });
         ctx.ui.notify(`cdev yolo mode ${enable ? "ON" : "OFF"}`, "info");
         return;
       }

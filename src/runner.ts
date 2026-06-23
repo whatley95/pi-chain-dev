@@ -15,9 +15,10 @@ import { parseInheritedCliArgs } from "./runner-cli.js";
 import { processPiJsonLine, getFinalAssistantText, summarizePiEvent } from "./runner-events.js";
 import { saveSession } from "./history.js";
 import { writeReportFile } from "./report.js";
-import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, Stage2Report, YoloConfig } from "./types.js";
+import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, Stage2Report, YoloConfig, AutoForkConfig } from "./types.js";
 import { emptyUsage, emptyFailedResult, isStage1Findings, isStage2Report } from "./types.js";
 import { formatResultContent, withAuditGuard } from "./extension-context.js";
+import { formatCost, estimateForkCost, getSessionForkCost } from "./extension-context.js";
 
 const SIGKILL_TIMEOUT_MS = 5000;
 
@@ -173,7 +174,8 @@ function sanitizeSessionJsonl(sessionJsonl: string): { jsonl: string; stripped: 
   if (!sessionJsonl || !sessionJsonl.trim()) return { jsonl: sessionJsonl, stripped: 0 };
 
   const rawLines = sessionJsonl.trim().split("\n");
-  if (rawLines.length <= 1) return { jsonl: sessionJsonl, stripped: 0 };
+  // Even a single-line snapshot may contain secrets or system messages.
+  // Treat it the same way as multi-line snapshots so redaction is unconditional.
 
   // Parse each line; unwrap envelope objects that have a .message property.
   // Caches whether the line was an envelope to avoid re-parsing in Pass 1.
@@ -442,9 +444,32 @@ function extractJsonFromText(text: string): string | null {
   // Markdown fenced code block
   const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenceMatch) return fenceMatch[1].trim();
-  // Bare JSON object
-  const objectMatch = trimmed.match(/\{[\s\S]*\}/);
-  if (objectMatch) return objectMatch[0];
+  // Bare JSON object: find the first '{' and balance braces to locate the
+  // matching '}'. This avoids matching from the first '{' to the last '}'
+  // across prose or multiple objects.
+  let start = -1;
+  for (let i = 0; i < trimmed.length; i++) {
+    if (trimmed[i] === "{") { start = i; break; }
+  }
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\") { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") { depth++; continue; }
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) return trimmed.slice(start, i + 1);
+    }
+  }
   return null;
 }
 
@@ -1066,6 +1091,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       if (!usage) return;
       combinedUsage.input += usage.input || 0;
       combinedUsage.output += usage.output || 0;
+      combinedUsage.cacheRead += usage.cacheRead || 0;
+      combinedUsage.cacheWrite += usage.cacheWrite || 0;
       combinedUsage.cost += usage.cost || 0;
       combinedUsage.turns += usage.turns || 0;
       combinedUsage.contextTokens = Math.max(combinedUsage.contextTokens, usage.contextTokens || 0);
@@ -1515,6 +1542,7 @@ export interface YoloLoopResult {
 }
 
 export interface RunYoloLoopOptions extends Omit<RunAutoForkOptions, "onProgress" | "onUpdate"> {
+  config: AutoForkConfig;
   yoloConfig: Required<Omit<YoloConfig, "reviewProfile" | "fixProfile">> & Pick<YoloConfig, "reviewProfile" | "fixProfile">;
   reviewProfile: StageProfile;
   fixProfile: StageProfile;
@@ -1568,6 +1596,20 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
 
   const totalUsage: UsageStats = emptyUsage();
 
+  // Budget helpers for the loop
+  function checkYoloBudget(spentSoFar: number, nextEstimate: number): { allowed: boolean; reason?: string } {
+    const maxForkCost = opts.config.maxForkCost ?? 0;
+    const maxSessionCost = opts.config.maxSessionCost ?? 0;
+    if (maxForkCost > 0 && nextEstimate > maxForkCost) {
+      return { allowed: false, reason: `next fork estimate ${formatCost(nextEstimate)} exceeds maxForkCost ${formatCost(maxForkCost)}` };
+    }
+    const sessionCost = getSessionForkCost(cwd);
+    if (maxSessionCost > 0 && sessionCost + spentSoFar + nextEstimate > maxSessionCost) {
+      return { allowed: false, reason: `YOLO session cost would reach ${formatCost(sessionCost + spentSoFar + nextEstimate)}, exceeding maxSessionCost ${formatCost(maxSessionCost)}` };
+    }
+    return { allowed: true };
+  }
+
   // ── Initial scout + forge ──
   const initialStart = Date.now();
   const { result: initialResult, details: initialDetails } = await runAutoFork({
@@ -1611,6 +1653,27 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
   // ── Review-fix rounds ──
   for (let round = 1; round <= yoloConfig.maxRounds; round++) {
     if (!latestReport) break;
+
+    const reviewEstimate = estimateForkCost({
+      task: buildYoloReviewSnapshot("", latestReport, round),
+      stage1Profile,
+      stage2Profile: reviewProfile,
+      forkSessionSnapshotJsonl,
+    });
+    const reviewBudget = checkYoloBudget(totalUsage.cost, reviewEstimate.cost);
+    if (!reviewBudget.allowed) {
+      finalVerdict = "blocked";
+      rounds.push({
+        round,
+        review: {
+          result: emptyFailedResult(task, `YOLO budget blocked before review round ${round}: ${reviewBudget.reason}`),
+          details: { stage1: null, stage2: null },
+          reportPath: "",
+          verdict: "blocked",
+        },
+      });
+      break;
+    }
 
     const reviewStart = Date.now();
     const reviewSnapshot = buildYoloReviewSnapshot(forkSessionSnapshotJsonl, latestReport, round);
@@ -1664,11 +1727,29 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
 
     if (yoloConfig.autoApply === "off") {
       rounds.push(roundResult);
-      latestReport = reviewText || latestReport;
-      continue;
+      // When not auto-applying fixes, there is nothing more to do.
+      break;
     }
 
     // ── Fix round ──
+    const fixEstimate = estimateForkCost({
+      task: buildYoloFixTask(task, reviewText, round),
+      stage1Profile,
+      stage2Profile: fixProfile,
+      forkSessionSnapshotJsonl,
+    });
+    const fixBudget = checkYoloBudget(totalUsage.cost, fixEstimate.cost);
+    if (!fixBudget.allowed) {
+      roundResult.fix = {
+        result: emptyFailedResult(task, `YOLO budget blocked before fix round ${round}: ${fixBudget.reason}`),
+        details: { stage1: null, stage2: null },
+        reportPath: "",
+      };
+      rounds.push(roundResult);
+      finalVerdict = "blocked";
+      break;
+    }
+
     const fixStart = Date.now();
     const fixModelLabel = fixProfile.thinking
       ? `${fixProfile.provider}:${fixProfile.id} • ${fixProfile.thinking}`

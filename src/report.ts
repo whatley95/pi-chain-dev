@@ -1,10 +1,19 @@
-import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
-import { join, basename } from "node:path";
+import { mkdirSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
+import { join, basename, resolve, relative } from "node:path";
 
 export function sanitizeReportFileName(fileName: string): string {
   // Strip any path separators and parent-directory attempts, keep only a safe basename.
   const base = basename(fileName.replace(/\\/g, "/"));
-  return base.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 120) || "report";
+  const safe = base.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/\.{2,}/g, "-").replace(/^-+|-+$/g, "").slice(0, 120) || "report";
+  // Avoid hidden files (leading dot).
+  return safe.replace(/^\.+/, "-");
+}
+
+function isPathUnderCwd(cwd: string, target: string): boolean {
+  const resolvedCwd = resolve(cwd);
+  const resolvedTarget = resolve(target);
+  const rel = relative(resolvedCwd, resolvedTarget);
+  return !rel.startsWith("..") && !rel.startsWith(".");
 }
 
 export function writeReportFile(opts: {
@@ -28,7 +37,10 @@ export function writeReportFile(opts: {
     const header = reviewer ? `# ${title}\n\n**Date:** ${date}\n**Reviewer:** ${reviewer}\n\n` : `# ${title}\n\n**Date:** ${date}\n\n`;
     writeFileSync(reportPath, `${header}${body}\n`, "utf-8");
     if (appendTo && appendBody) {
-      try { appendFileSync(appendTo, appendBody, "utf-8"); } catch { /* ignore */ }
+      const appendTarget = resolve(cwd, appendTo);
+      if (existsSync(appendTarget) && isPathUnderCwd(cwd, appendTarget)) {
+        try { appendFileSync(appendTarget, appendBody, "utf-8"); } catch { /* ignore */ }
+      }
     }
     written = true;
     return { reportRelPath, written };

@@ -34,12 +34,45 @@ export interface AutoForkParamsType {
   diffSpec?: string;
 }
 
+function validateAutoForkParams(params: Record<string, unknown>): { valid: true; value: AutoForkParamsType } | { valid: false; error: string } {
+  const out: AutoForkParamsType = {};
+  const errors: string[] = [];
+
+  if (params.task !== undefined) {
+    if (typeof params.task !== "string") errors.push("task must be a string");
+    else out.task = params.task;
+  }
+  for (const key of ["review", "quick", "verify", "yolo"] as const) {
+    if (params[key] !== undefined) {
+      if (typeof params[key] !== "boolean") errors.push(`${key} must be a boolean`);
+      else out[key] = params[key];
+    }
+  }
+  for (const key of ["recall", "reviewFile", "diffSpec"] as const) {
+    if (params[key] !== undefined) {
+      if (typeof params[key] !== "string") errors.push(`${key} must be a string`);
+      else out[key] = params[key];
+    }
+  }
+
+  if (errors.length > 0) return { valid: false, error: errors.join("; ") };
+  return { valid: true, value: out };
+}
+
 export async function executeCdevTool(
   params: Record<string, unknown>,
   signal: AbortSignal | undefined,
   ctx: ExtensionContext,
 ): Promise<{ content: Array<{ type: string; text: string }>; details: unknown; isError?: boolean }> {
-  const p = params as AutoForkParamsType;
+  const validation = validateAutoForkParams(params);
+  if (!validation.valid) {
+    return {
+      content: [{ type: "text" as const, text: `cdev error: ${validation.error}` }],
+      details: { stage1: null, stage2: null },
+      isError: true,
+    };
+  }
+  const p = validation.value;
   try {
     const config = loadConfig(ctx.cwd);
     const themedBg = makeThemedBg(ctx, config.themed);
@@ -461,6 +494,7 @@ export async function executeCdevTool(
         stage1Profile: profiles.stage1,
         stage1bProfile: config.stage1b,
         stage2Profile: profiles.stage2,
+        config,
         yoloConfig: yolo,
         reviewProfile,
         fixProfile,

@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
 import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig, YoloConfig } from "./types.js";
+import { normalizeYoloConfig } from "./types.js";
 
 let getAgentDirImpl: () => string;
 try {
@@ -118,6 +119,12 @@ export function loadConfig(cwd: string): AutoForkConfig {
       ...globalConfig.prompts,
       ...projectConfig.prompts,
     },
+    // Deep-merge yolo config so project can toggle enabled without losing global profiles
+    yolo: normalizeYoloConfig({
+      ...DEFAULT_CONFIG.yolo,
+      ...globalConfig.yolo,
+      ...projectConfig.yolo,
+    }),
     // Project-level override wins
     promptsEnabled: projectConfig.promptsEnabled ?? globalConfig.promptsEnabled ?? DEFAULT_CONFIG.promptsEnabled,
     memory: projectConfig.memory ?? globalConfig.memory ?? DEFAULT_CONFIG.memory,
@@ -178,8 +185,8 @@ function readNamespacedConfig(settingsPath: string): Partial<AutoForkConfig> {
     if (typeof config.themed === "boolean") parsed.themed = config.themed;
     if (typeof config.autoVerify === "boolean") parsed.autoVerify = config.autoVerify;
     if (typeof config.signature === "string") parsed.signature = config.signature;
-    if (typeof config.maxForkCost === "number") parsed.maxForkCost = Math.max(0, config.maxForkCost);
-    if (typeof config.maxSessionCost === "number") parsed.maxSessionCost = Math.max(0, config.maxSessionCost);
+    if (typeof config.maxForkCost === "number") parsed.maxForkCost = Math.max(0, Number.isFinite(config.maxForkCost) ? config.maxForkCost : 0);
+    if (typeof config.maxSessionCost === "number") parsed.maxSessionCost = Math.max(0, Number.isFinite(config.maxSessionCost) ? config.maxSessionCost : 0);
 
     // Parse yolo config
     if (config.yolo && typeof config.yolo === "object") {
