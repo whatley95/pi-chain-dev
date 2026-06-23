@@ -427,6 +427,78 @@ describe("buildPiArgs (runner.ts)", () => {
 
 // ── Structured stage 1 findings ──────────────────────────
 
+// ── YOLO config and verdict helpers ──────────────────────
+
+import { normalizeYoloConfig, formatYoloStatus } from "../src/types.js";
+import { parseReviewVerdict } from "../src/runner.js";
+
+describe("normalizeYoloConfig (types.ts)", () => {
+  it("clamps maxRounds to 7", () => {
+    const result = normalizeYoloConfig({ maxRounds: 20 });
+    assert.strictEqual(result.maxRounds, 7);
+  });
+
+  it("clamps maxRounds to at least 1", () => {
+    const result = normalizeYoloConfig({ maxRounds: 0 });
+    assert.strictEqual(result.maxRounds, 1);
+  });
+
+  it("uses defaults when fields are omitted", () => {
+    const result = normalizeYoloConfig();
+    assert.strictEqual(result.enabled, false);
+    assert.strictEqual(result.maxRounds, 3);
+    assert.strictEqual(result.stopOnPass, true);
+    assert.strictEqual(result.autoApply, "off");
+  });
+
+  it("preserves reviewProfile and fixProfile", () => {
+    const reviewProfile = { provider: "openai", id: "gpt-5", thinking: "low" as const };
+    const fixProfile = { provider: "anthropic", id: "claude", thinking: "high" as const };
+    const result = normalizeYoloConfig({ reviewProfile, fixProfile });
+    assert.deepStrictEqual(result.reviewProfile, reviewProfile);
+    assert.deepStrictEqual(result.fixProfile, fixProfile);
+  });
+});
+
+describe("formatYoloStatus (types.ts)", () => {
+  it("returns OFF when disabled", () => {
+    assert.strictEqual(formatYoloStatus({ enabled: false }), "OFF");
+  });
+
+  it("returns formatted status when enabled", () => {
+    const status = formatYoloStatus({ enabled: true, maxRounds: 5, autoApply: "safe" });
+    assert.strictEqual(status, "ON (max 5 rounds, auto-apply safe)");
+  });
+});
+
+describe("parseReviewVerdict (runner.ts)", () => {
+  it("detects pass in ## Result section", () => {
+    assert.strictEqual(parseReviewVerdict("## Result\npass — looks good"), "pass");
+  });
+
+  it("detects needs-work", () => {
+    assert.strictEqual(parseReviewVerdict("## Result\nneeds-work: missing tests"), "needs-work");
+  });
+
+  it("detects blocked", () => {
+    assert.strictEqual(parseReviewVerdict("## Result\nblocked: compile error"), "blocked");
+  });
+
+  it("returns unknown when ## Result is missing", () => {
+    assert.strictEqual(parseReviewVerdict("pass — looks good"), "unknown");
+  });
+
+  it("prioritizes needs-work over pass", () => {
+    assert.strictEqual(parseReviewVerdict("## Result\npass overall but needs-work on edge cases"), "needs-work");
+  });
+
+  it("prioritizes blocked over pass", () => {
+    assert.strictEqual(parseReviewVerdict("## Result\npass but blocked by dependency"), "blocked");
+  });
+});
+
+// ── Structured stage 1 findings ──────────────────────────
+
 import { isStage1Findings } from "../src/types.js";
 import { parseStage1Findings, mergeStage1Findings } from "../src/runner.js";
 

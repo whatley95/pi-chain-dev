@@ -17,6 +17,7 @@ import { handleScan } from "./cdev-scan.js";
 import { handleMemory, memoryTopicCount } from "./cdev-memory.js";
 import { writeAgentSetting, writeProjectSetting } from "../settings-helpers.js";
 import { formatCost } from "../extension-context.js";
+import { normalizeYoloConfig } from "../types.js";
 
 function writeProjectThemed(cwd: string, enable: boolean): void {
   writeProjectSetting(cwd, "themed", enable);
@@ -226,6 +227,37 @@ export function registerCdevCommand(
         return;
       }
 
+      // ── Subcommand: yolo on|off ──
+      if (trimmed === "yolo on" || trimmed === "yolo off") {
+        const enable = trimmed === "yolo on";
+        writeAgentSetting("yolo", { enabled: enable, maxRounds: 3, stopOnPass: true, autoApply: "off" });
+        ctx.ui.notify(`cdev yolo mode ${enable ? "ON" : "OFF"}`, "info");
+        return;
+      }
+
+      // ── Subcommand: yolo usage ──
+      if (trimmed === "yolo") {
+        ctx.ui.notify("Usage: /cdev yolo <task>   Scout + forge, then review-fix loops\n       /cdev yolo on|off    Toggle yolo mode", "info");
+        return;
+      }
+
+      // ── Subcommand: yolo <task> ──
+      if (trimmed.startsWith("yolo ")) {
+        const yoloTask = trimmed.slice(5).trim();
+        if (!yoloTask) {
+          ctx.ui.notify("Usage: /cdev yolo <task>", "warn");
+          return;
+        }
+        const yolo = normalizeYoloConfig(config.yolo);
+        if (!yolo.enabled) {
+          ctx.ui.notify("YOLO mode is disabled. Enable with /cdev yolo on", "warn");
+          return;
+        }
+        ctx.ui.notify(`Queuing YOLO task (max ${yolo.maxRounds} rounds, auto-apply ${yolo.autoApply})...`, "info");
+        pi.sendUserMessage(`Use cdev with yolo=true to: ${yoloTask}`, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
+
       // ── Subcommand: status ──
       if (trimmed === "status" || trimmed === "info") {
         const resolved = resolveStageProfiles(config);
@@ -271,6 +303,8 @@ export function registerCdevCommand(
         lines.push(`  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`);
         lines.push(`  Project memory:   ${config.memory ? "ON" : "OFF"}`);
         lines.push(`  Auto-verify:      ${config.autoVerify ? "✓ ON (scout ×2)" : "OFF (scout ×1)"}`);
+        const yolo = normalizeYoloConfig(config.yolo);
+        lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, auto-apply ${yolo.autoApply})` : "OFF"}`);
         lines.push(`  Session size:     ${sessionSize} message${sessionSize === 1 ? "" : "s"}${sessionSize >= 40 ? "  ⚠️ consider /compact" : ""}`);
         lines.push(`  Session cost:     ${formatCost(sessionCost)}${config.maxSessionCost ? ` / ${formatCost(config.maxSessionCost)}` : ""}${costAlert ? `  ${costAlert.level === "critical" ? "🔴" : "🟡"} ${(costAlert.percent * 100).toFixed(0)}% of budget` : ""}`);
         lines.push(`  Today's cost:     ${formatCost(todayCost)}`);
@@ -303,6 +337,7 @@ export function registerCdevCommand(
           "/cdev <task>           Scout + Forge explore",
           "/cdev quick <task>     Scout only (fast)",
           "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
+          "/cdev yolo <task>     Scout + forge, then review-fix loops",
           "/cdev review [path]    Forge review session/file",
           "/cdev review A..B      Review git/svn diff",
           "/cdev scan [deep]      Generate custom prompts",
@@ -315,7 +350,8 @@ export function registerCdevCommand(
           "/cdev prompts on|off   Toggle custom prompts",
           "/cdev themed on|off    Toggle themed TUI",
           "/cdev auto on|off      Toggle auto-trigger",
-          "/cdev auto-verify on|off  Toggle automatic scout ×2",
+          "/cdev auto-verify on/off  Toggle automatic scout ×2",
+          "/cdev yolo on|off      Toggle YOLO review-fix loops",
         ]);
         return;
       }
@@ -330,6 +366,7 @@ export function registerCdevCommand(
           "Subcommands:",
           "  quick <task>     Scout only (fast findings)",
           "  verify <task>    Scout ×2 + forge (higher accuracy)",
+          "  yolo <task>      Scout + forge, then review-fix loops",
           "  review [path]    Forge review session, file, or diff",
           "  scan [deep]      Generate custom prompts",
           "  history [n]      Past fork sessions",
@@ -342,6 +379,7 @@ export function registerCdevCommand(
           "  themed on|off    Toggle themed TUI",
           "  auto on|off      Toggle auto-trigger",
           "  auto-verify on|off  Toggle automatic scout ×2",
+          "  yolo on|off      Toggle YOLO review-fix loops",
           "",
           "More: /cdev-help  /cdev-model",
         ]);
@@ -349,7 +387,7 @@ export function registerCdevCommand(
       }
 
       // ── Fuzzy match ──
-      const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "help", "clear"];
+      const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "help", "clear", "yolo"];
       const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
       const isSingleWord = !trimmed.includes(" ");
       const fuzzy = subcommands.find(cmd => {

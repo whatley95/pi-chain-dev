@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
-import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig } from "./types.js";
+import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig, YoloConfig } from "./types.js";
 
 let getAgentDirImpl: () => string;
 try {
@@ -46,9 +46,15 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   themed: false,
   autoVerify: true,
   signature: undefined,
-  maxForkCost: 0,
-  maxSessionCost: 0,
-};
+    maxForkCost: 0,
+    maxSessionCost: 0,
+    yolo: {
+      enabled: false,
+      maxRounds: 3,
+      stopOnPass: true,
+      autoApply: "off",
+    },
+  };
 
 function isThinkingLevel(value: unknown): value is ForkThinkingLevel {
   return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value);
@@ -156,6 +162,10 @@ function readNamespacedConfig(settingsPath: string): Partial<AutoForkConfig> {
     const stage2 = parseStageProfile(config.stage2);
     const review = parseStageProfile(config.review);
 
+    const yoloRaw = config.yolo && typeof config.yolo === "object" ? config.yolo as Record<string, unknown> : undefined;
+    const yoloReview = parseStageProfile(yoloRaw?.reviewProfile);
+    const yoloFix = parseStageProfile(yoloRaw?.fixProfile);
+
     if (stage1) parsed.stage1 = stage1;
     if (stage1b) parsed.stage1b = stage1b;
     if (stage2) parsed.stage2 = stage2;
@@ -170,6 +180,21 @@ function readNamespacedConfig(settingsPath: string): Partial<AutoForkConfig> {
     if (typeof config.signature === "string") parsed.signature = config.signature;
     if (typeof config.maxForkCost === "number") parsed.maxForkCost = Math.max(0, config.maxForkCost);
     if (typeof config.maxSessionCost === "number") parsed.maxSessionCost = Math.max(0, config.maxSessionCost);
+
+    // Parse yolo config
+    if (config.yolo && typeof config.yolo === "object") {
+      const yolo = config.yolo as Record<string, unknown>;
+      const parsedYolo: YoloConfig = {};
+      if (typeof yolo.enabled === "boolean") parsedYolo.enabled = yolo.enabled;
+      if (typeof yolo.maxRounds === "number") parsedYolo.maxRounds = yolo.maxRounds;
+      if (typeof yolo.stopOnPass === "boolean") parsedYolo.stopOnPass = yolo.stopOnPass;
+      if (typeof yolo.autoApply === "string" && ["off", "safe", "all"].includes(yolo.autoApply)) {
+        parsedYolo.autoApply = yolo.autoApply as "off" | "safe" | "all";
+      }
+      if (yoloReview) parsedYolo.reviewProfile = yoloReview;
+      if (yoloFix) parsedYolo.fixProfile = yoloFix;
+      parsed.yolo = parsedYolo;
+    }
 
     // Parse prompts
     if (config.prompts && typeof config.prompts === "object") {

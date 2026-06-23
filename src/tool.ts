@@ -1,11 +1,12 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, isAbsolute } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config.js";
-import { runAutoFork, runCdevReview, runFileReview, runDiffReview, formatForkResultOutput, computeReportDiff, formatReportDiff } from "./runner.js";
+import { runAutoFork, runCdevReview, runFileReview, runDiffReview, formatForkResultOutput, computeReportDiff, formatReportDiff, runYoloLoop } from "./runner.js";
+import { writeReportFile } from "./report.js";
 import { getFinalAssistantText } from "./runner-events.js";
-import { emptyFailedResult } from "./types.js";
+import { emptyFailedResult, normalizeYoloConfig } from "./types.js";
 import { saveSession, findPreviousSession } from "./history.js";
 import { indexFindingsAsync, memoryGetTopic, formatTopicDetail, loadMemory, formatMemoryTopics } from "./memory.js";
 import {
@@ -27,38 +28,10 @@ export interface AutoForkParamsType {
   review?: boolean;
   quick?: boolean;
   verify?: boolean;
+  yolo?: boolean;
   recall?: string;
   reviewFile?: string;
   diffSpec?: string;
-}
-
-function writeReportFile(opts: {
-  cwd: string;
-  fileName: string;
-  title: string;
-  reviewer?: string;
-  body: string;
-  appendTo?: string;
-  appendBody?: string;
-}): { reportRelPath: string; written: boolean } {
-  const { cwd, fileName, title, reviewer, body, appendTo, appendBody } = opts;
-  const reportsDir = join(cwd, ".pi", "cdev", "reports");
-  let written = false;
-  try {
-    mkdirSync(reportsDir, { recursive: true });
-    const reportPath = join(reportsDir, fileName);
-    const reportRelPath = `.pi/cdev/reports/${fileName}`;
-    const date = new Date().toISOString().split("T")[0];
-    const header = reviewer ? `# ${title}\n\n**Date:** ${date}\n**Reviewer:** ${reviewer}\n\n` : `# ${title}\n\n**Date:** ${date}\n\n`;
-    writeFileSync(reportPath, `${header}${body}\n`, "utf-8");
-    if (appendTo && appendBody) {
-      try { appendFileSync(appendTo, appendBody, "utf-8"); } catch { /* ignore */ }
-    }
-    written = true;
-    return { reportRelPath, written };
-  } catch {
-    return { reportRelPath: appendTo ?? "", written };
-  }
 }
 
 export async function executeCdevTool(
@@ -411,6 +384,105 @@ export async function executeCdevTool(
 
     const quick = p.quick ?? false;
     const verify = p.verify ?? (config.autoVerify && !p.quick);
+
+    // ── YOLO review-fix loop mode ──
+    if (p.yolo) {
+      if (!p.task) {
+        return {
+          content: [{ type: "text" as const, text: "cdev error: task is required for yolo mode." }],
+          details: { stage1: null, stage2: null },
+          isError: true,
+        };
+      }
+
+      const yolo = normalizeYoloConfig(config.yolo);
+      const yoloEstimate = estimateForkCost({
+        task: p.task,
+        stage1Profile: profiles.stage1,
+        stage2Profile: profiles.stage2,
+        forkSessionSnapshotJsonl: snapshot ?? undefined,
+      });
+      const yoloBudgetCheck = checkCostBudget(config, ctx.cwd, yoloEstimate.cost);
+      if (!yoloBudgetCheck.allowed) {
+        return {
+          content: [{ type: "text" as const, text: `cdev budget error: ${yoloBudgetCheck.reason}\nEstimated initial fork: ~${formatCost(yoloEstimate.cost)}` }],
+          details: { stage1: null, stage2: null },
+          isError: true,
+        };
+      }
+
+      const reviewProfile = yolo.reviewProfile ?? config.review ?? profiles.stage2;
+      const fixProfile = yolo.fixProfile ?? profiles.stage2;
+      if (!reviewProfile.provider || !reviewProfile.id) {
+        return {
+          content: [{ type: "text" as const, text: "cdev yolo error: Review model not configured. Use /cdev-model." }],
+          details: { stage1: null, stage2: null },
+          isError: true,
+        };
+      }
+
+      const onYoloProgress = (stage: "scout" | "forge" | "review" | "fix", model: string, round?: number) => {
+        const roundLabel = round !== undefined ? ` (round ${round})` : "";
+        if (stage === "scout") {
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔍 Scout exploring${roundLabel}…  (${model})`)]);
+        } else if (stage === "forge") {
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge synthesizing${roundLabel}…  (${model})`)]);
+        } else if (stage === "review") {
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔎 Reviewing${roundLabel}…  (${model})`)]);
+        } else {
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔧 Fixing${roundLabel}…  (${model})`)]);
+        }
+      };
+
+      const yoloResult = await runYoloLoop({
+        cwd: ctx.cwd,
+        task: p.task,
+        forkSessionSnapshotJsonl: snapshot,
+        stage1Profile: profiles.stage1,
+        stage1bProfile: config.stage1b,
+        stage2Profile: profiles.stage2,
+        yoloConfig: yolo,
+        reviewProfile,
+        fixProfile,
+        customExplorePrompt: config.promptsEnabled ? config.prompts?.explore : undefined,
+        customSynthesizePrompt: config.promptsEnabled ? config.prompts?.synthesize : undefined,
+        customReviewPrompt: config.promptsEnabled ? config.prompts?.review : undefined,
+        onProgress: onYoloProgress,
+        onUpdate: (update) => {
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", update.activity ?? "working…")]);
+        },
+        extensions: config.extensions,
+        environment: config.environment,
+        offline: config.offline,
+        signal,
+      });
+      ctx.ui.setWidget("cdev-progress", undefined);
+
+      recordForkCost(ctx.cwd, yoloResult.totalCost);
+      maybeNotifyCostAlert(ctx, config);
+      maybeWarnSessionSize(ctx);
+      if (config.memory) {
+        indexFindingsAsync({
+          task: p.task,
+          resultText: getFinalAssistantText(yoloResult.initial.result.messages) || "",
+          stage1Model: config.stage1.id,
+          stage2Model: config.stage2.id,
+          isReview: false,
+          quick: false,
+          cost: yoloResult.totalCost,
+          cwd: ctx.cwd,
+        });
+      }
+
+      const verdictLabel = yoloResult.finalVerdict === "pass" ? "✅ pass" : yoloResult.finalVerdict === "blocked" ? "❌ blocked" : "⚠️ needs-work";
+      const summary = `YOLO loop complete.\n\nRounds used: ${yoloResult.rounds.length} / ${yolo.maxRounds}\nTotal cost: ${formatCost(yoloResult.totalCost)}\nFinal verdict: ${verdictLabel}\nFinal report: ${yoloResult.finalReportPath}\n\nInitial report: ${yoloResult.initial.reportPath}`;
+
+      return {
+        content: [{ type: "text" as const, text: summary }],
+        details: yoloResult.rounds.length > 0 ? yoloResult.rounds[yoloResult.rounds.length - 1].review.details : yoloResult.initial.details,
+        isError: yoloResult.finalVerdict !== "pass",
+      };
+    }
 
     const estimate = estimateForkCost({
       task: withAuditGuard(p.task),

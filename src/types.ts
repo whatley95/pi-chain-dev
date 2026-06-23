@@ -57,6 +57,42 @@ export interface AutoForkConfig {
   maxForkCost?: number;
   /** Maximum total cost (USD) for cdev in the current session. 0 = unlimited. */
   maxSessionCost?: number;
+  /** YOLO mode: auto review → fix loops. */
+  yolo?: YoloConfig;
+}
+
+/** YOLO (auto review-fix) configuration. */
+export interface YoloConfig {
+  /** Enable the /cdev yolo command. */
+  enabled?: boolean;
+  /** Maximum review-fix rounds. Default 3, hard cap 7. */
+  maxRounds?: number;
+  /** Stop looping when review returns pass. Default true. */
+  stopOnPass?: boolean;
+  /** How aggressively to auto-apply fixes. Default 'off'. */
+  autoApply?: "off" | "safe" | "all";
+  /** Model profile for yolo review rounds. Falls back to stage2. */
+  reviewProfile?: StageProfile;
+  /** Model profile for yolo fix rounds. Falls back to stage2. */
+  fixProfile?: StageProfile;
+}
+
+export function normalizeYoloConfig(config?: YoloConfig): Required<Omit<YoloConfig, "reviewProfile" | "fixProfile">> & Pick<YoloConfig, "reviewProfile" | "fixProfile"> {
+  const max = config?.maxRounds ?? 3;
+  return {
+    enabled: config?.enabled ?? false,
+    maxRounds: max > 7 ? 7 : max < 1 ? 1 : max,
+    stopOnPass: config?.stopOnPass ?? true,
+    autoApply: config?.autoApply ?? "off",
+    reviewProfile: config?.reviewProfile,
+    fixProfile: config?.fixProfile,
+  };
+}
+
+export function formatYoloStatus(config?: YoloConfig): string {
+  const normalized = normalizeYoloConfig(config);
+  if (!normalized.enabled) return "OFF";
+  return `ON (max ${normalized.maxRounds} rounds, auto-apply ${normalized.autoApply})`;
 }
 
 export interface UsageStats {

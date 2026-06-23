@@ -95,6 +95,7 @@ export default function (pi: ExtensionAPI) {
       "Use cdev with review:true after significant code changes to get a second opinion from a different model.",
       "Use cdev with review:true and reviewFile=<path> to review a saved cdev report or any artifact file.",
       "Use cdev with review:true and diffSpec=<range> to review changes between git or SVN revisions.",
+      "Use cdev with yolo:true to run scout+forge followed by automatic review-fix loops (configurable via /cdev yolo on|off).",
       "After implementing findings from a cdev report, update the report file to check off Action Items and add implementation notes. Then suggest the user run /cdev review <reportPath> to verify the changes.",
       "When a /cdev review file appends findings, address the new Action Items and check them off in the report.",
       "Use cdev with quick:true for follow-up file tracing, grep-style lookups, or when raw findings suffice.",
@@ -132,6 +133,10 @@ export default function (pi: ExtensionAPI) {
         description:
           "If true, run the scout stage twice and merge the findings before sending them to the forge stage. The two independent runs increase coverage for high-stakes tasks at ~2x stage 1 cost and slower speed.",
       })),
+      yolo: Type.Optional(Type.Boolean({
+        description:
+          "If true, run scout+forge once, then automatically run review-fix loops up to the configured maxRounds. Stops early when review passes. Configure with /cdev yolo on|off and settings.json pi-chain-dev.yolo.",
+      })),
     }),
     renderCall,
     renderResult,
@@ -159,6 +164,7 @@ export default function (pi: ExtensionAPI) {
         "/cdev <task>           Scout + Forge explore",
         "/cdev quick <task>     Scout only (fast)",
         "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
+        "/cdev yolo <task>     Scout + forge, then review-fix loops",
         "/cdev review [path]    Forge review session/file",
         "/cdev review A..B      Review git/svn diff",
         "/cdev scan [deep]      Generate custom prompts",
@@ -170,6 +176,7 @@ export default function (pi: ExtensionAPI) {
         "/cdev prompts on|off   Toggle custom prompts",
         "/cdev themed on|off    Toggle themed TUI",
         "/cdev auto on|off      Toggle auto-trigger",
+        "/cdev yolo on|off      Toggle YOLO review-fix loops",
         "──────────────────────────────────────",
         "/cdev-model            Pick scout/forge models",
         "/cdev-help             This help",

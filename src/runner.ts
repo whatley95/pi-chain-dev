@@ -13,9 +13,11 @@ import { buildChildEnv } from "./env.js";
 import { extractFilePaths } from "./memory.js";
 import { parseInheritedCliArgs } from "./runner-cli.js";
 import { processPiJsonLine, getFinalAssistantText, summarizePiEvent } from "./runner-events.js";
-import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, Stage2Report } from "./types.js";
+import { saveSession } from "./history.js";
+import { writeReportFile } from "./report.js";
+import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, Stage2Report, YoloConfig } from "./types.js";
 import { emptyUsage, emptyFailedResult, isStage1Findings, isStage2Report } from "./types.js";
-import { formatResultContent } from "./extension-context.js";
+import { formatResultContent, withAuditGuard } from "./extension-context.js";
 
 const SIGKILL_TIMEOUT_MS = 5000;
 
@@ -285,7 +287,8 @@ function cleanupTempDir(dir: string | null): void {
 /** Audit guard — stages never modify code */
 const STAGE_AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
 
-function buildStage1Prompt(task: string, customPrompt?: string): string {
+function buildStage1Prompt(task: string, customPrompt?: string, editMode?: boolean): string {
+  const guard = editMode ? "" : STAGE_AUDIT_GUARD;
   const jsonSchema = `{
   "summary": "one-sentence summary of what was explored",
   "findings": [
@@ -311,7 +314,7 @@ ${jsonSchema}
 Efficiency rules:
 - Batch reads: use \`bash\`, \`cat\`, \`grep\`, \`find\`, \`ls\`, or globs instead of many individual \`read\` calls.
 - Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
-- Read a file individually only when you need the full content of a specific, named file.${STAGE_AUDIT_GUARD}`;
+- Read a file individually only when you need the full content of a specific, named file.${guard}`;
   }
   return `${task}
 
@@ -335,7 +338,7 @@ Rules:
 - "file" and "evidence" are optional but strongly preferred when applicable.
 - "deadEnds", "assumptions", "openQuestions" are optional.
 - Do NOT write structured sections like "Result", "Output", "Evidence", or "Learnings" outside the JSON.
-- Do NOT write a decision-useful report. Only return the JSON object.${STAGE_AUDIT_GUARD}`;
+- Do NOT write a decision-useful report. Only return the JSON object.${guard}`;
 }
 
 function formatStage1FindingsForStage2(findings: Stage1Findings): string {
@@ -369,7 +372,8 @@ function formatStage1FindingsForStage2(findings: Stage1Findings): string {
   return lines.join("\n");
 }
 
-function buildStage2Prompt(task: string, stage1Output: string, customPrompt?: string): string {
+function buildStage2Prompt(task: string, stage1Output: string, customPrompt?: string, editMode?: boolean): string {
+  const guard = editMode ? "" : STAGE_AUDIT_GUARD;
   const jsonSchema = `{
   "status": "ok|needs-work|blocked|exploratory",
   "summary": "one-paragraph summary of the synthesis",
@@ -390,7 +394,7 @@ ${stage1Output}
 </previous_findings>
 
 Return your synthesis as a single JSON object matching this schema (no markdown fences, no extra prose):
-${jsonSchema}${STAGE_AUDIT_GUARD}`;
+${jsonSchema}${guard}`;
   }
   return `${task}
 
@@ -414,7 +418,7 @@ Rules:
 - "actionItems" is required. Each item must be a concrete, verifiable task string.
 - "groundingScore" is required. Rate from 0.0 to 1.0 how well each claim in "output" is supported by <previous_findings>. Be honest and strict.
 - "ungroundedClaims" is required. List any claim in "output" that is not directly backed by <previous_findings>. Use an empty array if everything is grounded.
-- Do NOT use markdown headings like "## Result" outside the JSON.${STAGE_AUDIT_GUARD}`;
+- Do NOT use markdown headings like "## Result" outside the JSON.${guard}`;
 }
 
 function countLowConfidenceFindings(findings: Stage1Findings): number {
@@ -985,6 +989,8 @@ export interface RunAutoForkOptions {
   quick?: boolean;
   /** If true, run stage 1 twice and merge findings before stage 2. */
   verify?: boolean;
+  /** If true, allow the child to modify files (no audit guard, stage 2 keeps tools). */
+  editMode?: boolean;
   /** Called when a stage starts. Lets the caller show progress. */
   onProgress?: (stage: "scout" | "forge", model: string) => void;
   /**
@@ -1004,7 +1010,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 }> {
   const { cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage1bProfile,
           stage2Profile, customExplorePrompt, customSynthesizePrompt,
-          quick = false, verify = false,
+          quick = false, verify = false, editMode = false,
           extensions = null, environment = {}, offline = true, signal } = opts;
 
   const details: AutoForkDetails = { stage1: null, stage2: null };
@@ -1015,7 +1021,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   // ── Stage 1: Exploration with cheap model ──
   const scoutModelLabel = stage1Profile.thinking ? `${stage1Profile.provider}:${stage1Profile.id} • ${stage1Profile.thinking}` : `${stage1Profile.provider}:${stage1Profile.id}`;
   opts.onProgress?.("scout", scoutModelLabel);
-  const stage1Task = buildStage1Prompt(task, customExplorePrompt);
+  const stage1Task = buildStage1Prompt(task, customExplorePrompt, editMode);
 
   let stage1Result: ForkResult;
   let stage1Findings: Stage1Findings | null = null;
@@ -1178,7 +1184,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     ? formatStage1FindingsForStage2(stage1Findings)
     : getFinalAssistantText(stage1Result.messages) || stage1Result.stderr || "(no output from exploration stage)";
 
-  const stage2Task = buildStage2Prompt(task, stage1Text, customSynthesizePrompt);
+  const stage2Task = buildStage2Prompt(task, stage1Text, customSynthesizePrompt, editMode);
 
   let stage2Result: ForkResult;
   try {
@@ -1192,8 +1198,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       environment,
       offline,
       signal,
-      noTools: true,
-      toolMode: "forge",
+      noTools: !editMode,
+      toolMode: editMode ? undefined : "forge",
       stageTimeoutMs: 180_000,
       sanitizedSessionJsonl: sanitizedSnapshot,
       retries: 1,
@@ -1460,3 +1466,265 @@ export async function runDiffReview(opts: {
     signal,
   }, `Diff review ${diffSpec}`);
 }
+
+// ── YOLO review-fix loop ───────────────────────────────────
+
+export type ReviewVerdict = "pass" | "needs-work" | "blocked" | "unknown";
+
+export function parseReviewVerdict(text: string): ReviewVerdict {
+  const match = text.match(/## Result\b([\s\S]*?)(?=##\s|$)/i);
+  if (!match) return "unknown";
+  const section = match[1].toLowerCase();
+  if (section.includes("needs-work") || section.includes("needs work")) return "needs-work";
+  if (section.includes("blocked")) return "blocked";
+  if (section.includes("pass")) return "pass";
+  return "unknown";
+}
+
+export interface YoloRoundResult {
+  round: number;
+  review: {
+    result: ForkResult;
+    details: AutoForkDetails;
+    reportPath: string;
+    verdict: ReviewVerdict;
+  };
+  fix?: {
+    result: ForkResult;
+    details: AutoForkDetails;
+    reportPath: string;
+  };
+}
+
+export interface YoloLoopResult {
+  initial: {
+    result: ForkResult;
+    details: AutoForkDetails;
+    reportPath: string;
+  };
+  rounds: YoloRoundResult[];
+  totalCost: number;
+  finalVerdict: ReviewVerdict;
+  finalReportPath: string;
+}
+
+export interface RunYoloLoopOptions extends Omit<RunAutoForkOptions, "onProgress" | "onUpdate"> {
+  yoloConfig: Required<Omit<YoloConfig, "reviewProfile" | "fixProfile">> & Pick<YoloConfig, "reviewProfile" | "fixProfile">;
+  reviewProfile: StageProfile;
+  fixProfile: StageProfile;
+  customReviewPrompt?: string;
+  onProgress?: (stage: "scout" | "forge" | "review" | "fix", model: string, round?: number) => void;
+  onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
+}
+
+function buildYoloReviewSnapshot(baseSnapshot: string, reportContent: string, round: number): string {
+  const task = `YOLO review-fix round ${round}. Review the following cdev report against the actual code and determine whether the reported issues have been resolved.
+
+Report:\n${reportContent}`;
+  return appendTaskToSessionJsonl(baseSnapshot, task);
+}
+
+function buildYoloFixTask(originalTask: string, reviewText: string, round: number): string {
+  return `Fix the following issues from code review (round ${round}):
+
+${reviewText}
+
+Original task: ${originalTask}`;
+}
+
+function yoloSlug(task: string): string {
+  return task
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase()
+    .slice(0, 60);
+}
+
+export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopResult> {
+  const {
+    cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage1bProfile, stage2Profile,
+    yoloConfig, reviewProfile, fixProfile, customExplorePrompt, customSynthesizePrompt, customReviewPrompt,
+    extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate,
+  } = opts;
+
+  const baseSlug = yoloSlug(task);
+
+  function addUsage(acc: UsageStats, usage: UsageStats | undefined | null): void {
+    if (!usage) return;
+    acc.input += usage.input || 0;
+    acc.output += usage.output || 0;
+    acc.cacheRead += usage.cacheRead || 0;
+    acc.cacheWrite += usage.cacheWrite || 0;
+    acc.cost += usage.cost || 0;
+    acc.turns += usage.turns || 0;
+    acc.contextTokens = Math.max(acc.contextTokens, usage.contextTokens || 0);
+  }
+
+  const totalUsage: UsageStats = emptyUsage();
+
+  // ── Initial scout + forge ──
+  const initialStart = Date.now();
+  const { result: initialResult, details: initialDetails } = await runAutoFork({
+    cwd,
+    task: withAuditGuard(task),
+    forkSessionSnapshotJsonl,
+    stage1Profile,
+    stage1bProfile,
+    stage2Profile,
+    customExplorePrompt,
+    customSynthesizePrompt,
+    quick: false,
+    verify: false,
+    onProgress: (stage, model) => onProgress?.(stage, model),
+    onUpdate,
+    extensions,
+    environment,
+    offline,
+    signal,
+  });
+  addUsage(totalUsage, initialResult.usage);
+
+  const initialText = getFinalAssistantText(initialResult.messages) || "";
+  let initialReportPath = "";
+  if (initialText && !initialResult.errorMessage) {
+    const { reportRelPath } = writeReportFile({
+      cwd,
+      fileName: `yolo-${baseSlug}-initial-${Date.now().toString(36)}.md`,
+      title: "cdev YOLO initial report",
+      body: initialText,
+    });
+    initialReportPath = reportRelPath;
+    saveSession(cwd, `yolo initial: ${task}`, false, initialStart, initialDetails, initialResult);
+  }
+
+  const rounds: YoloRoundResult[] = [];
+  let finalVerdict: ReviewVerdict = "unknown";
+  let finalReportPath = initialReportPath;
+  let latestReport = initialText;
+
+  // ── Review-fix rounds ──
+  for (let round = 1; round <= yoloConfig.maxRounds; round++) {
+    if (!latestReport) break;
+
+    const reviewStart = Date.now();
+    const reviewSnapshot = buildYoloReviewSnapshot(forkSessionSnapshotJsonl, latestReport, round);
+    const reviewModelLabel = reviewProfile.thinking
+      ? `${reviewProfile.provider}:${reviewProfile.id} • ${reviewProfile.thinking}`
+      : `${reviewProfile.provider}:${reviewProfile.id}`;
+    onProgress?.("review", reviewModelLabel, round);
+
+    const { result: reviewResult, details: reviewDetails } = await runCdevReview({
+      cwd,
+      forkSessionSnapshotJsonl: reviewSnapshot,
+      stageProfile: reviewProfile,
+      customReviewPrompt,
+      onProgress: (_stage, model) => onProgress?.("review", model, round),
+      onUpdate,
+      extensions,
+      environment,
+      offline,
+      signal,
+    });
+    addUsage(totalUsage, reviewResult.usage);
+
+    const reviewText = getFinalAssistantText(reviewResult.messages) || "";
+    const { reportRelPath: reviewReportPath } = writeReportFile({
+      cwd,
+      fileName: `yolo-${baseSlug}-round${round}-${Date.now().toString(36)}.md`,
+      title: `cdev YOLO review round ${round}`,
+      reviewer: reviewDetails.stage2?.model ?? "?",
+      body: reviewText || "(no review output)",
+    });
+    finalReportPath = reviewReportPath;
+    saveSession(cwd, `yolo review round ${round}: ${task}`, true, reviewStart, reviewDetails, reviewResult);
+
+    const verdict = parseReviewVerdict(reviewText);
+    finalVerdict = verdict;
+
+    const roundResult: YoloRoundResult = {
+      round,
+      review: {
+        result: reviewResult,
+        details: reviewDetails,
+        reportPath: reviewReportPath,
+        verdict,
+      },
+    };
+
+    if (verdict === "pass" && yoloConfig.stopOnPass) {
+      rounds.push(roundResult);
+      break;
+    }
+
+    if (yoloConfig.autoApply === "off") {
+      rounds.push(roundResult);
+      continue;
+    }
+
+    // ── Fix round ──
+    const fixStart = Date.now();
+    const fixModelLabel = fixProfile.thinking
+      ? `${fixProfile.provider}:${fixProfile.id} • ${fixProfile.thinking}`
+      : `${fixProfile.provider}:${fixProfile.id}`;
+    onProgress?.("fix", fixModelLabel, round);
+
+    const fixTask = buildYoloFixTask(task, reviewText, round);
+    const { result: fixResult, details: fixDetails } = await runAutoFork({
+      cwd,
+      task: fixTask,
+      forkSessionSnapshotJsonl,
+      stage1Profile,
+      stage1bProfile,
+      stage2Profile: fixProfile,
+      customExplorePrompt,
+      customSynthesizePrompt,
+      quick: false,
+      verify: false,
+      editMode: true,
+      onProgress: (stage, model) => onProgress?.(stage === "scout" || stage === "forge" ? stage : "fix", model, round),
+      onUpdate,
+      extensions,
+      environment,
+      offline,
+      signal,
+    });
+    addUsage(totalUsage, fixResult.usage);
+
+    const fixText = getFinalAssistantText(fixResult.messages) || "";
+    let fixReportPath = "";
+    if (fixText && !fixResult.errorMessage) {
+      const { reportRelPath } = writeReportFile({
+        cwd,
+        fileName: `yolo-${baseSlug}-fix${round}-${Date.now().toString(36)}.md`,
+        title: `cdev YOLO fix round ${round}`,
+        body: fixText,
+      });
+      fixReportPath = reportRelPath;
+      saveSession(cwd, `yolo fix round ${round}: ${task}`, false, fixStart, fixDetails, fixResult);
+    }
+
+    roundResult.fix = {
+      result: fixResult,
+      details: fixDetails,
+      reportPath: fixReportPath,
+    };
+    rounds.push(roundResult);
+
+    if (fixText) {
+      latestReport = fixText;
+    }
+  }
+
+  return {
+    initial: {
+      result: initialResult,
+      details: initialDetails,
+      reportPath: initialReportPath,
+    },
+    rounds,
+    totalCost: totalUsage.cost,
+    finalVerdict,
+    finalReportPath,
+  };
+}
+
