@@ -22,10 +22,11 @@
     "pi-package"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/update-build-date.js && tsc",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/**/*.test.ts",
-    "test:watch": "tsx --test --watch test/**/*.test.ts"
+    "test:watch": "tsx --test --watch test/**/*.test.ts",
+    "postinstall": "node scripts/install-hook.js"
   },
   "license": "MIT",
   "peerDependencies": {
