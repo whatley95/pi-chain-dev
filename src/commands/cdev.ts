@@ -258,9 +258,14 @@ export function registerCdevCommand(
           lines.push("");
         }
         lines.push(`  Current model:    ${ctx.model ? ctx.model.id : "none"}`);
-        lines.push(`  Scout:  ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`);
-        lines.push(`  Forge:  ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`);
-        lines.push(`  Review: ${config.review ? `${config.review.provider}:${config.review.id}  •  ${config.review.thinking}` : `↳ Forge (${config.stage2.id})`}`);
+        lines.push(`  Scout A:          ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`);
+        if (config.stage1b?.provider && config.stage1b?.id) {
+          lines.push(`  Scout B:          ${config.stage1b.provider}:${config.stage1b.id}  •  ${config.stage1b.thinking}`);
+        } else {
+          lines.push(`  Scout B:          ↳ Scout A (${config.stage1.id})`);
+        }
+        lines.push(`  Forge:            ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`);
+        lines.push(`  Review:           ${config.review ? `${config.review.provider}:${config.review.id}  •  ${config.review.thinking}` : `↳ Forge (${config.stage2.id})`}`);
         lines.push(`  Auto-trigger:     ${config.auto ? "⚡ ON (sends steer every 3 turns to prompt cdev use)" : "OFF (agent uses cdev only when asked or it decides)"}`);
         lines.push(`  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`);
         lines.push(`  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`);

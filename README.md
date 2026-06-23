@@ -30,7 +30,7 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 | `/cdev review` | Forge only — reviews recent code changes for bugs, edge cases, and improvements |
 | `/cdev auto on` | Auto-trigger mode — LLM proactively uses `cdev` for exploration tasks |
 | `/cdev auto off` | Disable auto-trigger |
-| `/cdev auto-verify on` | Automatic scout ×2 for every `/cdev <task>` (default) |
+| `/cdev auto-verify on` | Automatic scout ×2 for every `/cdev <task>` (default) — ~2× stage 1 cost |
 | `/cdev auto-verify off` | Scout ×1 unless `/cdev verify` is used explicitly |
 | `/cdev-model` | Interactive model picker — choose scout/forge models from configured providers |
 | `/cdev scan` | Instant template scan — detects stack from package.json, generates prompts (free, no LLM) |
@@ -182,12 +182,14 @@ If stage 1 output is invalid or empty, cdev retries the scout stage once automat
 
 ### Auto-verify (`/cdev auto-verify`)
 
-By default, every `/cdev <task>` runs scout twice (`autoVerify: true`). You can toggle this:
+By default, every `/cdev <task>` runs scout twice (`autoVerify: true`). This improves accuracy but roughly doubles stage 1 cost. You can toggle this:
 
-- `/cdev auto-verify on` — scout ×2 automatically (default)
+- `/cdev auto-verify on` — scout ×2 automatically (default, ~2× stage 1 cost)
 - `/cdev auto-verify off` — scout ×1 unless you use `/cdev verify <task>`
 
 The setting is stored in `~/.pi/agent/settings.json` under `pi-chain-dev.autoVerify`.
+
+You can also configure a second scout model (`pi-chain-dev.stage1b`) so the two runs use different models for broader coverage. If unset, both runs use `stage1`. Use `/cdev-model` → "Scout B (verify)" to set it.
 
 ### Accuracy safeguards
 
@@ -236,7 +238,7 @@ If grounding is low or findings were sparse/low-confidence, cdev automatically r
               PARENT reads report, decides, codes
 ```
 
-If one scout run produces invalid findings, cdev uses the valid run. If both are invalid, cdev falls back to the raw text from the first run. The two runs use the same model configuration; their independence (different random samples) gives broader coverage without relying on unsupported CLI flags.
+If one scout run produces invalid findings, cdev uses the valid run. If both are invalid, cdev falls back to the raw text from the first run. The two runs use the same model configuration unless you set `stage1b`; their independence (different random samples, and optionally different models) gives broader coverage without relying on unsupported CLI flags.
 
 ### Review mode (`/cdev review`)
 
@@ -294,6 +296,21 @@ pi install ./pi-chain-fork          # relative path
 
 Auto-discovered from `~/.pi/agent/extensions/pi-chain-dev/` — no install command needed if placed there.
 
+### Build date hook
+
+The `Version` line in `/cdev status` includes a build timestamp that is auto-updated on every commit. To enable this in a fresh clone, install the pre-commit hook:
+
+```bash
+# On Unix/macOS
+cp scripts/update-build-date.js .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+
+# On Windows (PowerShell)
+copy scripts\update-build-date.js .git\hooks\pre-commit
+```
+
+The hook rewrites `src/build-date.ts` with the current UTC timestamp and stages it before each commit.
+
 ### .gitignore / svn:ignore
 
 Add `.pi/` to your project's ignore rules:
@@ -325,6 +342,11 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
       "id": "deepseek-v4-flash",
       "thinking": "minimal"
     },
+    "stage1b": {
+      "provider": "opencode-go",
+      "id": "deepseek-v4-flash",
+      "thinking": "low"
+    },
     "stage2": {
       "provider": "opencode-go",
       "id": "deepseek-v4-pro",
@@ -347,12 +369,15 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `stage1.provider` | string | _required_ | Provider for scout (exploration) |
 | `stage1.id` | string | _required_ | Model ID for scout |
 | `stage1.thinking` | `off` — `xhigh` | `minimal` | Thinking level for scout |
+| `stage1b.provider` | string | — | Optional second scout model for verify mode |
+| `stage1b.id` | string | — | Model ID for second scout |
+| `stage1b.thinking` | `off` — `xhigh` | `minimal` | Thinking level for second scout |
 | `stage2.provider` | string | _required_ | Provider for forge (synthesis/review) |
 | `stage2.id` | string | _required_ | Model ID for forge |
 | `stage2.thinking` | `off` — `xhigh` | `xhigh` | Thinking level for forge |
-  | `auto` | boolean | `false` | Auto-trigger mode (LLM proactively uses cdev) |
-  | `autoVerify` | boolean | `true` | Automatic scout ×2 for higher accuracy |
-  | `promptsEnabled` | boolean | `true` | Enable/disable custom prompts |
+| `auto` | boolean | `false` | Auto-trigger mode (LLM proactively uses cdev) |
+| `autoVerify` | boolean | `true` | Automatic scout ×2 for higher accuracy |
+| `promptsEnabled` | boolean | `true` | Enable/disable custom prompts |
 | `prompts.explore` | string | — | Custom scout exploration prompt |
 | `prompts.synthesize` | string | — | Custom forge synthesis prompt |
 | `prompts.review` | string | — | Custom review prompt |
