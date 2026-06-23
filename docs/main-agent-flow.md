@@ -20,7 +20,7 @@ Before using the `cdev` tool, ask:
 | Research / understand code | `cdev <task>` | Scout + forge, structured report |
 | Quick grep/trace | `cdev quick <task>` | Scout only, raw findings |
 | High-stakes investigation | `cdev verify <task>` | Scout ×2 + forge, ~2× stage-1 cost |
-| Plan before a refactor | `cdev plan <task>` | Scout + planner forge: risks, files, steps, tests |
+| Plan before a refactor | `cdev plan <task>` | Scout + planner forge: risks, files, steps, **checklist**, tests. Use the checklist as the execution roadmap |
 | Review recent changes | `cdev review` | Session-level review |
 | Review a specific file | `cdev review reviewFile=<path>` | Standalone report, **never modifies the file** |
 | Review a diff | `cdev review diffSpec=<range>` | Git/SVN diff review |
@@ -36,7 +36,7 @@ After `cdev` returns:
 4. Surface **ambiguities** and **open questions** back to the user — do not guess.
 5. Turn **action items** into a concrete plan and ask the user before editing.
 
-If the report has a **plan** section, use it as the implementation roadmap but still confirm risky or ungrounded steps with the user.
+If the report has a **plan** section, use it as the implementation roadmap. Prefer the **Checklist** for execution: each item is ordered, concrete, and has a verification step. Confirm any ungrounded checklist items (marked ❓) with the user before implementing them.
 
 ## 4. Implement and Verify
 

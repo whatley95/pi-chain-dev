@@ -176,6 +176,10 @@ describe("parsePlanReport", () => {
       risks: ["risk"],
       files: { read: ["src/a.ts"], toModify: ["src/b.ts"], toCreate: [] },
       steps: [{ order: 1, description: "change b", verification: "npm test" }],
+      checklist: [
+        { order: 1, task: "add helper to src/b.ts", verification: "npm test b", grounded: true },
+        { order: 2, task: "wire helper into route", verification: "npm test route", grounded: false },
+      ],
       testCommands: ["npm test"],
       groundingScore: 0.9,
       ungroundedClaims: [],
@@ -185,6 +189,22 @@ describe("parsePlanReport", () => {
     const report = parsePlanReport(text);
     assert.ok(report);
     assert.strictEqual(report!.files.toModify[0], "src/b.ts");
+    assert.strictEqual(report!.checklist.length, 2);
+    assert.strictEqual(report!.checklist[0].grounded, true);
+    assert.strictEqual(report!.checklist[1].grounded, false);
+  });
+
+  it("rejects plan checklist without grounded boolean", () => {
+    const text = JSON.stringify({
+      status: "ok",
+      summary: "plan summary",
+      risks: [],
+      files: { read: [], toModify: [], toCreate: [] },
+      steps: [{ order: 1, description: "change b", verification: "npm test" }],
+      checklist: [{ order: 1, task: "edit", verification: "test" }],
+      testCommands: [],
+    });
+    assert.strictEqual(parsePlanReport(text), null);
   });
 
   it("rejects plan steps without verification", () => {
@@ -206,17 +226,19 @@ describe("formatPlanReport", () => {
       status: "ok",
       summary: "plan summary",
       risks: ["risk"],
-      files: { read: ["src/a.ts"], toModify: ["src/b.ts"], toCreate: ["src/c.ts"] },
+      files: { read: ["src/a.ts"], toModify: ["src/b.ts"], toCreate: [] },
       steps: [{ order: 1, description: "change b", verification: "npm test" }],
+      checklist: [
+        { order: 1, task: "add helper", verification: "npm test b", grounded: true },
+        { order: 2, task: "wire route", verification: "npm test route", grounded: false },
+      ],
       testCommands: ["npm test"],
-      groundingScore: 1,
-      ungroundedClaims: [],
-      qualityScore: 0.75,
-      qualityNotes: "mostly actionable",
     });
+    assert.match(text, /## Checklist/);
+    assert.match(text, /\[ \] add helper/);
+    assert.match(text, /\[❓\] wire route/);
     assert.match(text, /## Steps/);
-    assert.match(text, /Verification: npm test/);
-    assert.match(text, /`npm test`/);
-    assert.match(text, /Quality/);
+    assert.match(text, /change b/);
   });
 });
+

@@ -138,6 +138,15 @@ export function formatPlanReport(report: PlanReport): string {
     }
     lines.push("");
   }
+  if (report.checklist?.length) {
+    lines.push("## Checklist");
+    for (const item of [...report.checklist].sort((a, b) => a.order - b.order)) {
+      const icon = item.grounded ? " " : "❓";
+      lines.push(`- [${icon}] ${item.task}`);
+      lines.push(`  Verification: ${item.verification}`);
+    }
+    lines.push("");
+  }
   if (report.testCommands.length > 0) {
     lines.push("## Test Commands");
     for (const command of report.testCommands) lines.push(`- \`${command}\``);

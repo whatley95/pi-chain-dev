@@ -213,12 +213,14 @@ describe("formatForkResultOutput (extension-context.ts)", () => {
           risks: ["risk"],
           files: { read: ["src/a.ts"], toModify: ["src/b.ts"], toCreate: [] },
           steps: [{ order: 1, description: "change b", verification: "npm test" }],
+          checklist: [{ order: 1, task: "add helper", verification: "npm test b", grounded: true }],
           testCommands: ["npm test"],
         }) }],
       }],
     };
     const text = formatForkResultOutput(result, { stage1: null, stage2: result });
     assert.match(text, /## Steps/);
+    assert.match(text, /## Checklist/);
     assert.match(text, /change b/);
     assert.doesNotMatch(text, /^\{/);
   });

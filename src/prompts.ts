@@ -87,26 +87,25 @@ Task: ${task}
 ${stage1Output}
 </previous_findings>
 
-Return your synthesis as a single JSON object matching this schema (no markdown fences, no extra prose):
-${jsonSchema}${guard}`;
+Return a single JSON object matching this schema. Be strict about grounding every claim in the previous findings.${guard}`;
   }
   return `${task}
 
-A previous exploration stage gathered these raw findings:
+A scout stage gathered these findings:
 
 <previous_findings>
 ${stage1Output}
 </previous_findings>
 
-Your job: synthesize these findings into a decision-useful report. You do NOT need to explore further — work with the findings above.
+Your job: synthesize the findings into a concise, decision-useful report. Do NOT gather new evidence or run tools. Do NOT write code.
 
-Return your synthesis as a single JSON object matching this schema (no markdown fences, no extra prose):
+Return a single JSON object matching this schema (no markdown fences, no extra prose):
 ${jsonSchema}
 
 Rules:
-- "status" is required and must be one of: ok, needs-work, blocked, exploratory.
-- "summary" is required and should be one paragraph.
-- "output" is required. Put the useful substance here.
+- "status" is required: ok / needs-work / blocked / exploratory.
+- "summary" is required. One paragraph.
+- "output" is required. This is the main answer for the user.
 - "evidence" is required. Include concrete anchors.
 - "learnings" is required. Extract reusable knowledge.
 - "actionItems" is required. Each item must be a concrete, verifiable task string.
@@ -131,6 +130,9 @@ export function buildPlanPrompt(task: string, stage1Output: string, customPrompt
   "steps": [
     {"order": 1, "description": "what to do", "verification": "how to confirm it works"}
   ],
+  "checklist": [
+    {"order": 1, "task": "concrete edit to make", "verification": "exact command or check to run after", "grounded": true}
+  ],
   "testCommands": ["command to run after implementation"],
   "openQuestions": ["optional questions for the main agent"],
   "groundingScore": 0.0,
@@ -148,8 +150,7 @@ Task: ${task}
 ${stage1Output}
 </scout_findings>
 
-Return a single JSON object matching this schema. Do not implement any code; produce only an implementation plan.
-${jsonSchema}`;
+Return a single JSON object matching this schema. Do not implement any code; produce only an implementation plan. The "checklist" must be the main agent's execution roadmap.`;
   }
   return `${task}
 
@@ -168,8 +169,11 @@ Rules:
 - "status" is required.
 - "risks" is required. List concrete risks and how to mitigate them.
 - "files" is required. Separate read/verified files from files that need changes or creation.
-- "steps" is required. Each step must have order, description, and verification.
-- "testCommands" is required. Include commands that verify the change (tests, compile, lint).
+- "steps" is required. Each step must have order, description, and verification. Keep steps high-level.
+- "checklist" is required. It must be an ordered list of concrete, executable tasks the main agent can check off one by one.
+  - Each checklist item must include: "task" (concrete edit), "verification" (exact command or check), and "grounded" (boolean — true only if supported by scout findings).
+  - If an item is not grounded, set "grounded": false and explain why in "openQuestions".
+- "testCommands" is required. Include commands that verify the whole change (tests, compile, lint).
 - "groundingScore" and "ungroundedClaims" are required. Be strict.
 - "coverage", "qualityScore", "qualityNotes" are required.`;
 }
@@ -247,102 +251,87 @@ Instructions:
 Use this structure:
 
 ## Result
-Summary: pass / needs-work / blocked. Did the implementation match the report?
+pass / needs-work / blocked + concise summary
 
-## Claims vs Code
-For each key claim in the report, verify against the actual files. Format:
-**Claim:** what the report says
-**Reality:** what the code actually shows
-**Verdict:** ✅ matched / ⚠️ partial / ❌ missing
+## Mismatches
+Report claims vs actual code.
 
 ## Bugs Found
-Issues in the actual code (not report claims): File, Line, Severity, Description.
+Issues in the actual code.
 
 ## Gaps
-Things the report says are done but aren't reflected in code.
+Report claims without implementation.
 
-## New Action Items
-List any new tasks surfaced by this review as checkboxes the main agent can act on.
+## Evidence
+Files/lines reviewed.
 
-- [ ] item 1
-- [ ] item 2
-
-## What's Missing
-Considerations neither the report nor the code address.
-
----
-
-<report>
+Report content:
 ${normalizedReport}
-</report>
 
-<actual-files>
-${filesSection}
-</actual-files>${auditSuffix}`;
+Referenced code files:
+${filesSection}${auditSuffix}`;
 }
 
 export function buildDiffReviewPrompt(diffSpec: string, diffContent: string): string {
-  const maxLen = 40000;
-  const truncated = diffContent.length > maxLen
-    ? diffContent.slice(0, maxLen) + `\n\n... (diff truncated for review — ${diffContent.length - maxLen} more chars)`
+  const auditSuffix = STAGE_AUDIT_GUARD;
+  const MAX_DIFF_CHARS = 30000;
+  const normalizedDiff = diffContent.length > MAX_DIFF_CHARS
+    ? diffContent.slice(0, MAX_DIFF_CHARS) + `\n\n... (truncated from ${diffContent.length} chars)`
     : diffContent;
 
-  return `Review the following code diff thoroughly. Find bugs, edge cases, missing error handling, security concerns, and gaps.
+  return `Review the following diff. Your job: find bugs, edge cases, missing tests, security issues, and regressions introduced by these changes.
 
-Diff: ${diffSpec}
+Diff spec: ${diffSpec}
 
 Instructions:
-- Examine every changed file and every changed line
-- Find bugs introduced by these changes
-- Check for missing error handling, null guards, edge cases
-- Look for security concerns (injection, auth bypass, data leaks)
-- Verify that changes don't break existing patterns or conventions
-- Check for dead code, unused imports, leftover debug statements
-- Suggest concrete fixes with code snippets where helpful
+- Focus on what CHANGED, not pre-existing style debt unless it is directly worsened
+- Check for missing error handling, unsafe assumptions, broken contracts
+- Verify that tests/lint/typecheck would catch obvious regressions
+- Flag any change that contradicts the stated intent
 
 Use this structure:
 
 ## Result
-Summary: pass / needs-work / blocked. Key concerns in bullets.
+pass / needs-work / blocked + concise summary
 
 ## Issues Found
-Each issue MUST include:
-- **File:** relative path
-- **Line:** line number or snippet range
-- **Severity:** critical / high / medium / low
-- **Description:** concrete problem
-- **Reproduction/Logic:** how to trigger or why it is wrong
-- **Fix suggestion:** concrete code or approach
-
-Vague issues without file/line/evidence are not acceptable.
-
-## New Action Items
-List any fixes needed as checkboxes.
-
-- [ ] item 1
-- [ ] item 2
+Each issue MUST include file, severity, description, and fix suggestion.
 
 ## Suggestions
-Improvements that aren't bugs: refactors, tests, patterns.
+Non-blocking improvements.
 
----
+## Evidence
+Files and ranges reviewed.
 
-<diff>
-${truncated}
-</diff>${STAGE_AUDIT_GUARD}`;
+Diff:
+\`\`\`diff
+${normalizedDiff}
+\`\`\`${auditSuffix}`;
 }
 
-export function buildYoloReviewSnapshot(baseSnapshot: string, reportContent: string, round: number): string {
-  const task = `YOLO review-fix round ${round}. Review the following cdev report against the actual code and determine whether the reported issues have been resolved.
-
-Report:\n${reportContent}`;
-  return appendTaskToSessionJsonl(baseSnapshot, task);
+export function buildYoloReviewSnapshot(forkSessionSnapshotJsonl: string, reportContent: string, round: number): string {
+  const base = forkSessionSnapshotJsonl || JSON.stringify({}) + "\n";
+  const reportSection = `\n\nPrevious implementation report (YOLO review-fix round ${round}):\n${reportContent}`;
+  return appendTaskToSessionJsonl(base, `Review the implementation report from YOLO review-fix round ${round}. Decide if it passes, needs work, or is blocked. Be specific about issues and fixes.` + reportSection);
 }
 
 export function buildYoloFixTask(originalTask: string, reviewText: string, round: number): string {
-  return `Fix the following issues from code review (round ${round}):
+  return `The previous implementation attempt for "${originalTask}" was reviewed. Address the issues below and produce an updated implementation.
 
+Review feedback (round ${round}):
 ${reviewText}
 
-Original task: ${originalTask}`;
+Instructions:
+- Fix the issues identified in the review.
+- Preserve working behavior; do not introduce regressions.
+- Return the full updated implementation/report.`;
+}
+
+export function buildStage2FindingsPrompt(stage1Output: string, customPrompt?: string): string {
+  if (customPrompt) return `${customPrompt}\n\n<previous_findings>\n${stage1Output}\n</previous_findings>`;
+  return `Synthesize these scout findings into a concise report:
+
+<previous_findings>
+${stage1Output}
+</previous_findings>`;
 }

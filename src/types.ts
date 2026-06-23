@@ -380,6 +380,13 @@ export interface PlanReport {
     description: string;
     verification: string;
   }>;
+  /** Ordered, executable checklist for the main agent. */
+  checklist: Array<{
+    order: number;
+    task: string;
+    verification: string;
+    grounded: boolean;
+  }>;
   /** Commands to run after implementation. */
   testCommands: string[];
   /** Questions the main agent/user should resolve before editing. */
@@ -455,6 +462,15 @@ export function isPlanReport(value: unknown): value is PlanReport {
     if (typeof s.order !== "number" || !Number.isFinite(s.order)) return false;
     if (typeof s.description !== "string") return false;
     if (typeof s.verification !== "string") return false;
+  }
+  if (!Array.isArray(v.checklist)) return false;
+  for (const item of v.checklist) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const c = item as Record<string, unknown>;
+    if (typeof c.order !== "number" || !Number.isFinite(c.order)) return false;
+    if (typeof c.task !== "string") return false;
+    if (typeof c.verification !== "string") return false;
+    if (typeof c.grounded !== "boolean") return false;
   }
   if (!Array.isArray(v.testCommands) || !v.testCommands.every((command) => typeof command === "string")) return false;
   if (v.openQuestions !== undefined && (!Array.isArray(v.openQuestions) || !v.openQuestions.every((question) => typeof question === "string"))) return false;
