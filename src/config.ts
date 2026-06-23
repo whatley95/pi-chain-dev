@@ -210,6 +210,27 @@ function readNamespacedConfig(settingsPath: string): Partial<AutoForkConfig> {
       }
     }
 
+    // Parse extensions
+    if (Array.isArray(config.extensions)) {
+      parsed.extensions = config.extensions.filter((item): item is string => typeof item === "string" && item.length > 0);
+    } else if (config.extensions === null) {
+      parsed.extensions = null;
+    }
+
+    // Parse environment variables
+    if (config.environment && typeof config.environment === "object" && !Array.isArray(config.environment)) {
+      const env = config.environment as Record<string, unknown>;
+      const parsedEnv: Record<string, string> = {};
+      for (const [key, value] of Object.entries(env)) {
+        if (typeof value === "string") {
+          parsedEnv[key] = value;
+        }
+      }
+      if (Object.keys(parsedEnv).length > 0) {
+        parsed.environment = parsedEnv;
+      }
+    }
+
     return parsed;
   } catch {
     return {};

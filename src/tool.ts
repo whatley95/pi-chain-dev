@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join, isAbsolute } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -90,14 +90,34 @@ export async function executeCdevTool(
       if (typeof p.reviewFile === "string" && p.reviewFile.trim()) {
         const arg = p.reviewFile.trim();
         const filePath = isAbsolute(arg) ? arg : join(ctx.cwd, arg);
-        if (!existsSync(filePath)) {
+        const MAX_REVIEW_FILE_BYTES = 2 * 1024 * 1024;
+        let fileContent: string;
+        try {
+          if (!existsSync(filePath)) {
+            return {
+              content: [{ type: "text" as const, text: `cdev review error: File not found: ${filePath}` }],
+              details: { stage1: null, stage2: null },
+              isError: true,
+            };
+          }
+          const fileSize = (() => {
+            try { return statSync(filePath).size; } catch { return undefined; }
+          })();
+          if (fileSize !== undefined && fileSize > MAX_REVIEW_FILE_BYTES) {
+            return {
+              content: [{ type: "text" as const, text: `cdev review error: File too large (${(fileSize / 1024 / 1024).toFixed(1)} MB > ${MAX_REVIEW_FILE_BYTES / 1024 / 1024} MB): ${filePath}` }],
+              details: { stage1: null, stage2: null },
+              isError: true,
+            };
+          }
+          fileContent = readFileSync(filePath, "utf-8");
+        } catch (err) {
           return {
-            content: [{ type: "text" as const, text: `cdev review error: File not found: ${filePath}` }],
+            content: [{ type: "text" as const, text: `cdev review error: Failed to read ${filePath}: ${err instanceof Error ? err.message : String(err)}` }],
             details: { stage1: null, stage2: null },
             isError: true,
           };
         }
-        const fileContent = readFileSync(filePath, "utf-8");
         const onProgress = (stage: string, model: string) => {
           const icon = stage === "scout" ? "🔍" : "⚒️";
           const label = stage === "scout" ? "Scout" : "Forge";

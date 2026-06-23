@@ -850,24 +850,26 @@ async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
   const tmp = writeTempSessionJsonl(sanitized.jsonl);
   let sessionFilePath = tmp.filePath;
   let taskArg = task;
+  let exitCode = -1;
 
-  const { command, prefixArgs } = resolvePiSpawn();
+  try {
+    const { command, prefixArgs } = resolvePiSpawn();
 
-  // Test-build args to check command-line length. If the task is so large that
-  // it would exceed OS spawn limits, offload the task into the session file as
-  // a user message and pass a minimal task argument instead.
-  const effectiveToolMode = toolMode ?? (noTools ? "forge" : null);
-  const testArgs = buildPiArgs(taskArg, sessionFilePath, extensions, stageProfile, effectiveToolMode);
-  if (estimateCommandLineLength(command, [...prefixArgs, ...testArgs]) > MAX_COMMAND_LINE_LENGTH) {
-    const combinedJsonl = appendTaskToSessionJsonl(sanitized.jsonl, task);
-    fs.writeFileSync(sessionFilePath, combinedJsonl, { encoding: "utf-8", mode: 0o600 });
-    taskArg = "respond to the task above";
-    result.stderr += `[cdev] task offloaded to session file to avoid command-line length limit\n`;
-  }
+    // Test-build args to check command-line length. If the task is so large that
+    // it would exceed OS spawn limits, offload the task into the session file as
+    // a user message and pass a minimal task argument instead.
+    const effectiveToolMode = toolMode ?? (noTools ? "forge" : null);
+    const testArgs = buildPiArgs(taskArg, sessionFilePath, extensions, stageProfile, effectiveToolMode);
+    if (estimateCommandLineLength(command, [...prefixArgs, ...testArgs]) > MAX_COMMAND_LINE_LENGTH) {
+      const combinedJsonl = appendTaskToSessionJsonl(sanitized.jsonl, task);
+      fs.writeFileSync(sessionFilePath, combinedJsonl, { encoding: "utf-8", mode: 0o600 });
+      taskArg = "respond to the task above";
+      result.stderr += `[cdev] task offloaded to session file to avoid command-line length limit\n`;
+    }
 
-  const piArgs = buildPiArgs(taskArg, sessionFilePath, extensions, stageProfile, effectiveToolMode);
+    const piArgs = buildPiArgs(taskArg, sessionFilePath, extensions, stageProfile, effectiveToolMode);
 
-  const exitCode = await new Promise<number>((resolve) => {
+    exitCode = await new Promise<number>((resolve) => {
     const proc = spawn(command, [...prefixArgs, ...piArgs], {
       cwd,
       shell: false,
@@ -969,8 +971,10 @@ async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
   if (!result.provider) result.provider = stageProfile.provider;
   if (!result.model) result.model = stageProfile.id;
 
-  cleanupTempDir(tmp.dir);
   return result;
+} finally {
+  cleanupTempDir(tmp.dir);
+}
 }
 
 // ── Main auto-fork orchestrator ──────────────────────────────
@@ -1217,6 +1221,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     if (!usage) return;
     combinedUsage.input += usage.input || 0;
     combinedUsage.output += usage.output || 0;
+    combinedUsage.cacheRead += usage.cacheRead || 0;
+    combinedUsage.cacheWrite += usage.cacheWrite || 0;
     combinedUsage.cost += usage.cost || 0;
     combinedUsage.turns += usage.turns || 0;
     combinedUsage.contextTokens = Math.max(combinedUsage.contextTokens, usage.contextTokens || 0);
@@ -1658,6 +1664,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
 
     if (yoloConfig.autoApply === "off") {
       rounds.push(roundResult);
+      latestReport = reviewText || latestReport;
       continue;
     }
 
