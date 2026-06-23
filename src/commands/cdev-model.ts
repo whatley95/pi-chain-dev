@@ -180,7 +180,7 @@ export function createCdevModelHandler(): (args: string, ctx: ExtensionContext) 
         return menus;
       }
 
-      let state: PickerState = {};
+      const state: PickerState = {};
       let step = 0;
       while (true) {
         const menus = buildMenus(state);

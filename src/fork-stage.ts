@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { buildChildEnv } from "./env.js";
 import { parseInheritedCliArgs } from "./runner-cli.js";
 import { processPiJsonLine, getFinalAssistantText, summarizePiEvent } from "./runner-events.js";
+import { PROMPT_VERSION } from "./prompt-version.js";
 import type { StageProfile, ForkResult } from "./types.js";
 import { emptyUsage, emptyFailedResult } from "./types.js";
 import { logWarn } from "./logger.js";
@@ -77,6 +78,7 @@ export function appendTaskToSessionJsonl(sessionJsonl: string, task: string): st
     type: "message",
     role: "system",
     name: "cdev-task",
+    cdev_prompt_version: PROMPT_VERSION,
     content: [{ type: "text", text: `cdev task for this fork: ${task}` }],
   }));
   lines.push(JSON.stringify({
@@ -97,7 +99,7 @@ const MAX_COMMAND_LINE_LENGTH = process.platform === "win32" ? 30000 : 200000;
 function redactSensitiveContent(text: string): string {
   if (!text) return text;
   let redacted = text;
-  redacted = redacted.replace(/\b(sk-[a-zA-Z0-9_\-]{20,})\b/g, "[REDACTED_API_KEY]");
+  redacted = redacted.replace(/\b(sk-[a-zA-Z0-9_]{20,})\b/g, "[REDACTED_API_KEY]");
   redacted = redacted.replace(/\b([a-f0-9]{40,})\b/gi, "[REDACTED_HEX_KEY]");
   redacted = redacted.replace(/\b([A-Za-z0-9+/]{40,}={0,2})\b/g, "[REDACTED_B64_KEY]");
   redacted = redacted.replace(/(--api-key\s+)\S+/gi, "$1[REDACTED]");
@@ -350,9 +352,9 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
     result.stderr += `[cdev] stripped ${sanitized.stripped} orphaned tool message(s) from session snapshot\n`;
   }
   const tmp = writeTempSessionJsonl(sanitized.jsonl);
-  let sessionFilePath = tmp.filePath;
+  const sessionFilePath = tmp.filePath;
   let taskArg = task;
-  let exitCode = -1;
+  let exitCode: number;
 
   try {
     const { command, prefixArgs } = resolvePiSpawn();

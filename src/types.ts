@@ -196,6 +196,8 @@ export interface CdevFindingRecord {
   models: string;
   /** Cost of the fork that produced this finding. */
   cost: number;
+  /** Prompt version used to produce this finding. */
+  promptVersion?: string;
   /** SHA256 hashes of files that support this finding (path → hash). */
   fileFingerprints?: Record<string, string>;
 }

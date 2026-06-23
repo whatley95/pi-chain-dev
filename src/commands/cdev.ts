@@ -182,9 +182,9 @@ export function registerCdevCommand(
         if (cleanArg) {
           // Diff specs look like "HEAD~3..HEAD", "main..feature", "r1234:1235", or "r1234-1235".
           // A plain relative path such as "../src/foo.ts" should not match.
-          const isDiff = (/^[^/\\]+\.\.[^/\\]*$/.test(cleanArg) || /^r\d+[\-\:]\d+$/.test(cleanArg)) &&
-                         !/[\\\/]/.test(cleanArg);
-          const looksLikePath = /[\\\/]/.test(cleanArg) || /\.[a-z]{2,6}$/i.test(cleanArg);
+          const isDiff = (/^[^/\\]+\.\.[^/\\]*$/.test(cleanArg) || /^r\d+[-:]\d+$/.test(cleanArg)) &&
+                         !/[\\/]/.test(cleanArg);
+          const looksLikePath = /[\\/]/.test(cleanArg) || /\.[a-z]{2,6}$/i.test(cleanArg);
           if (isDiff) {
             ctx.ui.notify(`Reviewing diff ${cleanArg}…`, "info");
             pi.sendUserMessage(`Review the diff ${cleanArg} using cdev with review=true, diffSpec="${cleanArg}".`, { triggerTurn: true, deliverAs: "steer" });
@@ -480,6 +480,6 @@ export function registerLifecycleHandlers(_pi: ExtensionAPI, ctx: ExtensionConte
         }
       } catch { /* svn not available */ }
     }
-    try { mkdirSync(join(ctx.cwd, ".pi"), { recursive: true }); writeFileSync(sentinelPath, "", "utf-8"); } catch {}
+    try { mkdirSync(join(ctx.cwd, ".pi"), { recursive: true }); writeFileSync(sentinelPath, "", "utf-8"); } catch { /* ignore */ }
   }
 }

@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { buildReviewPrompt, buildFileReviewPrompt, buildDiffReviewPrompt } from "./prompts.js";
 import { runStageWithRetry } from "./fork-stage.js";
 import { extractFilePaths } from "./memory.js";
+import { isPathUnderCwd } from "./path-guards.js";
 import type { StageProfile, ForkResult, AutoForkDetails } from "./types.js";
 import { emptyFailedResult } from "./types.js";
 
@@ -107,7 +108,9 @@ export async function runFileReview(opts: {
   let totalBytes = 0;
   for (const candidate of filePaths.slice(0, MAX_REF_FILES)) {
     if (totalBytes >= MAX_REF_BYTES) break;
-    const fullPath = path.join(cwd, candidate);
+    const fullPath = path.resolve(cwd, candidate);
+    if (!isPathUnderCwd(cwd, fullPath)) continue;
+    if (!fs.existsSync(fullPath)) continue;
     try {
       const content = fs.readFileSync(fullPath, "utf-8");
       if (totalBytes + content.length > MAX_REF_BYTES) {

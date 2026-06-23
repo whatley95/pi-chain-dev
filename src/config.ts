@@ -92,7 +92,7 @@ function resolveEffortProfilesFromPiFork(
       if (profile) profiles[level] = profile;
     }
     return Object.keys(profiles).length > 0 ? profiles : undefined;
-  } catch (err) {
+  } catch {
     // No cwd available here; log to console is not allowed. Caller will use defaults.
     return undefined;
   }

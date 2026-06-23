@@ -17,6 +17,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkS
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import type { CdevMemory, CdevTopic, CdevFindingRecord } from "./types.js";
+import { PROMPT_VERSION } from "./prompt-version.js";
 import { formatCost } from "./extension-context.js";
 import { logWarn, logError } from "./logger.js";
 
@@ -97,15 +98,15 @@ export function extractFilePaths(text: string, cwd: string): string[] {
   // Multiple patterns to catch different path representations
   const patterns = [
     // Explicit paths: src/foo/bar.ts, app/models/user.rb
-    /(?:^|\s|[`'"([{<])(\.{0,2}[/\\])?([\w@.\-]+(?:[/\\][\w@.\-]+)+(?:\.\w{1,8}))(?:[:"',)}\]>\s]|$)/gm,
+    /(?:^|\s|[`'"([{<])(\.{0,2}[/\\])?([\w@.-]+(?:[/\\][\w@.-]+)+(?:\.\w{1,8}))(?:[:"',)}\]>\s]|$)/gm,
     // Paths after common markers: "in file X", "at path X", "the file X"
-    /(?:file|path|module|package|class)\s+[`'"]?(\.{0,2}[/\\])?([\w@.\-]+(?:[/\\][\w@.\-]+)+(?:\.\w{1,8}))[`'"]?/gi,
+    /(?:file|path|module|package|class)\s+[`'"]?(\.{0,2}[/\\])?([\w@.-]+(?:[/\\][\w@.-]+)+(?:\.\w{1,8}))[`'"]?/gi,
     // Backtick-enclosed paths with directory: `src/foo/bar.ts`
-    /`(\.{0,2}[/\\])?([\w@.\-]+(?:[/\\][\w@.\-]+)+(?:\.\w{1,8}))`/g,
+    /`(\.{0,2}[/\\])?([\w@.-]+(?:[/\\][\w@.-]+)+(?:\.\w{1,8}))`/g,
     // Backtick-enclosed bare filenames with extension: `config.ts`
-    /`([\w@.\-]+\.\w{1,8})`/g,
+    /`([\w@.-]+\.\w{1,8})`/g,
     // JSON-like paths: "path/to/file.ts"
-    /"([\w@.\-]+(?:[/\\][\w@.\-]+)+(?:\.\w{1,8}))"/g,
+    /"([\w@.-]+(?:[/\\][\w@.-]+)+(?:\.\w{1,8}))"/g,
   ];
 
   const paths: string[] = [];
@@ -212,6 +213,7 @@ export interface IndexFindingsInput {
   quick: boolean;
   cost: number;
   cwd: string;
+  promptVersion?: string;   // prompt version used to produce the result
 }
 
 export function indexFindings(input: IndexFindingsInput): string | null {
@@ -229,7 +231,7 @@ export function indexFindingsAsync(input: IndexFindingsInput): Promise<string | 
 }
 
 function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
-  const { task, resultText, stage1Model, stage2Model, isReview, quick, cost, cwd } = input;
+  const { task, resultText, stage1Model, stage2Model, isReview, quick, cost, cwd, promptVersion } = input;
 
   const filePaths = extractFilePaths(resultText, cwd);
   const topic = extractTopicFromTask(task, filePaths);
@@ -264,6 +266,7 @@ function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
     stage,
     models,
     cost,
+    promptVersion: promptVersion ?? PROMPT_VERSION,
     fileFingerprints: Object.keys(fingerprints).length > 0 ? fingerprints : undefined,
   };
 

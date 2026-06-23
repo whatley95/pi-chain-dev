@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseInheritedCliArgs } from "../src/runner-cli.js";
-import { processPiEvent, processPiJsonLine, getFinalAssistantText, stableStringify } from "../src/runner-events.js";
+import { processPiEvent, getFinalAssistantText, stableStringify } from "../src/runner-events.js";
 import { buildSessionSnapshotJsonl, resolveStageProfiles, formatResultContent, estimateSessionSize, checkSessionCostAlert } from "../src/extension-context.js";
 import { formatStage2Report, parseStage2Report, isStage1Findings, parseStage1Findings } from "../src/json-extract.js";
 import { buildPiArgs, estimateCommandLineLength, appendTaskToSessionJsonl } from "../src/fork-stage.js";
@@ -13,7 +13,8 @@ import { buildFileReviewPrompt } from "../src/prompts.js";
 import { parseReviewVerdict, mergeStage1Findings } from "../src/fork-orchestrator.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
-import { emptyUsage, emptyFailedResult } from "../src/types.js";
+import { emptyFailedResult } from "../src/types.js";
+import { PROMPT_VERSION } from "../src/prompt-version.js";
 
 // ── runner-cli.ts ────────────────────────────────────────
 
@@ -382,6 +383,7 @@ describe("appendTaskToSessionJsonl (fork-stage.ts)", () => {
     const system = JSON.parse(lines[1]);
     assert.strictEqual(system.role, "system");
     assert.ok(system.content[0].text.includes("explore auth"));
+    assert.strictEqual(system.cdev_prompt_version, PROMPT_VERSION);
     const user = JSON.parse(lines[2]);
     assert.strictEqual(user.role, "user");
   });

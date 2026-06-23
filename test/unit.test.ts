@@ -48,7 +48,7 @@ describe("extractFilePaths (memory.ts)", () => {
   });
 
   it("extracts paths from double-quoted strings", () => {
-    const text = 'The config is at \"src/config.ts\" and types at \"src/types.ts\".';
+    const text = 'The config is at "src/config.ts" and types at "src/types.ts".';
     const cwd = process.cwd();
     const result = extractFilePaths(text, cwd);
     assert.ok(result.includes("src/types.ts"));
