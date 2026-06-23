@@ -177,10 +177,8 @@ export async function executeCdevTool(
         ctx.ui.setWidget("cdev-progress", undefined);
 
         const reviewText = getFinalAssistantText(result.messages);
-        const reviewDate = new Date().toISOString().split("T")[0];
-        let reportRelPath = p.reviewFile;
+        let reportRelPath = "";
         if (reviewText && !result.errorMessage) {
-          const appendText = `\n\n---\n\n## Review (${reviewDate})\n\n**Reviewer:** ${details.stage2?.model ?? "?"}\n\n${reviewText}\n`;
           const reviewSlug = `review-${p.reviewFile.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 40)}-${Date.now().toString(36)}.md`;
           const { reportRelPath: standaloneRel } = writeReportFile({
             cwd: ctx.cwd,
@@ -188,8 +186,6 @@ export async function executeCdevTool(
             title: `Review: ${p.reviewFile}`,
             reviewer: details.stage2?.model ?? "?",
             body: reviewText,
-            appendTo: filePath,
-            appendBody: appendText,
           });
           reportRelPath = standaloneRel;
         }
@@ -224,8 +220,8 @@ export async function executeCdevTool(
           isError
         );
         const actionNote = hasIssues
-          ? `\n\n---\n⚠️  Review found issues. Read the updated report at ${p.reviewFile}\nand address the new Action Items in the ## Review section.\n📄 Standalone review: ${reportRelPath}\nCheck them off in the report file when done.`
-          : `\n\n---\n✅ Review passed. Report updated at ${p.reviewFile}\n📄 Standalone review: ${reportRelPath}`;
+          ? `\n\n---\n⚠️  Review found issues. Read the report at ${reportRelPath}\nand address the new Action Items. Check them off in the report file when done.`
+          : `\n\n---\n✅ Review passed. Report saved at ${reportRelPath}`;
 
         return {
           content: [{ type: "text" as const, text: reviewOutput + actionNote }],
