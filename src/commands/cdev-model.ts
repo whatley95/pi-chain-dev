@@ -31,12 +31,14 @@ export function createCdevModelHandler(): (args: string, ctx: ExtensionContext) 
       const config = loadConfig(ctx.cwd);
       const reviewProfile = config.review ?? config.stage2;
       const stagePick = await ctx.ui.select("Pick model:", [
-        `Scout (explore)  [${config.stage1.provider || "?"}/${config.stage1.id || "?"}]`,
+        `Scout A (explore)  [${config.stage1.provider || "?"}/${config.stage1.id || "?"}]`,
+        `Scout B (verify)   [${config.stage1b?.provider || config.stage1.provider || "?"}/${config.stage1b?.id || config.stage1.id || "?"}]`,
         `Forge (synthesize)  [${config.stage2.provider || "?"}/${config.stage2.id || "?"}]`,
         `Review  [${reviewProfile.provider || "?"}/${reviewProfile.id || "?"}]`,
       ]);
       if (!stagePick) return;
-      const stage = stagePick.startsWith("Scout") ? "stage1"
+      const stage = stagePick.startsWith("Scout A") ? "stage1"
+        : stagePick.startsWith("Scout B") ? "stage1b"
         : stagePick.startsWith("Forge") ? "stage2"
         : "review";
 

@@ -444,6 +444,7 @@ export async function executeCdevTool(
       task: withAuditGuard(p.task),
       forkSessionSnapshotJsonl: snapshot,
       stage1Profile: profiles.stage1,
+      stage1bProfile: config.stage1b,
       stage2Profile: profiles.stage2,
       customExplorePrompt: config.promptsEnabled ? config.prompts?.explore : undefined,
       customSynthesizePrompt: config.promptsEnabled ? config.prompts?.synthesize : undefined,

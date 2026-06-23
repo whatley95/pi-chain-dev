@@ -104,6 +104,7 @@ export function loadConfig(cwd: string): AutoForkConfig {
     ...globalConfig,
     ...projectConfig,
     stage1: projectConfig.stage1 || globalConfig.stage1 || DEFAULT_CONFIG.stage1,
+    stage1b: projectConfig.stage1b || globalConfig.stage1b,
     stage2: projectConfig.stage2 || globalConfig.stage2 || DEFAULT_CONFIG.stage2,
     // Deep-merge prompts so project can override individual keys without losing global
     prompts: {
@@ -115,6 +116,7 @@ export function loadConfig(cwd: string): AutoForkConfig {
     promptsEnabled: projectConfig.promptsEnabled ?? globalConfig.promptsEnabled ?? DEFAULT_CONFIG.promptsEnabled,
     memory: projectConfig.memory ?? globalConfig.memory ?? DEFAULT_CONFIG.memory,
     themed: projectConfig.themed ?? globalConfig.themed ?? DEFAULT_CONFIG.themed,
+    autoVerify: projectConfig.autoVerify ?? globalConfig.autoVerify ?? DEFAULT_CONFIG.autoVerify,
     signature: projectConfig.signature ?? globalConfig.signature,
   };
 
@@ -150,10 +152,12 @@ function readNamespacedConfig(settingsPath: string): Partial<AutoForkConfig> {
     const parsed: Partial<AutoForkConfig> = {};
 
     const stage1 = parseStageProfile(config.stage1);
+    const stage1b = parseStageProfile(config.stage1b);
     const stage2 = parseStageProfile(config.stage2);
     const review = parseStageProfile(config.review);
 
     if (stage1) parsed.stage1 = stage1;
+    if (stage1b) parsed.stage1b = stage1b;
     if (stage2) parsed.stage2 = stage2;
     if (review) parsed.review = review;
     if (typeof config.offline === "boolean") parsed.offline = config.offline;

@@ -976,6 +976,8 @@ export interface RunAutoForkOptions {
   task: string;
   forkSessionSnapshotJsonl: string;
   stage1Profile: StageProfile;
+  /** Optional second scout model for verify mode. Falls back to stage1Profile if unset. */
+  stage1bProfile?: StageProfile;
   stage2Profile: StageProfile;
   customExplorePrompt?: string;
   customSynthesizePrompt?: string;
@@ -1000,8 +1002,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   result: ForkResult;
   details: AutoForkDetails;
 }> {
-  const { cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage2Profile,
-          customExplorePrompt, customSynthesizePrompt,
+  const { cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage1bProfile,
+          stage2Profile, customExplorePrompt, customSynthesizePrompt,
           quick = false, verify = false,
           extensions = null, environment = {}, offline = true, signal } = opts;
 
@@ -1019,13 +1021,13 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   let stage1Findings: Stage1Findings | null = null;
   const onUpdate = opts.onUpdate;
 
-  async function runStage1Run(label: string): Promise<ForkResult> {
+  async function runStage1Run(label: string, profile?: StageProfile): Promise<ForkResult> {
     return runStageWithRetry({
       cwd,
       task: stage1Task,
       stageLabel: label,
       forkSessionJsonl: forkSessionSnapshotJsonl,
-      stageProfile: stage1Profile,
+      stageProfile: profile || stage1Profile,
       extensions,
       environment,
       offline,
@@ -1039,12 +1041,13 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   }
 
   if (verify) {
-    // Self-consistency: run stage 1 twice concurrently. The two independent
-    // samples are merged before forge. We no longer pass --temperature because
-    // the Pi CLI does not support it across all providers.
+    // Self-consistency: run stage 1 twice. If stage1bProfile is configured,
+    // use it for the second run to get model-diversity coverage; otherwise use
+    // stage1Profile twice for independent sampling.
+    const secondProfile = stage1bProfile && stage1bProfile.provider && stage1bProfile.id ? stage1bProfile : stage1Profile;
     const [runA, runB] = await Promise.all([
-      runStage1Run("exploration A"),
-      runStage1Run("exploration B"),
+      runStage1Run("exploration A", stage1Profile),
+      runStage1Run("exploration B", secondProfile),
     ]);
 
     // Combine usage from both runs into the primary stage1 result

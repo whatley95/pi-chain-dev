@@ -25,6 +25,8 @@ export interface PromptsConfig {
 export interface AutoForkConfig {
   /** Model profile for Stage 1 (cheap exploration). */
   stage1: StageProfile;
+  /** Optional second scout model for verify mode. Falls back to stage1 if unset. */
+  stage1b?: StageProfile;
   /** Model profile for Stage 2 (expensive synthesis). */
   stage2: StageProfile;
   /** Optional override model for review mode. Falls back to stage2 if unset. */
