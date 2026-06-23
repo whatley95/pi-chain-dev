@@ -31,6 +31,7 @@ export interface AutoForkParamsType {
   review?: boolean;
   quick?: boolean;
   verify?: boolean;
+  plan?: boolean;
   yolo?: boolean;
   recall?: string;
   reviewFile?: string;
@@ -45,7 +46,7 @@ function validateAutoForkParams(params: Record<string, unknown>): { valid: true;
     if (typeof params.task !== "string") errors.push("task must be a string");
     else out.task = params.task;
   }
-  for (const key of ["review", "quick", "verify", "yolo"] as const) {
+  for (const key of ["review", "quick", "verify", "plan", "yolo"] as const) {
     if (params[key] !== undefined) {
       if (typeof params[key] !== "boolean") errors.push(`${key} must be a boolean`);
       else out[key] = params[key];
@@ -558,11 +559,12 @@ export async function executeCdevTool(
       };
     }
 
+    const isPlan = p.plan === true;
     const onProgress = (stage: string, model: string) => {
       if (stage === "scout") {
         ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${verify ? "🔍🔍" : "🔍"} Scout exploring…  (${model})`)]);
       } else {
-        ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge synthesizing…  (${model})`)]);
+        ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${isPlan ? "📋" : "⚒️"} Forge ${isPlan ? "planning" : "synthesizing"}…  (${model})`)]);
       }
     };
     const modelStr = (prof: typeof profiles.stage1) => prof.thinking ? `${prof.provider}:${prof.id} • ${prof.thinking}` : `${prof.provider}:${prof.id}`;
@@ -577,12 +579,15 @@ export async function executeCdevTool(
       stage2Profile: profiles.stage2,
       customExplorePrompt: config.promptsEnabled ? config.prompts?.explore : undefined,
       customSynthesizePrompt: config.promptsEnabled ? config.prompts?.synthesize : undefined,
+      customPlanPrompt: config.promptsEnabled ? config.prompts?.plan : undefined,
       quick,
       verify,
+      plan: isPlan,
+      confidenceGates: config.confidenceGates,
       onProgress,
       onUpdate: (update) => {
-        const icon = update.stage.includes("exploration") || update.stage === "scout" ? "🔍" : "⚒️";
-        const label = update.stage.includes("exploration") || update.stage === "scout" ? "Scout" : "Forge";
+        const icon = update.stage.includes("exploration") || update.stage === "scout" ? "🔍" : isPlan ? "📋" : "⚒️";
+        const label = update.stage.includes("exploration") || update.stage === "scout" ? "Scout" : isPlan ? "Planner" : "Forge";
         const activity = update.activity ? `  ${update.activity}` : "";
         ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${label} ${update.stage}…${activity}`)]);
       },
@@ -608,7 +613,7 @@ export async function executeCdevTool(
         const { reportRelPath: savedPath } = writeReportFile({
           cwd: ctx.cwd,
           fileName: `${slug}.md`,
-          title: "cdev report",
+          title: isPlan ? "cdev plan" : "cdev report",
           body: reportText,
         });
         reportRelPath = savedPath;
@@ -623,7 +628,7 @@ export async function executeCdevTool(
         task: p.task,
         resultText: getFinalAssistantText(result.messages) || "",
         stage1Model: config.stage1.id,
-        stage2Model: p.quick ? undefined : config.stage2.id,
+        stage2Model: p.quick || isPlan ? undefined : config.stage2.id,
         isReview: false,
         quick: p.quick ?? false,
         cost: result.usage?.cost ?? 0,
@@ -646,7 +651,7 @@ export async function executeCdevTool(
     maybeWarnSessionSize(ctx);
 
     const reportNote = reportRelPath
-      ? `\n\n---\n📄 Report saved: ${reportRelPath}\nAfter implementing findings, update this file to track what was done (check off items, add notes). Use /cdev review ${reportRelPath} to get a second opinion.`
+      ? `\n\n---\n📄 ${isPlan ? "Plan" : "Report"} saved: ${reportRelPath}\n${isPlan ? "Review the plan before implementing." : "After implementing findings, update this file to track what was done (check off items, add notes). Use /cdev review ${reportRelPath} to get a second opinion."}`
       : "";
 
     return {

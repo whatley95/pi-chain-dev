@@ -65,6 +65,15 @@ export function formatStage2Report(report: Stage2Report): string {
   lines.push(`## Evidence`);
   lines.push(report.evidence);
   lines.push("");
+  if (report.coverage) {
+    const c = report.coverage;
+    lines.push(`## Coverage`);
+    lines.push(`- Files inspected: ${c.filesInspected}`);
+    lines.push(`- Files cited: ${c.filesCited}`);
+    lines.push(`- Commands run: ${c.commandsRun}`);
+    if (c.unreadLikelyFiles) lines.push(`- Unread likely files: ${c.unreadLikelyFiles}`);
+    lines.push("");
+  }
   if (report.groundingScore !== undefined) {
     const pct = Math.round(report.groundingScore * 100);
     const icon = pct >= 80 ? "✅" : pct >= 50 ? "⚠️" : "❌";
@@ -76,6 +85,12 @@ export function formatStage2Report(report: Stage2Report): string {
     } else {
       lines.push("All claims are grounded in the exploration evidence.");
     }
+    lines.push("");
+  }
+  if (report.qualityScore !== undefined) {
+    const pct = Math.round(report.qualityScore * 100);
+    const icon = pct >= 80 ? "✅" : pct >= 50 ? "⚠️" : "❌";
+    lines.push(`## Quality ${icon} ${pct}%${report.qualityNotes ? ` — ${report.qualityNotes}` : ""}`);
     lines.push("");
   }
   lines.push(`## Learnings`);

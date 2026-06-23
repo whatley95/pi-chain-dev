@@ -31,7 +31,7 @@ export function registerCdevCommand(
   updatePromptsStatus: (ctx: ExtensionContext) => void,
 ): void {
   pi.registerCommand("cdev", {
-    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, verify <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off",
+    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, verify <task>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
 
@@ -231,6 +231,18 @@ export function registerCdevCommand(
         return;
       }
 
+      // ── Subcommand: plan ──
+      if (trimmed.startsWith("plan ")) {
+        const planTask = trimmed.slice(5).trim();
+        if (!planTask) {
+          ctx.ui.notify("Usage: /cdev plan <task>", "warn");
+          return;
+        }
+        ctx.ui.notify(`Queuing implementation plan (scout + planner)...`, "info");
+        pi.sendUserMessage(`Use cdev with plan=true to: ${planTask}`, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
+
       // ── Subcommand: yolo on|off ──
       if (trimmed === "yolo on" || trimmed === "yolo off") {
         const enable = trimmed === "yolo on";
@@ -342,6 +354,7 @@ export function registerCdevCommand(
           "/cdev <task>           Scout + Forge explore",
           "/cdev quick <task>     Scout only (fast)",
           "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
+          "/cdev plan <task>      Scout + planner (implementation plan only)",
           "/cdev yolo <task>     Scout + forge, then review-fix loops",
           "/cdev review [path]    Forge review session/file",
           "/cdev review A..B      Review git/svn diff",
@@ -371,6 +384,7 @@ export function registerCdevCommand(
           "Subcommands:",
           "  quick <task>     Scout only (fast findings)",
           "  verify <task>    Scout ×2 + forge (higher accuracy)",
+          "  plan <task>      Scout + planner (implementation plan only)",
           "  yolo <task>      Scout + forge, then review-fix loops",
           "  review [path]    Forge review session, file, or diff",
           "  scan [deep]      Generate custom prompts",
@@ -392,7 +406,7 @@ export function registerCdevCommand(
       }
 
       // ── Fuzzy match ──
-      const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "help", "clear", "yolo"];
+      const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "help", "clear", "yolo", "verify", "plan"];
       const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
       const isSingleWord = !trimmed.includes(" ");
       const fuzzy = subcommands.find(cmd => {

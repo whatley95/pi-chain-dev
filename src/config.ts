@@ -8,8 +8,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
-import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig, YoloConfig } from "./types.js";
-import { normalizeYoloConfig } from "./types.js";
+import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig, YoloConfig, ConfidenceGateConfig } from "./types.js";
+import { normalizeYoloConfig, normalizeConfidenceGates } from "./types.js";
 import { logError } from "./logger.js";
 
 let getAgentDirImpl: () => string;
@@ -48,15 +48,22 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   themed: false,
   autoVerify: true,
   signature: undefined,
-    maxForkCost: 0,
-    maxSessionCost: 0,
-    yolo: {
-      enabled: false,
-      maxRounds: 3,
-      stopOnPass: true,
-      autoApply: "off",
-    },
-  };
+  maxForkCost: 0,
+  maxSessionCost: 0,
+  confidenceGates: {
+    minFindings: 3,
+    maxLowConfidenceRatio: 0.5,
+    minFileAnchors: 1,
+    minCommandEvidence: 1,
+    autoReExplore: true,
+  },
+  yolo: {
+    enabled: false,
+    maxRounds: 3,
+    stopOnPass: true,
+    autoApply: "off",
+  },
+};
 
 function isThinkingLevel(value: unknown): value is ForkThinkingLevel {
   return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value);
@@ -121,6 +128,12 @@ export function loadConfig(cwd: string): AutoForkConfig {
       ...globalConfig.prompts,
       ...projectConfig.prompts,
     },
+    // Deep-merge confidence gates so project can tune thresholds without losing defaults
+    confidenceGates: normalizeConfidenceGates({
+      ...DEFAULT_CONFIG.confidenceGates,
+      ...globalConfig.confidenceGates,
+      ...projectConfig.confidenceGates,
+    }),
     // Deep-merge yolo config so project can toggle enabled without losing global profiles
     yolo: normalizeYoloConfig({
       ...DEFAULT_CONFIG.yolo,
@@ -190,6 +203,18 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (typeof config.maxForkCost === "number") parsed.maxForkCost = Math.max(0, Number.isFinite(config.maxForkCost) ? config.maxForkCost : 0);
     if (typeof config.maxSessionCost === "number") parsed.maxSessionCost = Math.max(0, Number.isFinite(config.maxSessionCost) ? config.maxSessionCost : 0);
 
+    // Parse confidence gates
+    if (config.confidenceGates && typeof config.confidenceGates === "object") {
+      const gates = config.confidenceGates as Record<string, unknown>;
+      const parsedGates: ConfidenceGateConfig = {};
+      if (typeof gates.minFindings === "number") parsedGates.minFindings = gates.minFindings;
+      if (typeof gates.maxLowConfidenceRatio === "number") parsedGates.maxLowConfidenceRatio = gates.maxLowConfidenceRatio;
+      if (typeof gates.minFileAnchors === "number") parsedGates.minFileAnchors = gates.minFileAnchors;
+      if (typeof gates.minCommandEvidence === "number") parsedGates.minCommandEvidence = gates.minCommandEvidence;
+      if (typeof gates.autoReExplore === "boolean") parsedGates.autoReExplore = gates.autoReExplore;
+      parsed.confidenceGates = parsedGates;
+    }
+
     // Parse yolo config
     if (config.yolo && typeof config.yolo === "object") {
       const yolo = config.yolo as Record<string, unknown>;
@@ -209,7 +234,7 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (config.prompts && typeof config.prompts === "object") {
       const prompts = config.prompts as Record<string, unknown>;
       const parsedPrompts: Record<string, string> = {};
-      for (const key of ["explore", "synthesize", "review"]) {
+      for (const key of ["explore", "synthesize", "plan", "review"]) {
         if (typeof prompts[key] === "string" && (prompts[key] as string).trim()) {
           parsedPrompts[key] = (prompts[key] as string).trim();
         }

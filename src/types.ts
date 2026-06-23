@@ -17,8 +17,24 @@ export interface PromptsConfig {
   explore?: string;
   /** Custom prompt for Stage 2 synthesis. */
   synthesize?: string;
+  /** Custom prompt for plan mode. */
+  plan?: string;
   /** Custom prompt for review mode. */
   review?: string;
+}
+
+/** Gate thresholds for deciding whether scout evidence is strong enough for forge. */
+export interface ConfidenceGateConfig {
+  /** Minimum number of findings required. Default 3. */
+  minFindings?: number;
+  /** Maximum ratio of low-confidence findings (0.0-1.0). Default 0.5. */
+  maxLowConfidenceRatio?: number;
+  /** Minimum number of findings with file anchors. Default 1. */
+  minFileAnchors?: number;
+  /** Minimum number of findings with command/output evidence. Default 1. */
+  minCommandEvidence?: number;
+  /** If true, gate failures trigger an automatic re-explore. Default true. */
+  autoReExplore?: boolean;
 }
 
 /** Configuration stored under "pi-chain-dev" key in settings.json. */
@@ -57,6 +73,8 @@ export interface AutoForkConfig {
   maxForkCost?: number;
   /** Maximum total cost (USD) for cdev in the current session. 0 = unlimited. */
   maxSessionCost?: number;
+  /** Confidence gate thresholds before forge runs. */
+  confidenceGates?: ConfidenceGateConfig;
   /** YOLO mode: auto review → fix loops. */
   yolo?: YoloConfig;
 }
@@ -93,6 +111,38 @@ export function formatYoloStatus(config?: YoloConfig): string {
   const normalized = normalizeYoloConfig(config);
   if (!normalized.enabled) return "OFF";
   return `ON (max ${normalized.maxRounds} rounds, auto-apply ${normalized.autoApply})`;
+}
+
+export function normalizeConfidenceGates(config?: ConfidenceGateConfig): Required<ConfidenceGateConfig> {
+  return {
+    minFindings: Math.max(0, config?.minFindings ?? 3),
+    maxLowConfidenceRatio: Math.min(1, Math.max(0, config?.maxLowConfidenceRatio ?? 0.5)),
+    minFileAnchors: Math.max(0, config?.minFileAnchors ?? 1),
+    minCommandEvidence: Math.max(0, config?.minCommandEvidence ?? 1),
+    autoReExplore: config?.autoReExplore ?? true,
+  };
+}
+
+export function evaluateConfidenceGates(findings: Stage1Findings, gates?: ConfidenceGateConfig): { passed: boolean; reasons: string[] } {
+  const g = normalizeConfidenceGates(gates);
+  const reasons: string[] = [];
+  if (findings.findings.length < g.minFindings) {
+    reasons.push(`only ${findings.findings.length} finding(s) (min ${g.minFindings})`);
+  }
+  const lowCount = findings.findings.filter((f) => f.confidence === "low").length;
+  const lowRatio = findings.findings.length > 0 ? lowCount / findings.findings.length : 0;
+  if (lowRatio > g.maxLowConfidenceRatio) {
+    reasons.push(`${Math.round(lowRatio * 100)}% low confidence (max ${Math.round(g.maxLowConfidenceRatio * 100)}%)`);
+  }
+  const fileAnchors = new Set(findings.findings.map((f) => f.file).filter(Boolean)).size;
+  if (fileAnchors < g.minFileAnchors) {
+    reasons.push(`${fileAnchors} file anchor(s) (min ${g.minFileAnchors})`);
+  }
+  const commandEvidence = findings.findings.filter((f) => f.evidence && /\$\s*\w+|`[^`]+`|output|stdout|stderr|command/i.test(f.evidence)).length;
+  if (commandEvidence < g.minCommandEvidence) {
+    reasons.push(`${commandEvidence} command evidence item(s) (min ${g.minCommandEvidence})`);
+  }
+  return { passed: reasons.length === 0, reasons };
 }
 
 export interface UsageStats {
@@ -223,6 +273,10 @@ export interface Stage1Findings {
   assumptions?: string[];
   /** Questions the main agent should resolve. */
   openQuestions?: string[];
+  /** Coverage statistics collected during exploration. */
+  coverage?: SourceCoverageStats;
+  /** Contradictions found between multiple scout runs. */
+  contradictions?: FindingContradiction[];
 }
 
 export function isStage1Findings(value: unknown): value is Stage1Findings {
@@ -261,6 +315,27 @@ export interface Stage2Report {
   groundingScore?: number;
   /** Claims that could not be backed by the stage 1 evidence. */
   ungroundedClaims?: string[];
+  /** Coverage statistics collected by the scout stage. */
+  coverage?: SourceCoverageStats;
+  /** Report quality score (evidence density, actionability, etc.). */
+  qualityScore?: number;
+  /** Human-readable quality assessment. */
+  qualityNotes?: string;
+}
+
+/** Coverage statistics for a scout/run. */
+export interface SourceCoverageStats {
+  filesInspected: number;
+  filesCited: number;
+  commandsRun: number;
+  unreadLikelyFiles?: number;
+}
+
+/** Contradiction between two scout findings. */
+export interface FindingContradiction {
+  observationA: string;
+  observationB: string;
+  summary: string;
 }
 
 export function isStage2Report(value: unknown): value is Stage2Report {
@@ -277,6 +352,9 @@ export function isStage2Report(value: unknown): value is Stage2Report {
   }
   if (v.groundingScore !== undefined && typeof v.groundingScore !== "number") return false;
   if (v.ungroundedClaims !== undefined && !Array.isArray(v.ungroundedClaims)) return false;
+  if (v.qualityScore !== undefined && typeof v.qualityScore !== "number") return false;
+  if (v.qualityNotes !== undefined && typeof v.qualityNotes !== "string") return false;
+  if (v.coverage !== undefined && (typeof v.coverage !== "object" || Array.isArray(v.coverage))) return false;
   return true;
 }
 

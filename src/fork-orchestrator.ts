@@ -1,4 +1,4 @@
-import { buildStage1Prompt, buildStage2Prompt, buildYoloReviewSnapshot, buildYoloFixTask } from "./prompts.js";
+import { buildStage1Prompt, buildStage2Prompt, buildPlanPrompt, buildYoloReviewSnapshot, buildYoloFixTask } from "./prompts.js";
 import { parseStage1Findings, parseStage2Report } from "./json-extract.js";
 import { runStageWithRetry, sanitizeSessionJsonl } from "./fork-stage.js";
 import { getFinalAssistantText } from "./runner-events.js";
@@ -6,8 +6,8 @@ import { runCdevReview } from "./review.js";
 import { withAuditGuard, formatCost, estimateForkCost, getSessionForkCost } from "./extension-context.js";
 import { saveSession } from "./history.js";
 import { writeReportFile } from "./report.js";
-import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, AutoForkConfig, YoloConfig } from "./types.js";
-import { emptyUsage, emptyFailedResult } from "./types.js";
+import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, AutoForkConfig, YoloConfig, ConfidenceGateConfig } from "./types.js";
+import { emptyUsage, emptyFailedResult, evaluateConfidenceGates } from "./types.js";
 
 export interface RunAutoForkOptions {
   cwd: string;
@@ -18,9 +18,12 @@ export interface RunAutoForkOptions {
   stage2Profile: StageProfile;
   customExplorePrompt?: string;
   customSynthesizePrompt?: string;
+  customPlanPrompt?: string;
   quick?: boolean;
   verify?: boolean;
+  plan?: boolean;
   editMode?: boolean;
+  confidenceGates?: ConfidenceGateConfig;
   onProgress?: (stage: "scout" | "forge", model: string) => void;
   onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
   extensions?: string[] | null;
@@ -34,8 +37,9 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   details: AutoForkDetails;
 }> {
   const { cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage1bProfile,
-          stage2Profile, customExplorePrompt, customSynthesizePrompt,
-          quick = false, verify = false, editMode = false,
+          stage2Profile, customExplorePrompt, customSynthesizePrompt, customPlanPrompt,
+          quick = false, verify = false, plan = false, editMode = false,
+          confidenceGates,
           extensions = null, environment = {}, offline = true, signal } = opts;
 
   const details: AutoForkDetails = { stage1: null, stage2: null };
@@ -107,7 +111,12 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     const validationB = findingsB ? validateStage1Findings(findingsB, "exploration B") : { valid: false, reason: "exploration B: output was not valid JSON findings" };
 
     if (validationA.valid && validationB.valid) {
+      const contradictions = detectContradictions(findingsA!, findingsB!);
       stage1Findings = mergeStage1Findings(findingsA!, findingsB!);
+      if (contradictions.length > 0) {
+        stage1Findings.contradictions = contradictions;
+        stage1Result.stderr += `\n[cdev] verify mode: found ${contradictions.length} contradiction(s) between scout runs\n`;
+      }
       stage1Result.stderr += `\n[cdev] verify mode: merged ${findingsA!.findings.length} + ${findingsB!.findings.length} findings into ${stage1Findings.findings.length} unique findings\n`;
     } else if (validationA.valid) {
       stage1Findings = findingsA;
@@ -148,8 +157,11 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     }
 
     const reExploreCheck = shouldReExplore(stage1Findings, verify);
-    if (reExploreCheck.should && !verify) {
-      stage1Result.stderr += `\n[cdev] ${reExploreCheck.reason}; running a second exploration pass\n`;
+    const gateCheck = stage1Findings ? evaluateConfidenceGates(stage1Findings, confidenceGates) : { passed: false, reasons: ["no valid findings"] };
+    const needsMoreExploration = reExploreCheck.should || !gateCheck.passed;
+    if (needsMoreExploration && !verify) {
+      const reason = gateCheck.passed ? reExploreCheck.reason : `confidence gate failed: ${gateCheck.reasons.join("; ")}`;
+      stage1Result.stderr += `\n[cdev] ${reason}; running a second exploration pass\n`;
       const secondRun = await runStage1Run("exploration (coverage pass)");
       const secondText = getFinalAssistantText(secondRun.messages) || "";
       const secondFindings = parseStage1Findings(secondText);
@@ -158,6 +170,10 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
         if (stage1Findings && secondFindings) {
           stage1Findings = mergeStage1Findings(stage1Findings, secondFindings);
           stage1Result.stderr += `\n[cdev] merged second pass: ${stage1Findings.findings.length} total findings\n`;
+          const finalGate = evaluateConfidenceGates(stage1Findings, confidenceGates);
+          if (!finalGate.passed) {
+            stage1Result.stderr += `\n[cdev] confidence gates still not met after second pass: ${finalGate.reasons.join("; ")}\n`;
+          }
         } else if (secondFindings) {
           stage1Findings = secondFindings;
         }
@@ -199,6 +215,63 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   const stage1Text = stage1Findings
     ? formatStage1FindingsForStage2(stage1Findings)
     : getFinalAssistantText(stage1Result.messages) || stage1Result.stderr || "(no output from exploration stage)";
+
+  if (plan) {
+    opts.onProgress?.("forge", stage2Profile.thinking ? `${stage2Profile.provider}:${stage2Profile.id} • ${stage2Profile.thinking}` : `${stage2Profile.provider}:${stage2Profile.id}`);
+    const planTask = buildPlanPrompt(task, stage1Text, customPlanPrompt);
+    let planResult: ForkResult;
+    try {
+      planResult = await runStageWithRetry({
+        cwd,
+        task: planTask,
+        stageLabel: "plan",
+        forkSessionJsonl: forkSessionSnapshotJsonl,
+        stageProfile: stage2Profile,
+        extensions,
+        environment,
+        offline,
+        signal,
+        noTools: true,
+        toolMode: "forge",
+        stageTimeoutMs: 180_000,
+        sanitizedSessionJsonl: sanitizedSnapshot,
+        retries: 1,
+        onUpdate,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      planResult = emptyFailedResult(task, `Plan stage failed: ${message}`);
+    }
+    details.stage2 = planResult;
+
+    const combinedUsage: UsageStats = emptyUsage();
+    const addUsage = (usage: UsageStats | undefined | null) => {
+      if (!usage) return;
+      combinedUsage.input += usage.input || 0;
+      combinedUsage.output += usage.output || 0;
+      combinedUsage.cacheRead += usage.cacheRead || 0;
+      combinedUsage.cacheWrite += usage.cacheWrite || 0;
+      combinedUsage.cost += usage.cost || 0;
+      combinedUsage.turns += usage.turns || 0;
+      combinedUsage.contextTokens = Math.max(combinedUsage.contextTokens, usage.contextTokens || 0);
+    };
+    addUsage(stage1Result.usage);
+    addUsage(planResult.usage);
+
+    const finalResult: ForkResult = {
+      task,
+      exitCode: planResult.exitCode > 0 ? planResult.exitCode : 0,
+      messages: planResult.messages,
+      stderr: [stage1Result.stderr, planResult.stderr].filter(Boolean).join("\n"),
+      usage: combinedUsage,
+      provider: planResult.provider || stage2Profile.provider,
+      model: planResult.model || stage2Profile.id,
+      stopReason: planResult.stopReason,
+      errorMessage: planResult.errorMessage,
+    };
+
+    return { result: finalResult, details };
+  }
 
   const stage2Task = buildStage2Prompt(task, stage1Text, customSynthesizePrompt, editMode);
 
@@ -363,7 +436,52 @@ export function mergeStage1Findings(a: Stage1Findings, b: Stage1Findings): Stage
   if (b.findings.length > a.findings.length && b.summary.length >= a.summary.length) {
     merged.summary = b.summary;
   }
+  if (a.coverage && b.coverage) {
+    merged.coverage = {
+      filesInspected: Math.max(a.coverage.filesInspected, b.coverage.filesInspected),
+      filesCited: Math.max(a.coverage.filesCited, b.coverage.filesCited),
+      commandsRun: Math.max(a.coverage.commandsRun, b.coverage.commandsRun),
+      unreadLikelyFiles: Math.min(a.coverage.unreadLikelyFiles ?? 0, b.coverage.unreadLikelyFiles ?? 0),
+    };
+  } else if (a.coverage || b.coverage) {
+    merged.coverage = a.coverage ?? b.coverage;
+  }
   return merged;
+}
+
+export function detectContradictions(a: Stage1Findings, b: Stage1Findings): import("./types.js").FindingContradiction[] {
+  const contradictions: import("./types.js").FindingContradiction[] = [];
+  const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, " ").trim();
+  for (const fa of a.findings) {
+    for (const fb of b.findings) {
+      if (fa.observation === fb.observation) continue;
+      const oa = normalize(fa.observation);
+      const ob = normalize(fb.observation);
+      // Same file but opposite confidence is a soft contradiction
+      if (fa.file && fb.file && fa.file === fb.file) {
+        const opposite = (fa.confidence === "high" && fb.confidence === "low") || (fa.confidence === "low" && fb.confidence === "high");
+        if (opposite && oa.length > 20 && ob.length > 20 && (oa.startsWith(ob.slice(0, 30)) || ob.startsWith(oa.slice(0, 30)))) {
+          contradictions.push({
+            observationA: fa.observation,
+            observationB: fb.observation,
+            summary: `Same file (${fa.file}) but opposite confidence: A=${fa.confidence}, B=${fb.confidence}`,
+          });
+        }
+      }
+      // Direct negation keywords
+      const negationWords = ["not ", "no ", "does not", "doesn't", "cannot", "can't", "missing", "absent"];
+      const aNeg = negationWords.some((w) => oa.includes(w));
+      const bNeg = negationWords.some((w) => ob.includes(w));
+      if (aNeg !== bNeg && oa.length > 25 && ob.length > 25 && (oa.startsWith(ob.slice(0, 35)) || ob.startsWith(oa.slice(0, 35)))) {
+        contradictions.push({
+          observationA: fa.observation,
+          observationB: fb.observation,
+          summary: "One finding affirms while the other negates a closely related point",
+        });
+      }
+    }
+  }
+  return contradictions.slice(0, 5);
 }
 
 export type ReviewVerdict = "pass" | "needs-work" | "blocked" | "unknown";

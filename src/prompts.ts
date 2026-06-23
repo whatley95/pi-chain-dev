@@ -16,7 +16,13 @@ export function buildStage1Prompt(task: string, customPrompt?: string, editMode?
   ],
   "deadEnds": ["optional paths that did not pan out"],
   "assumptions": ["optional assumptions made"],
-  "openQuestions": ["optional questions for the main agent"]
+  "openQuestions": ["optional questions for the main agent"],
+  "coverage": {
+    "filesInspected": 0,
+    "filesCited": 0,
+    "commandsRun": 0,
+    "unreadLikelyFiles": 0
+  }
 }`;
   if (customPrompt) {
     return `${customPrompt}
@@ -52,8 +58,9 @@ Rules:
 - "findings" is required. Each finding must have "observation" and "confidence".
 - "file" and "evidence" are optional but strongly preferred when applicable.
 - "deadEnds", "assumptions", "openQuestions" are optional.
+- "coverage" is required. Provide honest counts.
 - Do NOT write structured sections like "Result", "Output", "Evidence", or "Learnings" outside the JSON.
-- Do NOT write a decision-useful report. Only return the JSON object.${guard}`;
+- Estimate "coverage" honestly: count files you inspected, files cited in findings, commands you ran, and likely relevant files you did NOT read.${guard}`;
 }
 
 export function buildStage2Prompt(task: string, stage1Output: string, customPrompt?: string, editMode?: boolean): string {
@@ -66,7 +73,10 @@ export function buildStage2Prompt(task: string, stage1Output: string, customProm
   "learnings": "reusable knowledge: dead ends, wrong assumptions, couplings",
   "actionItems": ["concrete verifiable task 1", "concrete verifiable task 2"],
   "groundingScore": 0.0,
-  "ungroundedClaims": ["any claim in output that lacks support in previous_findings"]
+  "ungroundedClaims": ["any claim in output that lacks support in previous_findings"],
+  "coverage": {"filesInspected": 0, "filesCited": 0, "commandsRun": 0, "unreadLikelyFiles": 0},
+  "qualityScore": 0.0,
+  "qualityNotes": "brief assessment of evidence density, actionability, and unresolved questions"
 }`;
   if (customPrompt) {
     return `${customPrompt}
@@ -102,7 +112,66 @@ Rules:
 - "actionItems" is required. Each item must be a concrete, verifiable task string.
 - "groundingScore" is required. Rate from 0.0 to 1.0 how well each claim in "output" is supported by <previous_findings>. Be honest and strict.
 - "ungroundedClaims" is required. List any claim in "output" that is not directly backed by <previous_findings>. Use an empty array if everything is grounded.
+- "coverage" is required. Copy or refine the scout coverage counts.
+- "qualityScore" is required. Rate 0.0-1.0 the overall report quality: evidence density, actionability of actionItems, clarity of open questions, reuse of memory.
+- "qualityNotes" is required. One-sentence explanation of the qualityScore.
 - Do NOT use markdown headings like "## Result" outside the JSON.${guard}`;
+}
+
+export function buildPlanPrompt(task: string, stage1Output: string, customPrompt?: string): string {
+  const jsonSchema = `{
+  "status": "ok|needs-work|blocked|exploratory",
+  "summary": "one-paragraph summary of the plan",
+  "risks": ["risk 1", "risk 2"],
+  "files": {
+    "read": ["files already inspected"],
+    "toModify": ["files that will need changes"],
+    "toCreate": ["files that may need to be created"]
+  },
+  "steps": [
+    {"order": 1, "description": "what to do", "verification": "how to confirm it works"}
+  ],
+  "testCommands": ["command to run after implementation"],
+  "openQuestions": ["optional questions for the main agent"],
+  "groundingScore": 0.0,
+  "ungroundedClaims": ["any claim that lacks support in scout findings"],
+  "coverage": {"filesInspected": 0, "filesCited": 0, "commandsRun": 0, "unreadLikelyFiles": 0},
+  "qualityScore": 0.0,
+  "qualityNotes": "brief quality assessment"
+}`;
+  if (customPrompt) {
+    return `${customPrompt}
+
+Task: ${task}
+
+<scout_findings>
+${stage1Output}
+</scout_findings>
+
+Return a single JSON object matching this schema. Do not implement any code; produce only an implementation plan.
+${jsonSchema}`;
+  }
+  return `${task}
+
+A scout stage gathered these findings:
+
+<scout_findings>
+${stage1Output}
+</scout_findings>
+
+Your job: produce an implementation plan based on the findings above. Do NOT write code. Output only a plan.
+
+Return a single JSON object matching this schema (no markdown fences, no extra prose):
+${jsonSchema}
+
+Rules:
+- "status" is required.
+- "risks" is required. List concrete risks and how to mitigate them.
+- "files" is required. Separate read/verified files from files that need changes or creation.
+- "steps" is required. Each step must have order, description, and verification.
+- "testCommands" is required. Include commands that verify the change (tests, compile, lint).
+- "groundingScore" and "ungroundedClaims" are required. Be strict.
+- "coverage", "qualityScore", "qualityNotes" are required.`;
 }
 
 export function buildReviewPrompt(customPrompt?: string): string {
@@ -122,7 +191,15 @@ Use this structure:
 Summary of review: pass / needs-work / blocked. Key concerns in bullets.
 
 ## Issues Found
-Each issue as: File, Line, Severity, Description, Fix suggestion.
+Each issue MUST include:
+- **File:** relative path
+- **Line:** line number or snippet range
+- **Severity:** critical / high / medium / low
+- **Description:** concrete problem
+- **Reproduction/Logic:** how to trigger or why it is wrong
+- **Fix suggestion:** concrete code or approach
+
+Vague issues without file/line/evidence are not acceptable.
 
 ## Suggestions
 Improvements that aren't bugs: refactors, patterns, tests to add.
@@ -229,7 +306,15 @@ Use this structure:
 Summary: pass / needs-work / blocked. Key concerns in bullets.
 
 ## Issues Found
-Each issue as: File, Line, Severity, Description, Fix suggestion.
+Each issue MUST include:
+- **File:** relative path
+- **Line:** line number or snippet range
+- **Severity:** critical / high / medium / low
+- **Description:** concrete problem
+- **Reproduction/Logic:** how to trigger or why it is wrong
+- **Fix suggestion:** concrete code or approach
+
+Vague issues without file/line/evidence are not acceptable.
 
 ## New Action Items
 List any fixes needed as checkboxes.
