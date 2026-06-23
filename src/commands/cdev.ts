@@ -257,9 +257,20 @@ export function registerCdevCommand(
         return;
       }
 
+      // ── Subcommand: yolo mode manual|propose|auto ──
+      const yoloModeMatch = trimmed.match(/^yolo\s+(manual|propose|auto)$/);
+      if (yoloModeMatch) {
+        const mode = yoloModeMatch[1] as "manual" | "propose" | "auto";
+        const currentYolo = normalizeYoloConfig(config.yolo);
+        writeAgentSetting("yolo", { ...currentYolo, autoApply: mode });
+        const note = mode === "auto" ? " ⚠️ cdev will edit files automatically" : "";
+        ctx.ui.notify(`cdev yolo auto-apply set to ${mode}${note}`, "info");
+        return;
+      }
+
       // ── Subcommand: yolo usage ──
       if (trimmed === "yolo") {
-        ctx.ui.notify("Usage: /cdev yolo <task>   Scout + forge, then review-fix loops\n       /cdev yolo on|off    Toggle yolo mode", "info");
+        ctx.ui.notify("Usage:\n/cdev yolo <task>            Scout + forge, then review loops\n/cdev yolo on|off            Toggle yolo mode\n/cdev yolo manual|propose|auto  Set who applies fixes (manual=main agent, propose=cdev plan, auto=cdev edits)", "info");
         return;
       }
 
@@ -275,7 +286,8 @@ export function registerCdevCommand(
           ctx.ui.notify("YOLO mode is disabled. Enable with /cdev yolo on", "warn");
           return;
         }
-        ctx.ui.notify(`Queuing YOLO task (max ${yolo.maxRounds} rounds, auto-apply ${yolo.autoApply})...`, "info");
+        const autoApplyNote = yolo.autoApply === "auto" ? " [AUTO-EDIT]" : yolo.autoApply === "propose" ? " [propose fixes]" : " [main agent fixes]";
+        ctx.ui.notify(`Queuing YOLO task (max ${yolo.maxRounds} rounds${autoApplyNote})...`, "info");
         pi.sendUserMessage(`Use cdev with yolo=true to: ${yoloTask}`, { triggerTurn: true, deliverAs: "steer" });
         return;
       }
@@ -326,7 +338,7 @@ export function registerCdevCommand(
         lines.push(`  Project memory:   ${config.memory ? "ON" : "OFF"}`);
         lines.push(`  Auto-verify:      ${config.autoVerify ? "✓ ON (scout ×2)" : "OFF (scout ×1)"}`);
         const yolo = normalizeYoloConfig(config.yolo);
-        lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, auto-apply ${yolo.autoApply})` : "OFF"}`);
+        lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, ${yolo.autoApply === "auto" ? "auto-edit" : yolo.autoApply === "propose" ? "propose fixes" : "main agent fixes"})` : "OFF"}`);
         lines.push(`  Session size:     ${sessionSize} message${sessionSize === 1 ? "" : "s"}${sessionSize >= 40 ? "  ⚠️ consider /compact" : ""}`);
         lines.push(`  Session cost:     ${formatCost(sessionCost)}${config.maxSessionCost ? ` / ${formatCost(config.maxSessionCost)}` : ""}${costAlert ? `  ${costAlert.level === "critical" ? "🔴" : "🟡"} ${(costAlert.percent * 100).toFixed(0)}% of budget` : ""}`);
         lines.push(`  Today's cost:     ${formatCost(todayCost)}  (cdev forks only — excludes main agent usage)`);
@@ -360,7 +372,8 @@ export function registerCdevCommand(
           "/cdev quick <task>     Scout only (fast)",
           "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
           "/cdev plan <task>      Scout + planner (implementation plan only)",
-          "/cdev yolo <task>     Scout + forge, then review-fix loops",
+          "/cdev yolo <task>            Scout + forge, then review loops",
+          "/cdev yolo manual|propose|auto  Who applies fixes (auto = cdev edits files)",
           "/cdev review [path]    Forge review session/file",
           "/cdev review A..B      Review git/svn diff",
           "/cdev scan [deep]      Generate custom prompts",
@@ -374,7 +387,8 @@ export function registerCdevCommand(
           "/cdev themed on|off    Toggle themed TUI",
           "/cdev auto on|off      Toggle auto-trigger",
           "/cdev auto-verify on/off  Toggle automatic scout ×2",
-          "/cdev yolo on|off      Toggle YOLO review-fix loops",
+          "/cdev yolo on|off              Toggle YOLO review loops",
+          "/cdev yolo manual|propose|auto  Who applies fixes (auto = cdev edits files)",
         ]);
         return;
       }

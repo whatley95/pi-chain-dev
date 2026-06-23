@@ -24,7 +24,7 @@ Before using the `cdev` tool, ask:
 | Review recent changes | `cdev review` | Session-level review |
 | Review a specific file | `cdev review reviewFile=<path>` | Standalone report, **never modifies the file** |
 | Review a diff | `cdev review diffSpec=<range>` | Git/SVN diff review |
-| Auto review-fix loop | `cdev yolo <task>` | Scout + forge + review-fix rounds. Use only when task is scoped, tests exist, and budget is healthy |
+| Auto review-fix loop | `cdev yolo <task>` | **Default: main agent applies fixes.** cdev loops: scout → forge → review. Use `/cdev yolo manual` (default), `propose` (cdev writes fix plan), or `auto` (cdev edits files directly). |
 
 ## 3. Read the Report, Then Act
 
@@ -40,7 +40,7 @@ If the report has a **plan** section, use it as the implementation roadmap. Pref
 
 ## 4. Implement and Verify
 
-1. Make the changes yourself (cdev stages never edit code).
+1. Make the changes yourself (cdev stages never edit code unless yolo `autoApply` is set to `auto`).
 2. Update the report file: check off completed action items, add implementation notes.
 3. Re-run review if the change is significant: `cdev({ review: true, reviewFile: "<changedFile>" })` or `/cdev review` after a session-level change.
 4. Run relevant tests/compilation and report results.
@@ -60,10 +60,11 @@ After a successful exploration:
 - Prefer `quick` for narrow lookups.
 - Use `verify` only when accuracy is worth the extra cost.
 - Stop YOLO loops early if reviews keep failing — escalate to the user instead of burning budget.
+- Use `/cdev yolo auto` with caution: it lets cdev edit files directly between review rounds.
 
 ## Anti-Patterns
 
-- **Do not** ask cdev to implement changes; it is audit-only.
+- **Do not** ask cdev to implement changes unless YOLO `autoApply` is explicitly set to `auto`; it is audit-only by default.
 - **Do not** run file review on source files and assume the file was modified; review only writes reports.
 - **Do not** ignore low `groundingScore` or `ungroundedClaims`; ask for clarification.
 - **Do not** re-explore a topic without checking `recall` first.

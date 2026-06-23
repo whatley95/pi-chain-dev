@@ -35,7 +35,7 @@ function config(overrides: Partial<AutoForkConfig> = {}): AutoForkConfig {
     autoVerify: true,
     maxForkCost: 0,
     maxSessionCost: 0,
-    yolo: { enabled: false, maxRounds: 3, stopOnPass: true, autoApply: "off" },
+    yolo: { enabled: false, maxRounds: 3, stopOnPass: true, autoApply: "manual" },
     ...overrides,
   };
 }

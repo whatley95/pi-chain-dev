@@ -712,13 +712,18 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       break;
     }
 
-    if (yoloConfig.autoApply === "off") {
+    if (yoloConfig.autoApply === "manual") {
+      roundResult.fix = {
+        result: emptyFailedResult(task, "manual mode: waiting for main agent to apply fixes"),
+        details: { stage1: null, stage2: null },
+        reportPath: "",
+      };
       rounds.push(roundResult);
       break;
     }
 
     const fixEstimate = estimateForkCost({
-      task: buildYoloFixTask(task, reviewText, round),
+      task: buildYoloFixTask(task, reviewText, round, yoloConfig.autoApply),
       stage1Profile,
       stage2Profile: fixProfile,
       forkSessionSnapshotJsonl,
@@ -741,7 +746,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       : `${fixProfile.provider}:${fixProfile.id}`;
     onProgress?.("fix", fixModelLabel, round);
 
-    const fixTask = buildYoloFixTask(task, reviewText, round);
+    const fixTask = buildYoloFixTask(task, reviewText, round, yoloConfig.autoApply);
     const { result: fixResult, details: fixDetails } = await runAutoFork({
       cwd,
       task: fixTask,
@@ -753,7 +758,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       customSynthesizePrompt,
       quick: false,
       verify: false,
-      editMode: true,
+      editMode: yoloConfig.autoApply === "auto",
       onProgress: (stage, model) => onProgress?.(stage === "scout" || stage === "forge" ? stage : "fix", model, round),
       onUpdate,
       extensions,
@@ -769,11 +774,11 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       const { reportRelPath } = writeReportFile({
         cwd,
         fileName: `yolo-${baseSlug}-fix${round}-${Date.now().toString(36)}.md`,
-        title: `cdev YOLO fix round ${round}`,
+        title: `cdev YOLO ${yoloConfig.autoApply === "auto" ? "auto-fix" : "fix proposal"} round ${round}`,
         body: fixText,
       });
       fixReportPath = reportRelPath;
-      saveSession(cwd, `yolo fix round ${round}: ${task}`, false, fixStart, fixDetails, fixResult);
+      saveSession(cwd, `yolo ${yoloConfig.autoApply === "auto" ? "auto-fix" : "fix proposal"} round ${round}: ${task}`, false, fixStart, fixDetails, fixResult);
     }
 
     roundResult.fix = {

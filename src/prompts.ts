@@ -315,8 +315,9 @@ export function buildYoloReviewSnapshot(forkSessionSnapshotJsonl: string, report
   return appendTaskToSessionJsonl(base, `Review the implementation report from YOLO review-fix round ${round}. Decide if it passes, needs work, or is blocked. Be specific about issues and fixes.` + reportSection);
 }
 
-export function buildYoloFixTask(originalTask: string, reviewText: string, round: number): string {
-  return `The previous implementation attempt for "${originalTask}" was reviewed. Address the issues below and produce an updated implementation.
+export function buildYoloFixTask(originalTask: string, reviewText: string, round: number, mode: "manual" | "propose" | "auto" = "manual"): string {
+  if (mode === "auto") {
+    return `The previous implementation attempt for "${originalTask}" was reviewed. Address the issues below and produce an updated implementation.
 
 Review feedback (round ${round}):
 ${reviewText}
@@ -324,7 +325,29 @@ ${reviewText}
 Instructions:
 - Fix the issues identified in the review.
 - Preserve working behavior; do not introduce regressions.
-- Return the full updated implementation/report.`;
+- You may edit files directly to apply fixes.
+- Return a summary of what you changed.`;
+  }
+  if (mode === "propose") {
+    return `The previous implementation attempt for "${originalTask}" was reviewed. Produce a concrete fix plan for the issues below. Do NOT edit files.
+
+Review feedback (round ${round}):
+${reviewText}
+
+Instructions:
+- Output a step-by-step fix plan with specific file paths and code snippets.
+- Include a verification command for each change.
+- The main agent will apply your plan; do not modify files yourself.`;
+  }
+  return `The previous implementation attempt for "${originalTask}" was reviewed. Provide clear, actionable instructions so the main agent can fix the issues below.
+
+Review feedback (round ${round}):
+${reviewText}
+
+Instructions:
+- List each issue with file path, line number or snippet, and exact fix instructions.
+- Include a verification command for each fix.
+- Do NOT edit files. The main agent will apply changes.`;
 }
 
 export function buildStage2FindingsPrompt(stage1Output: string, customPrompt?: string): string {

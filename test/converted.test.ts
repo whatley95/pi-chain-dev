@@ -481,7 +481,7 @@ describe("normalizeYoloConfig (types.ts)", () => {
     assert.strictEqual(result.enabled, false);
     assert.strictEqual(result.maxRounds, 3);
     assert.strictEqual(result.stopOnPass, true);
-    assert.strictEqual(result.autoApply, "off");
+    assert.strictEqual(result.autoApply, "manual");
   });
 
   it("preserves reviewProfile and fixProfile", () => {
@@ -499,8 +499,8 @@ describe("formatYoloStatus (types.ts)", () => {
   });
 
   it("returns formatted status when enabled", () => {
-    const status = formatYoloStatus({ enabled: true, maxRounds: 5, autoApply: "safe" });
-    assert.strictEqual(status, "ON (max 5 rounds, auto-apply safe)");
+    const status = formatYoloStatus({ enabled: true, maxRounds: 5, autoApply: "propose" });
+    assert.strictEqual(status, "ON (max 5 rounds, auto-apply propose)");
   });
 });
 

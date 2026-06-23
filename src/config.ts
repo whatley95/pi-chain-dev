@@ -61,7 +61,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
     enabled: false,
     maxRounds: 3,
     stopOnPass: true,
-    autoApply: "off",
+    autoApply: "manual",
   },
 };
 
@@ -222,8 +222,8 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
       if (typeof yolo.enabled === "boolean") parsedYolo.enabled = yolo.enabled;
       if (typeof yolo.maxRounds === "number") parsedYolo.maxRounds = yolo.maxRounds;
       if (typeof yolo.stopOnPass === "boolean") parsedYolo.stopOnPass = yolo.stopOnPass;
-      if (typeof yolo.autoApply === "string" && ["off", "safe", "all"].includes(yolo.autoApply)) {
-        parsedYolo.autoApply = yolo.autoApply as "off" | "safe" | "all";
+      if (typeof yolo.autoApply === "string" && ["manual", "propose", "auto"].includes(yolo.autoApply)) {
+        parsedYolo.autoApply = yolo.autoApply as "manual" | "propose" | "auto";
       }
       if (yoloReview) parsedYolo.reviewProfile = yoloReview;
       if (yoloFix) parsedYolo.fixProfile = yoloFix;

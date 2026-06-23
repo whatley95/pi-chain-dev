@@ -87,11 +87,16 @@ export interface YoloConfig {
   maxRounds?: number;
   /** Stop looping when review returns pass. Default true. */
   stopOnPass?: boolean;
-  /** How aggressively to auto-apply fixes. Default 'off'. */
-  autoApply?: "off" | "safe" | "all";
+  /**
+   * How aggressively to auto-apply fixes. Default 'manual'.
+   * - manual: main agent fixes after each review (cdev never edits).
+   * - propose: cdev proposes a concrete fix plan/diff; main agent applies it.
+   * - auto: cdev may edit files directly between review rounds.
+   */
+  autoApply?: "manual" | "propose" | "auto";
   /** Model profile for yolo review rounds. Falls back to stage2. */
   reviewProfile?: StageProfile;
-  /** Model profile for yolo fix rounds. Falls back to stage2. */
+  /** Model profile for yolo fix/propose rounds. Falls back to stage2. */
   fixProfile?: StageProfile;
 }
 
@@ -101,7 +106,7 @@ export function normalizeYoloConfig(config?: YoloConfig): Required<Omit<YoloConf
     enabled: config?.enabled ?? false,
     maxRounds: max > 7 ? 7 : max < 1 ? 1 : max,
     stopOnPass: config?.stopOnPass ?? true,
-    autoApply: config?.autoApply ?? "off",
+    autoApply: config?.autoApply ?? "manual",
     reviewProfile: config?.reviewProfile,
     fixProfile: config?.fixProfile,
   };
