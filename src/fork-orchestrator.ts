@@ -1,0 +1,661 @@
+import { buildStage1Prompt, buildStage2Prompt, buildYoloReviewSnapshot, buildYoloFixTask } from "./prompts.js";
+import { parseStage1Findings, parseStage2Report } from "./json-extract.js";
+import { runStageWithRetry, sanitizeSessionJsonl } from "./fork-stage.js";
+import { getFinalAssistantText } from "./runner-events.js";
+import { runCdevReview } from "./review.js";
+import { withAuditGuard, formatCost, estimateForkCost, getSessionForkCost } from "./extension-context.js";
+import { saveSession } from "./history.js";
+import { writeReportFile } from "./report.js";
+import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, AutoForkConfig, YoloConfig } from "./types.js";
+import { emptyUsage, emptyFailedResult } from "./types.js";
+
+export interface RunAutoForkOptions {
+  cwd: string;
+  task: string;
+  forkSessionSnapshotJsonl: string;
+  stage1Profile: StageProfile;
+  stage1bProfile?: StageProfile;
+  stage2Profile: StageProfile;
+  customExplorePrompt?: string;
+  customSynthesizePrompt?: string;
+  quick?: boolean;
+  verify?: boolean;
+  editMode?: boolean;
+  onProgress?: (stage: "scout" | "forge", model: string) => void;
+  onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
+  extensions?: string[] | null;
+  environment?: Record<string, string>;
+  offline?: boolean;
+  signal?: AbortSignal;
+}
+
+export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
+  result: ForkResult;
+  details: AutoForkDetails;
+}> {
+  const { cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage1bProfile,
+          stage2Profile, customExplorePrompt, customSynthesizePrompt,
+          quick = false, verify = false, editMode = false,
+          extensions = null, environment = {}, offline = true, signal } = opts;
+
+  const details: AutoForkDetails = { stage1: null, stage2: null };
+
+  const sanitizedSnapshot = sanitizeSessionJsonl(forkSessionSnapshotJsonl);
+
+  const scoutModelLabel = stage1Profile.thinking ? `${stage1Profile.provider}:${stage1Profile.id} • ${stage1Profile.thinking}` : `${stage1Profile.provider}:${stage1Profile.id}`;
+  opts.onProgress?.("scout", scoutModelLabel);
+  const stage1Task = buildStage1Prompt(task, customExplorePrompt, editMode);
+
+  let stage1Result: ForkResult;
+  let stage1Findings: Stage1Findings | null = null;
+  const onUpdate = opts.onUpdate;
+
+  async function runStage1Run(label: string, profile?: StageProfile): Promise<ForkResult> {
+    return runStageWithRetry({
+      cwd,
+      task: stage1Task,
+      stageLabel: label,
+      forkSessionJsonl: forkSessionSnapshotJsonl,
+      stageProfile: profile || stage1Profile,
+      extensions,
+      environment,
+      offline,
+      signal,
+      stageTimeoutMs: 300_000,
+      sanitizedSessionJsonl: sanitizedSnapshot,
+      retries: 1,
+      toolMode: "scout",
+      onUpdate,
+    });
+  }
+
+  if (verify) {
+    const secondProfile = stage1bProfile && stage1bProfile.provider && stage1bProfile.id ? stage1bProfile : stage1Profile;
+    const [runA, runB] = await Promise.all([
+      runStage1Run("exploration A", stage1Profile),
+      runStage1Run("exploration B", secondProfile),
+    ]);
+
+    const combinedUsage: UsageStats = emptyUsage();
+    const addUsage = (usage: UsageStats | undefined | null) => {
+      if (!usage) return;
+      combinedUsage.input += usage.input || 0;
+      combinedUsage.output += usage.output || 0;
+      combinedUsage.cacheRead += usage.cacheRead || 0;
+      combinedUsage.cacheWrite += usage.cacheWrite || 0;
+      combinedUsage.cost += usage.cost || 0;
+      combinedUsage.turns += usage.turns || 0;
+      combinedUsage.contextTokens = Math.max(combinedUsage.contextTokens, usage.contextTokens || 0);
+    };
+    addUsage(runA.usage);
+    addUsage(runB.usage);
+
+    stage1Result = {
+      ...runA,
+      task,
+      usage: combinedUsage,
+      stderr: [runA.stderr, runB.stderr].filter(Boolean).join("\n"),
+    };
+    details.stage1 = stage1Result;
+
+    const textA = getFinalAssistantText(runA.messages) || "";
+    const textB = getFinalAssistantText(runB.messages) || "";
+    const findingsA = parseStage1Findings(textA);
+    const findingsB = parseStage1Findings(textB);
+
+    const validationA = findingsA ? validateStage1Findings(findingsA, "exploration A") : { valid: false, reason: "exploration A: output was not valid JSON findings" };
+    const validationB = findingsB ? validateStage1Findings(findingsB, "exploration B") : { valid: false, reason: "exploration B: output was not valid JSON findings" };
+
+    if (validationA.valid && validationB.valid) {
+      stage1Findings = mergeStage1Findings(findingsA!, findingsB!);
+      stage1Result.stderr += `\n[cdev] verify mode: merged ${findingsA!.findings.length} + ${findingsB!.findings.length} findings into ${stage1Findings.findings.length} unique findings\n`;
+    } else if (validationA.valid) {
+      stage1Findings = findingsA;
+      stage1Result.stderr += `\n[cdev] verify mode: exploration A valid, B invalid (${validationB.reason}); using A\n`;
+    } else if (validationB.valid) {
+      stage1Findings = findingsB;
+      stage1Result.stderr += `\n[cdev] verify mode: exploration B valid, A invalid (${validationA.reason}); using B\n`;
+    } else {
+      stage1Result.stderr += `\n[cdev] verify mode: both explorations invalid (${validationA.reason}; ${validationB.reason})\n`;
+    }
+  } else {
+    stage1Result = await runStage1Run("exploration");
+    details.stage1 = stage1Result;
+
+    const stage1Text = getFinalAssistantText(stage1Result.messages) || "";
+    stage1Findings = parseStage1Findings(stage1Text);
+    const validation = stage1Findings ? validateStage1Findings(stage1Findings, "exploration") : { valid: false, reason: "output was not valid JSON findings" };
+
+    if (!validation.valid) {
+      stage1Result.stderr += `\n[cdev] ${validation.reason}; retrying stage 1 with stricter prompt\n`;
+      const retryResult = await runStage1Run("exploration (validation retry)");
+      details.stage1 = retryResult;
+
+      const retryText = getFinalAssistantText(retryResult.messages) || "";
+      const retryFindings = parseStage1Findings(retryText);
+      const retryValidation = retryFindings ? validateStage1Findings(retryFindings, "exploration retry") : { valid: false, reason: "retry output was not valid JSON findings" };
+
+      if (retryValidation.valid) {
+        stage1Findings = retryFindings;
+        stage1Result = {
+          ...retryResult,
+          stderr: [stage1Result.stderr, retryResult.stderr].filter(Boolean).join("\n"),
+        };
+      } else {
+        stage1Result.stderr += `\n[cdev] ${retryValidation.reason}; proceeding with raw text\n`;
+        stage1Findings = null;
+      }
+    }
+
+    const reExploreCheck = shouldReExplore(stage1Findings, verify);
+    if (reExploreCheck.should && !verify) {
+      stage1Result.stderr += `\n[cdev] ${reExploreCheck.reason}; running a second exploration pass\n`;
+      const secondRun = await runStage1Run("exploration (coverage pass)");
+      const secondText = getFinalAssistantText(secondRun.messages) || "";
+      const secondFindings = parseStage1Findings(secondText);
+      const secondValidation = secondFindings ? validateStage1Findings(secondFindings, "coverage pass") : { valid: false, reason: "coverage pass output was not valid JSON findings" };
+      if (secondValidation.valid) {
+        if (stage1Findings && secondFindings) {
+          stage1Findings = mergeStage1Findings(stage1Findings, secondFindings);
+          stage1Result.stderr += `\n[cdev] merged second pass: ${stage1Findings.findings.length} total findings\n`;
+        } else if (secondFindings) {
+          stage1Findings = secondFindings;
+        }
+        stage1Result = {
+          ...secondRun,
+          stderr: [stage1Result.stderr, secondRun.stderr].filter(Boolean).join("\n"),
+        };
+      } else {
+        stage1Result.stderr += `\n[cdev] coverage pass invalid (${secondValidation.reason}); using first pass\n`;
+      }
+    }
+  }
+
+  if (stage1Result.exitCode > 0 && !getFinalAssistantText(stage1Result.messages)) {
+    return {
+      result: {
+        ...stage1Result,
+        task,
+        errorMessage: `Exploration stage failed: ${stage1Result.errorMessage || stage1Result.stderr || "unknown error"}`,
+      },
+      details,
+    };
+  }
+
+  if (quick) {
+    const quickResult: ForkResult = {
+      ...stage1Result,
+      task,
+      stopReason: "quick",
+    };
+    if (stage1Findings) {
+      quickResult.messages = [...stage1Result.messages];
+    }
+    return { result: quickResult, details };
+  }
+
+  opts.onProgress?.("forge", stage2Profile.thinking ? `${stage2Profile.provider}:${stage2Profile.id} • ${stage2Profile.thinking}` : `${stage2Profile.provider}:${stage2Profile.id}`);
+
+  const stage1Text = stage1Findings
+    ? formatStage1FindingsForStage2(stage1Findings)
+    : getFinalAssistantText(stage1Result.messages) || stage1Result.stderr || "(no output from exploration stage)";
+
+  const stage2Task = buildStage2Prompt(task, stage1Text, customSynthesizePrompt, editMode);
+
+  let stage2Result: ForkResult;
+  try {
+    stage2Result = await runStageWithRetry({
+      cwd,
+      task: stage2Task,
+      stageLabel: "synthesis",
+      forkSessionJsonl: forkSessionSnapshotJsonl,
+      stageProfile: stage2Profile,
+      extensions,
+      environment,
+      offline,
+      signal,
+      noTools: !editMode,
+      toolMode: editMode ? undefined : "forge",
+      stageTimeoutMs: 180_000,
+      sanitizedSessionJsonl: sanitizedSnapshot,
+      retries: 1,
+      onUpdate,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    stage2Result = emptyFailedResult(task, `Stage 2 (synthesis) failed: ${message}`);
+  }
+  details.stage2 = stage2Result;
+
+  const combinedUsage: UsageStats = emptyUsage();
+  const addUsage = (usage: UsageStats | undefined | null) => {
+    if (!usage) return;
+    combinedUsage.input += usage.input || 0;
+    combinedUsage.output += usage.output || 0;
+    combinedUsage.cacheRead += usage.cacheRead || 0;
+    combinedUsage.cacheWrite += usage.cacheWrite || 0;
+    combinedUsage.cost += usage.cost || 0;
+    combinedUsage.turns += usage.turns || 0;
+    combinedUsage.contextTokens = Math.max(combinedUsage.contextTokens, usage.contextTokens || 0);
+  };
+
+  addUsage(stage1Result.usage);
+  addUsage(stage2Result.usage);
+
+  const finalResult: ForkResult = {
+    task,
+    exitCode: stage2Result.exitCode > 0 ? stage2Result.exitCode : 0,
+    messages: stage2Result.messages,
+    stderr: [stage1Result.stderr, stage2Result.stderr].filter(Boolean).join("\n"),
+    usage: combinedUsage,
+    provider: stage2Result.provider || stage2Profile.provider,
+    model: stage2Result.model || stage2Profile.id,
+    stopReason: stage2Result.stopReason,
+    errorMessage: stage2Result.errorMessage,
+  };
+
+  const stage2Text = getFinalAssistantText(stage2Result.messages);
+  const stage2Report = stage2Text ? parseStage2Report(stage2Text) : null;
+  if (stage2Report) {
+    finalResult.stderr += "\n[cdev] forge produced structured JSON report\n";
+  } else if (stage2Text) {
+    finalResult.stderr += "\n[cdev] forge output was not valid structured JSON; using raw text\n";
+  }
+
+  return { result: finalResult, details };
+}
+
+export function formatStage1FindingsForStage2(findings: Stage1Findings): string {
+  const lines: string[] = [];
+  lines.push(`Summary: ${findings.summary}`);
+  if (findings.findings.length > 0) {
+    lines.push("");
+    lines.push("Findings:");
+    for (const f of findings.findings) {
+      const parts: string[] = [`- [${f.confidence || "medium"}] ${f.observation}`];
+      if (f.file) parts.push(`  file: ${f.file}`);
+      if (f.evidence) parts.push(`  evidence: ${f.evidence}`);
+      lines.push(parts.join("\n"));
+    }
+  }
+  if (findings.deadEnds?.length) {
+    lines.push("");
+    lines.push("Dead ends:");
+    for (const d of findings.deadEnds) lines.push(`- ${d}`);
+  }
+  if (findings.assumptions?.length) {
+    lines.push("");
+    lines.push("Assumptions:");
+    for (const a of findings.assumptions) lines.push(`- ${a}`);
+  }
+  if (findings.openQuestions?.length) {
+    lines.push("");
+    lines.push("Open questions:");
+    for (const q of findings.openQuestions) lines.push(`- ${q}`);
+  }
+  return lines.join("\n");
+}
+
+export function countLowConfidenceFindings(findings: Stage1Findings): number {
+  return findings.findings.filter((f) => f.confidence === "low").length;
+}
+
+export function shouldReExplore(findings: Stage1Findings | null, verify: boolean): { should: boolean; reason?: string } {
+  if (!findings) return { should: true, reason: "stage 1 produced no valid structured findings" };
+  if (findings.findings.length === 0) return { should: true, reason: "stage 1 returned zero findings" };
+  if (findings.findings.length < 3 && !verify) return { should: true, reason: `only ${findings.findings.length} finding(s); likely insufficient coverage` };
+  const lowConfidenceCount = countLowConfidenceFindings(findings);
+  if (lowConfidenceCount / findings.findings.length > 0.5) return { should: true, reason: `${Math.round((lowConfidenceCount / findings.findings.length) * 100)}% of findings are low confidence` };
+  if (findings.openQuestions?.some((q) => /critical|blocker|unknown/i.test(q))) return { should: true, reason: "open questions contain critical/blocker unknowns" };
+  return { should: false };
+}
+
+export function validateStage1Findings(findings: Stage1Findings, source: string): { valid: boolean; reason?: string } {
+  if (!findings.summary || findings.summary.trim().length < 5) {
+    return { valid: false, reason: `${source}: summary missing or too short` };
+  }
+  if (findings.findings.length === 0) {
+    return { valid: false, reason: `${source}: no findings returned` };
+  }
+  const withObservations = findings.findings.filter(f => f.observation && f.observation.trim().length > 0);
+  if (withObservations.length === 0) {
+    return { valid: false, reason: `${source}: findings lack observations` };
+  }
+  return { valid: true };
+}
+
+function normalizeObservation(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function findingsOverlap(a: string, b: string): boolean {
+  const na = normalizeObservation(a);
+  const nb = normalizeObservation(b);
+  if (na === nb) return true;
+  if (na.length > 20 && nb.length > 20) {
+    return na.startsWith(nb.slice(0, 40)) || nb.startsWith(na.slice(0, 40));
+  }
+  return false;
+}
+
+export function mergeStage1Findings(a: Stage1Findings, b: Stage1Findings): Stage1Findings {
+  const merged: Stage1Findings = {
+    summary: a.summary,
+    findings: [...a.findings],
+    deadEnds: [...(a.deadEnds ?? [])],
+    assumptions: [...(a.assumptions ?? [])],
+    openQuestions: [...(a.openQuestions ?? [])],
+  };
+  for (const f of b.findings) {
+    if (!merged.findings.some(existing => findingsOverlap(existing.observation, f.observation))) {
+      merged.findings.push(f);
+    }
+  }
+  for (const list of ["deadEnds", "assumptions", "openQuestions"] as const) {
+    const source = b[list] ?? [];
+    for (const item of source) {
+      if (!merged[list]?.some(existing => normalizeObservation(existing) === normalizeObservation(item))) {
+        merged[list] = merged[list] ?? [];
+        merged[list].push(item);
+      }
+    }
+  }
+  if (b.findings.length > a.findings.length && b.summary.length >= a.summary.length) {
+    merged.summary = b.summary;
+  }
+  return merged;
+}
+
+export type ReviewVerdict = "pass" | "needs-work" | "blocked" | "unknown";
+
+export function parseReviewVerdict(text: string): ReviewVerdict {
+  const match = text.match(/## Result\b([\s\S]*?)(?=##\s|$)/i);
+  if (!match) return "unknown";
+  const section = match[1].toLowerCase();
+  if (section.includes("needs-work") || section.includes("needs work")) return "needs-work";
+  if (section.includes("blocked")) return "blocked";
+  if (section.includes("pass")) return "pass";
+  return "unknown";
+}
+
+export interface YoloRoundResult {
+  round: number;
+  review: {
+    result: ForkResult;
+    details: AutoForkDetails;
+    reportPath: string;
+    verdict: ReviewVerdict;
+  };
+  fix?: {
+    result: ForkResult;
+    details: AutoForkDetails;
+    reportPath: string;
+  };
+}
+
+export interface YoloLoopResult {
+  initial: {
+    result: ForkResult;
+    details: AutoForkDetails;
+    reportPath: string;
+  };
+  rounds: YoloRoundResult[];
+  totalCost: number;
+  finalVerdict: ReviewVerdict;
+  finalReportPath: string;
+}
+
+export interface RunYoloLoopOptions extends Omit<RunAutoForkOptions, "onProgress" | "onUpdate"> {
+  config: AutoForkConfig;
+  yoloConfig: Required<Omit<YoloConfig, "reviewProfile" | "fixProfile">> & Pick<YoloConfig, "reviewProfile" | "fixProfile">;
+  reviewProfile: StageProfile;
+  fixProfile: StageProfile;
+  customReviewPrompt?: string;
+  onProgress?: (stage: "scout" | "forge" | "review" | "fix", model: string, round?: number) => void;
+  onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
+}
+
+export function yoloSlug(task: string): string {
+  return task
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase()
+    .slice(0, 60);
+}
+
+export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopResult> {
+  const {
+    cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage1bProfile, stage2Profile,
+    yoloConfig, reviewProfile, fixProfile, customExplorePrompt, customSynthesizePrompt, customReviewPrompt,
+    extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate,
+  } = opts;
+
+  const baseSlug = yoloSlug(task);
+
+  function addUsage(acc: UsageStats, usage: UsageStats | undefined | null): void {
+    if (!usage) return;
+    acc.input += usage.input || 0;
+    acc.output += usage.output || 0;
+    acc.cacheRead += usage.cacheRead || 0;
+    acc.cacheWrite += usage.cacheWrite || 0;
+    acc.cost += usage.cost || 0;
+    acc.turns += usage.turns || 0;
+    acc.contextTokens = Math.max(acc.contextTokens, usage.contextTokens || 0);
+  }
+
+  const totalUsage: UsageStats = emptyUsage();
+
+  function checkYoloBudget(spentSoFar: number, nextEstimate: number): { allowed: boolean; reason?: string } {
+    const maxForkCost = opts.config.maxForkCost ?? 0;
+    const maxSessionCost = opts.config.maxSessionCost ?? 0;
+    if (maxForkCost > 0 && nextEstimate > maxForkCost) {
+      return { allowed: false, reason: `next fork estimate ${formatCost(nextEstimate)} exceeds maxForkCost ${formatCost(maxForkCost)}` };
+    }
+    const sessionCost = getSessionForkCost(cwd);
+    if (maxSessionCost > 0 && sessionCost + spentSoFar + nextEstimate > maxSessionCost) {
+      return { allowed: false, reason: `YOLO session cost would reach ${formatCost(sessionCost + spentSoFar + nextEstimate)}, exceeding maxSessionCost ${formatCost(maxSessionCost)}` };
+    }
+    return { allowed: true };
+  }
+
+  const initialStart = Date.now();
+  const { result: initialResult, details: initialDetails } = await runAutoFork({
+    cwd,
+    task: withAuditGuard(task),
+    forkSessionSnapshotJsonl,
+    stage1Profile,
+    stage1bProfile,
+    stage2Profile,
+    customExplorePrompt,
+    customSynthesizePrompt,
+    quick: false,
+    verify: false,
+    onProgress: (stage, model) => onProgress?.(stage, model),
+    onUpdate,
+    extensions,
+    environment,
+    offline,
+    signal,
+  });
+  addUsage(totalUsage, initialResult.usage);
+
+  const initialText = getFinalAssistantText(initialResult.messages) || "";
+  let initialReportPath = "";
+  if (initialText && !initialResult.errorMessage) {
+    const { reportRelPath } = writeReportFile({
+      cwd,
+      fileName: `yolo-${baseSlug}-initial-${Date.now().toString(36)}.md`,
+      title: "cdev YOLO initial report",
+      body: initialText,
+    });
+    initialReportPath = reportRelPath;
+    saveSession(cwd, `yolo initial: ${task}`, false, initialStart, initialDetails, initialResult);
+  }
+
+  const rounds: YoloRoundResult[] = [];
+  let finalVerdict: ReviewVerdict = "unknown";
+  let finalReportPath = initialReportPath;
+  let latestReport = initialText;
+
+  for (let round = 1; round <= yoloConfig.maxRounds; round++) {
+    if (!latestReport) break;
+
+    const reviewEstimate = estimateForkCost({
+      task: buildYoloReviewSnapshot("", latestReport, round),
+      stage1Profile,
+      stage2Profile: reviewProfile,
+      forkSessionSnapshotJsonl,
+    });
+    const reviewBudget = checkYoloBudget(totalUsage.cost, reviewEstimate.cost);
+    if (!reviewBudget.allowed) {
+      finalVerdict = "blocked";
+      rounds.push({
+        round,
+        review: {
+          result: emptyFailedResult(task, `YOLO budget blocked before review round ${round}: ${reviewBudget.reason}`),
+          details: { stage1: null, stage2: null },
+          reportPath: "",
+          verdict: "blocked",
+        },
+      });
+      break;
+    }
+
+    const reviewStart = Date.now();
+    const reviewSnapshot = buildYoloReviewSnapshot(forkSessionSnapshotJsonl, latestReport, round);
+    const reviewModelLabel = reviewProfile.thinking
+      ? `${reviewProfile.provider}:${reviewProfile.id} • ${reviewProfile.thinking}`
+      : `${reviewProfile.provider}:${reviewProfile.id}`;
+    onProgress?.("review", reviewModelLabel, round);
+
+    const { result: reviewResult, details: reviewDetails } = await runCdevReview({
+      cwd,
+      forkSessionSnapshotJsonl: reviewSnapshot,
+      stageProfile: reviewProfile,
+      customReviewPrompt,
+      onProgress: (_stage, model) => onProgress?.("review", model, round),
+      onUpdate,
+      extensions,
+      environment,
+      offline,
+      signal,
+    });
+    addUsage(totalUsage, reviewResult.usage);
+
+    const reviewText = getFinalAssistantText(reviewResult.messages) || "";
+    const { reportRelPath: reviewReportPath } = writeReportFile({
+      cwd,
+      fileName: `yolo-${baseSlug}-round${round}-${Date.now().toString(36)}.md`,
+      title: `cdev YOLO review round ${round}`,
+      reviewer: reviewDetails.stage2?.model ?? "?",
+      body: reviewText || "(no review output)",
+    });
+    finalReportPath = reviewReportPath;
+    saveSession(cwd, `yolo review round ${round}: ${task}`, true, reviewStart, reviewDetails, reviewResult);
+
+    const verdict = parseReviewVerdict(reviewText);
+    finalVerdict = verdict;
+
+    const roundResult: YoloRoundResult = {
+      round,
+      review: {
+        result: reviewResult,
+        details: reviewDetails,
+        reportPath: reviewReportPath,
+        verdict,
+      },
+    };
+
+    if (verdict === "pass" && yoloConfig.stopOnPass) {
+      rounds.push(roundResult);
+      break;
+    }
+
+    if (yoloConfig.autoApply === "off") {
+      rounds.push(roundResult);
+      break;
+    }
+
+    const fixEstimate = estimateForkCost({
+      task: buildYoloFixTask(task, reviewText, round),
+      stage1Profile,
+      stage2Profile: fixProfile,
+      forkSessionSnapshotJsonl,
+    });
+    const fixBudget = checkYoloBudget(totalUsage.cost, fixEstimate.cost);
+    if (!fixBudget.allowed) {
+      roundResult.fix = {
+        result: emptyFailedResult(task, `YOLO budget blocked before fix round ${round}: ${fixBudget.reason}`),
+        details: { stage1: null, stage2: null },
+        reportPath: "",
+      };
+      rounds.push(roundResult);
+      finalVerdict = "blocked";
+      break;
+    }
+
+    const fixStart = Date.now();
+    const fixModelLabel = fixProfile.thinking
+      ? `${fixProfile.provider}:${fixProfile.id} • ${fixProfile.thinking}`
+      : `${fixProfile.provider}:${fixProfile.id}`;
+    onProgress?.("fix", fixModelLabel, round);
+
+    const fixTask = buildYoloFixTask(task, reviewText, round);
+    const { result: fixResult, details: fixDetails } = await runAutoFork({
+      cwd,
+      task: fixTask,
+      forkSessionSnapshotJsonl,
+      stage1Profile,
+      stage1bProfile,
+      stage2Profile: fixProfile,
+      customExplorePrompt,
+      customSynthesizePrompt,
+      quick: false,
+      verify: false,
+      editMode: true,
+      onProgress: (stage, model) => onProgress?.(stage === "scout" || stage === "forge" ? stage : "fix", model, round),
+      onUpdate,
+      extensions,
+      environment,
+      offline,
+      signal,
+    });
+    addUsage(totalUsage, fixResult.usage);
+
+    const fixText = getFinalAssistantText(fixResult.messages) || "";
+    let fixReportPath = "";
+    if (fixText && !fixResult.errorMessage) {
+      const { reportRelPath } = writeReportFile({
+        cwd,
+        fileName: `yolo-${baseSlug}-fix${round}-${Date.now().toString(36)}.md`,
+        title: `cdev YOLO fix round ${round}`,
+        body: fixText,
+      });
+      fixReportPath = reportRelPath;
+      saveSession(cwd, `yolo fix round ${round}: ${task}`, false, fixStart, fixDetails, fixResult);
+    }
+
+    roundResult.fix = {
+      result: fixResult,
+      details: fixDetails,
+      reportPath: fixReportPath,
+    };
+    rounds.push(roundResult);
+
+    if (fixText) {
+      latestReport = fixText;
+    }
+  }
+
+  return {
+    initial: {
+      result: initialResult,
+      details: initialDetails,
+      reportPath: initialReportPath,
+    },
+    rounds,
+    totalCost: totalUsage.cost,
+    finalVerdict,
+    finalReportPath,
+  };
+}

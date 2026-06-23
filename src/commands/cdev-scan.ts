@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type AutoForkConfig } from "../config.js";
-import { runAutoFork } from "../runner.js";
+import { runAutoFork } from "../fork-orchestrator.js";
 import { getFinalAssistantText } from "../runner-events.js";
 import { saveSession } from "../history.js";
 import { indexFindingsAsync } from "../memory.js";

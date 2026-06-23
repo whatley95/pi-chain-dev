@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type AutoForkConfig } from "./config.js";
 import { getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
+import { parseStage2Report, formatStage2Report } from "./json-extract.js";
 import type { AutoForkDetails, ForkResult, StageProfile } from "./types.js";
 import { memoryTopicCount } from "./memory.js";
 import { BUILD_DATE } from "./build-date.js";
@@ -367,6 +368,18 @@ export function formatResultContent(result: ForkResult, details: AutoForkDetails
   }
 
   return header + summary;
+}
+
+export function formatForkResultOutput(result: ForkResult, details: AutoForkDetails): string {
+  const stage2Text = getFinalAssistantText(result.messages);
+  if (!stage2Text) {
+    return formatResultContent(result, details);
+  }
+  const report = parseStage2Report(stage2Text);
+  if (report) {
+    return formatStage2Report(report);
+  }
+  return formatResultContent(result, details);
 }
 
 export function updateForkCostStatus(ctx: ExtensionContext): void {

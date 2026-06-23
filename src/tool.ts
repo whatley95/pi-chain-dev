@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { join, isAbsolute } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config.js";
-import { runAutoFork, runCdevReview, runFileReview, runDiffReview, formatForkResultOutput, computeReportDiff, formatReportDiff, runYoloLoop } from "./runner.js";
+import { runAutoFork, runCdevReview, runFileReview, runDiffReview, runYoloLoop } from "./runner.js";
+import { computeReportDiff, formatReportDiff } from "./json-extract.js";
 import { writeReportFile } from "./report.js";
 import { getFinalAssistantText } from "./runner-events.js";
 import { emptyFailedResult, normalizeYoloConfig } from "./types.js";
@@ -21,6 +22,7 @@ import {
   formatCost,
   maybeWarnSessionSize,
   maybeNotifyCostAlert,
+  formatForkResultOutput,
 } from "./extension-context.js";
 
 export interface AutoForkParamsType {

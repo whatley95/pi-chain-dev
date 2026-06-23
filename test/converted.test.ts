@@ -7,7 +7,10 @@ import { describe, it } from "node:test";
 import { parseInheritedCliArgs } from "../src/runner-cli.js";
 import { processPiEvent, processPiJsonLine, getFinalAssistantText, stableStringify } from "../src/runner-events.js";
 import { buildSessionSnapshotJsonl, resolveStageProfiles, formatResultContent, estimateSessionSize, checkSessionCostAlert } from "../src/extension-context.js";
-import { formatStage2Report, parseStage2Report, buildPiArgs } from "../src/runner.js";
+import { formatStage2Report, parseStage2Report, isStage1Findings, parseStage1Findings } from "../src/json-extract.js";
+import { buildPiArgs, estimateCommandLineLength, appendTaskToSessionJsonl } from "../src/fork-stage.js";
+import { buildFileReviewPrompt } from "../src/prompts.js";
+import { parseReviewVerdict, mergeStage1Findings } from "../src/fork-orchestrator.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
 import { emptyUsage, emptyFailedResult } from "../src/types.js";
@@ -234,7 +237,7 @@ describe("checkSessionCostAlert (extension-context.ts)", () => {
   });
 });
 
-describe("formatStage2Report (runner.ts)", () => {
+describe("formatStage2Report (json-extract.ts)", () => {
   it("includes grounding score and ungrounded claims", () => {
     const report = {
       status: "ok" as const,
@@ -269,7 +272,7 @@ describe("formatStage2Report (runner.ts)", () => {
   });
 });
 
-describe("parseStage2Report (runner.ts)", () => {
+describe("parseStage2Report (json-extract.ts)", () => {
   it("accepts groundingScore and ungroundedClaims", () => {
     const json = JSON.stringify({
       status: "ok",
@@ -288,7 +291,7 @@ describe("parseStage2Report (runner.ts)", () => {
   });
 });
 
-describe("buildPiArgs (runner.ts)", () => {
+describe("buildPiArgs (fork-stage.ts)", () => {
   const stageProfile = { provider: "opencode-go", id: "deepseek-v4-flash", thinking: "minimal" as const };
 
   it("uses read-only tool allowlist for scout mode", () => {
@@ -356,9 +359,9 @@ describe("memory refresh integration", () => {
 
 // ── runner.ts command-line guard helpers ─────────────────
 
-import { estimateCommandLineLength, appendTaskToSessionJsonl, buildFileReviewPrompt } from "../src/runner.js";
+// (imports moved to top of file)
 
-describe("estimateCommandLineLength (runner.ts)", () => {
+describe("estimateCommandLineLength (fork-stage.ts)", () => {
   it("counts command and args", () => {
     const len = estimateCommandLineLength("node", ["--mode", "json", "task"]);
     assert.ok(len > "node".length + "--mode".length + "json".length + "task".length);
@@ -371,7 +374,7 @@ describe("estimateCommandLineLength (runner.ts)", () => {
   });
 });
 
-describe("appendTaskToSessionJsonl (runner.ts)", () => {
+describe("appendTaskToSessionJsonl (fork-stage.ts)", () => {
   it("appends system task instruction and user prompt", () => {
     const out = appendTaskToSessionJsonl(JSON.stringify({ type: "header" }), "explore auth");
     const lines = out.trim().split("\n");
@@ -384,7 +387,7 @@ describe("appendTaskToSessionJsonl (runner.ts)", () => {
   });
 });
 
-describe("buildFileReviewPrompt (runner.ts)", () => {
+describe("buildFileReviewPrompt (prompts.ts)", () => {
   it("truncates very long report content", () => {
     const longReport = "x".repeat(20000);
     const prompt = buildFileReviewPrompt("report.md", longReport, {});
@@ -401,9 +404,9 @@ describe("buildFileReviewPrompt (runner.ts)", () => {
 
 // ── runner.ts: buildPiArgs no longer emits --temperature ───
 
-import { buildPiArgs } from "../src/runner.js";
+// (buildPiArgs imported from fork-stage.js)
 
-describe("buildPiArgs (runner.ts)", () => {
+describe("buildPiArgs (fork-stage.ts)", () => {
   it("does not include --temperature", () => {
     const args = buildPiArgs("explore auth", "/tmp/session.jsonl", null, {
       provider: "openai",
@@ -430,7 +433,7 @@ describe("buildPiArgs (runner.ts)", () => {
 // ── YOLO config and verdict helpers ──────────────────────
 
 import { normalizeYoloConfig, formatYoloStatus } from "../src/types.js";
-import { parseReviewVerdict } from "../src/runner.js";
+import { parseReviewVerdict } from "../src/fork-orchestrator.js";
 
 describe("normalizeYoloConfig (types.ts)", () => {
   it("clamps maxRounds to 7", () => {
@@ -471,7 +474,7 @@ describe("formatYoloStatus (types.ts)", () => {
   });
 });
 
-describe("parseReviewVerdict (runner.ts)", () => {
+describe("parseReviewVerdict (fork-orchestrator.ts)", () => {
   it("detects pass in ## Result section", () => {
     assert.strictEqual(parseReviewVerdict("## Result\npass — looks good"), "pass");
   });
@@ -499,10 +502,11 @@ describe("parseReviewVerdict (runner.ts)", () => {
 
 // ── Structured stage 1 findings ──────────────────────────
 
-import { isStage1Findings } from "../src/types.js";
-import { parseStage1Findings, mergeStage1Findings } from "../src/runner.js";
+import { mergeStage1Findings } from "../src/fork-orchestrator.js";
 
-describe("isStage1Findings (types.ts)", () => {
+// (isStage1Findings and parseStage1Findings imported from json-extract.js)
+
+describe("isStage1Findings (json-extract.ts)", () => {
   it("accepts valid findings", () => {
     assert.ok(isStage1Findings({
       summary: "explored auth",
@@ -537,7 +541,7 @@ describe("isStage1Findings (types.ts)", () => {
   });
 });
 
-describe("parseStage1Findings (runner.ts)", () => {
+describe("parseStage1Findings (json-extract.ts)", () => {
   it("parses bare JSON", () => {
     const text = JSON.stringify({ summary: "s", findings: [{ observation: "o", confidence: "medium" }] });
     const result = parseStage1Findings(text);
@@ -564,7 +568,7 @@ describe("parseStage1Findings (runner.ts)", () => {
   });
 });
 
-describe("mergeStage1Findings (runner.ts)", () => {
+describe("mergeStage1Findings (fork-orchestrator.ts)", () => {
   it("merges unique findings from two runs", () => {
     const a = {
       summary: "run A",
