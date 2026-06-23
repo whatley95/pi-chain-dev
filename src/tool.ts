@@ -410,7 +410,7 @@ export async function executeCdevTool(
     }
 
     const quick = p.quick ?? false;
-    const verify = p.verify ?? false;
+    const verify = p.verify ?? (config.autoVerify && !p.quick);
 
     const estimate = estimateForkCost({
       task: withAuditGuard(p.task),
@@ -431,7 +431,7 @@ export async function executeCdevTool(
 
     const onProgress = (stage: string, model: string) => {
       if (stage === "scout") {
-        ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔍 Scout exploring…  (${model})`)]);
+        ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${verify ? "🔍🔍" : "🔍"} Scout exploring…  (${model})`)]);
       } else {
         ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge synthesizing…  (${model})`)]);
       }

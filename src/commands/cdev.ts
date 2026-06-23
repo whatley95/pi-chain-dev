@@ -51,6 +51,14 @@ export function registerCdevCommand(
         return;
       }
 
+      // ── Subcommand: auto-verify on/off ──
+      if (trimmed === "auto-verify on" || trimmed === "auto-verify off") {
+        const enable = trimmed === "auto-verify on";
+        writeAgentSetting("autoVerify", enable);
+        ctx.ui.notify(`cdev auto-verify ${enable ? "ON" : "OFF"} — ${enable ? "scout will run twice automatically" : "scout will run once unless /cdev verify is used"}`, "info");
+        return;
+      }
+
       const config = loadConfig(ctx.cwd);
 
       // ── Subcommands: scan, scan deep ──
@@ -257,6 +265,7 @@ export function registerCdevCommand(
         lines.push(`  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`);
         lines.push(`  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`);
         lines.push(`  Project memory:   ${config.memory ? "ON" : "OFF"}`);
+        lines.push(`  Auto-verify:      ${config.autoVerify ? "✓ ON (scout ×2)" : "OFF (scout ×1)"}`);
         lines.push(`  Session size:     ${sessionSize} message${sessionSize === 1 ? "" : "s"}${sessionSize >= 40 ? "  ⚠️ consider /compact" : ""}`);
         lines.push(`  Session cost:     ${formatCost(sessionCost)}${config.maxSessionCost ? ` / ${formatCost(config.maxSessionCost)}` : ""}${costAlert ? `  ${costAlert.level === "critical" ? "🔴" : "🟡"} ${(costAlert.percent * 100).toFixed(0)}% of budget` : ""}`);
         lines.push(`  Today's cost:     ${formatCost(todayCost)}`);
@@ -301,6 +310,7 @@ export function registerCdevCommand(
           "/cdev prompts on|off   Toggle custom prompts",
           "/cdev themed on|off    Toggle themed TUI",
           "/cdev auto on|off      Toggle auto-trigger",
+          "/cdev auto-verify on|off  Toggle automatic scout ×2",
         ]);
         return;
       }
@@ -326,6 +336,7 @@ export function registerCdevCommand(
           "  prompts on|off   Toggle custom prompts",
           "  themed on|off    Toggle themed TUI",
           "  auto on|off      Toggle auto-trigger",
+          "  auto-verify on|off  Toggle automatic scout ×2",
           "",
           "More: /cdev-help  /cdev-model",
         ]);
@@ -333,7 +344,7 @@ export function registerCdevCommand(
       }
 
       // ── Fuzzy match ──
-      const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "help", "clear"];
+      const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "help", "clear"];
       const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
       const isSingleWord = !trimmed.includes(" ");
       const fuzzy = subcommands.find(cmd => {

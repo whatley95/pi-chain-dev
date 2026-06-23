@@ -376,7 +376,9 @@ function buildStage2Prompt(task: string, stage1Output: string, customPrompt?: st
   "output": "key findings, decisions, or explanations as a single string",
   "evidence": "concrete anchors: paths, snippets, commands, config keys",
   "learnings": "reusable knowledge: dead ends, wrong assumptions, couplings",
-  "actionItems": ["concrete verifiable task 1", "concrete verifiable task 2"]
+  "actionItems": ["concrete verifiable task 1", "concrete verifiable task 2"],
+  "groundingScore": 0.0,
+  "ungroundedClaims": ["any claim in output that lacks support in previous_findings"]
 }`;
   if (customPrompt) {
     return `${customPrompt}
@@ -410,7 +412,23 @@ Rules:
 - "evidence" is required. Include concrete anchors.
 - "learnings" is required. Extract reusable knowledge.
 - "actionItems" is required. Each item must be a concrete, verifiable task string.
+- "groundingScore" is required. Rate from 0.0 to 1.0 how well each claim in "output" is supported by <previous_findings>. Be honest and strict.
+- "ungroundedClaims" is required. List any claim in "output" that is not directly backed by <previous_findings>. Use an empty array if everything is grounded.
 - Do NOT use markdown headings like "## Result" outside the JSON.${STAGE_AUDIT_GUARD}`;
+}
+
+function countLowConfidenceFindings(findings: Stage1Findings): number {
+  return findings.findings.filter((f) => f.confidence === "low").length;
+}
+
+function shouldReExplore(findings: Stage1Findings | null, verify: boolean): { should: boolean; reason?: string } {
+  if (!findings) return { should: true, reason: "stage 1 produced no valid structured findings" };
+  if (findings.findings.length === 0) return { should: true, reason: "stage 1 returned zero findings" };
+  if (findings.findings.length < 3 && !verify) return { should: true, reason: `only ${findings.findings.length} finding(s); likely insufficient coverage` };
+  const lowConfidenceCount = countLowConfidenceFindings(findings);
+  if (lowConfidenceCount / findings.findings.length > 0.5) return { should: true, reason: `${Math.round((lowConfidenceCount / findings.findings.length) * 100)}% of findings are low confidence` };
+  if (findings.openQuestions?.some((q) => /critical|blocker|unknown/i.test(q))) return { should: true, reason: "open questions contain critical/blocker unknowns" };
+  return { should: false };
 }
 
 // ── Stage 1 structured findings ────────────────────────────
@@ -458,6 +476,19 @@ export function formatStage2Report(report: Stage2Report): string {
   lines.push(`## Evidence`);
   lines.push(report.evidence);
   lines.push("");
+  if (report.groundingScore !== undefined) {
+    const pct = Math.round(report.groundingScore * 100);
+    const icon = pct >= 80 ? "✅" : pct >= 50 ? "⚠️" : "❌";
+    lines.push(`## Grounding ${icon} ${pct}%`);
+    if (report.ungroundedClaims && report.ungroundedClaims.length > 0) {
+      for (const claim of report.ungroundedClaims.slice(0, 10)) {
+        lines.push(`- ${claim}`);
+      }
+    } else {
+      lines.push("All claims are grounded in the exploration evidence.");
+    }
+    lines.push("");
+  }
   lines.push(`## Learnings`);
   lines.push(report.learnings);
   if (report.actionItems.length > 0) {
@@ -1084,6 +1115,31 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       } else {
         stage1Result.stderr += `\n[cdev] ${retryValidation.reason}; proceeding with raw text\n`;
         stage1Findings = null;
+      }
+    }
+
+    // If findings are sparse or low-confidence, run a second exploration pass
+    // automatically (unless verify mode already did two runs).
+    const reExploreCheck = shouldReExplore(stage1Findings, verify);
+    if (reExploreCheck.should && !verify) {
+      stage1Result.stderr += `\n[cdev] ${reExploreCheck.reason}; running a second exploration pass\n`;
+      const secondRun = await runStage1Run("exploration (coverage pass)");
+      const secondText = getFinalAssistantText(secondRun.messages) || "";
+      const secondFindings = parseStage1Findings(secondText);
+      const secondValidation = secondFindings ? validateStage1Findings(secondFindings, "coverage pass") : { valid: false, reason: "coverage pass output was not valid JSON findings" };
+      if (secondValidation.valid) {
+        if (stage1Findings && secondFindings) {
+          stage1Findings = mergeStage1Findings(stage1Findings, secondFindings);
+          stage1Result.stderr += `\n[cdev] merged second pass: ${stage1Findings.findings.length} total findings\n`;
+        } else if (secondFindings) {
+          stage1Findings = secondFindings;
+        }
+        stage1Result = {
+          ...secondRun,
+          stderr: [stage1Result.stderr, secondRun.stderr].filter(Boolean).join("\n"),
+        };
+      } else {
+        stage1Result.stderr += `\n[cdev] coverage pass invalid (${secondValidation.reason}); using first pass\n`;
       }
     }
   }

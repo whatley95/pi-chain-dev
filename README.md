@@ -30,6 +30,8 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 | `/cdev review` | Forge only — reviews recent code changes for bugs, edge cases, and improvements |
 | `/cdev auto on` | Auto-trigger mode — LLM proactively uses `cdev` for exploration tasks |
 | `/cdev auto off` | Disable auto-trigger |
+| `/cdev auto-verify on` | Automatic scout ×2 for every `/cdev <task>` (default) |
+| `/cdev auto-verify off` | Scout ×1 unless `/cdev verify` is used explicitly |
 | `/cdev-model` | Interactive model picker — choose scout/forge models from configured providers |
 | `/cdev scan` | Instant template scan — detects stack from package.json, generates prompts (free, no LLM) |
 | `/cdev scan deep` | LLM-powered scan — reads actual codebase, writes truly custom prompts (scout → forge) |
@@ -176,23 +178,37 @@ Logged for: tool crashes, review failures, full-mode failures, deep-scan failure
                PARENT reads report, decides, codes
 ```
 
-If stage 1 output is invalid or empty, cdev retries the scout stage once automatically. If it still fails, cdev falls back to passing the raw text to forge rather than failing completely.
+If stage 1 output is invalid or empty, cdev retries the scout stage once automatically. If findings are sparse (fewer than 3) or mostly low-confidence, cdev runs a second exploration pass automatically and merges the results (unless verify mode already ran two scouts). If it still fails, cdev falls back to passing the raw text to forge rather than failing completely.
 
-### Quick mode (`/cdev quick <task>`)
+### Auto-verify (`/cdev auto-verify`)
+
+By default, every `/cdev <task>` runs scout twice (`autoVerify: true`). You can toggle this:
+
+- `/cdev auto-verify on` — scout ×2 automatically (default)
+- `/cdev auto-verify off` — scout ×1 unless you use `/cdev verify <task>`
+
+The setting is stored in `~/.pi/agent/settings.json` under `pi-chain-dev.autoVerify`.
+
+### Accuracy safeguards
+
+Every forge report includes a **grounding score** (0–100%) and a list of **ungrounded claims**. Forge is instructed to self-check each claim against the stage 1 evidence and flag anything that isn't directly supported.
+
+The report shows:
 
 ```
-  Parent: "I need to find where auth middleware is used in every module"
-       │
-       ▼
-  ┌──────────────────────────────────────────────┐
-  │  SCOUT only — cheap model                    │
-  │  Traces files, returns structured findings   │
-  │  No forge — just raw data                    │
-  └──────────────────┬───────────────────────────┘
-                     │ findings
-                     ▼
-              PARENT uses findings, continues
+## Grounding ✅ 100%
+All claims are grounded in the exploration evidence.
 ```
+
+or
+
+```
+## Grounding ⚠️ 50%
+- The auth module uses OAuth2 (no evidence in scout findings)
+- Rate limit is 100 req/min (only config.js was checked, not the limit value)
+```
+
+If grounding is low or findings were sparse/low-confidence, cdev automatically re-explored before forge. You can still re-run with `/cdev verify <task>` or `/cdev quick <topic>` for deeper confirmation.
 
 ### Verify mode (`/cdev verify <task>`)
 
@@ -315,6 +331,7 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
       "thinking": "xhigh"
     },
     "auto": false,
+    "autoVerify": true,
     "promptsEnabled": true,
     "memory": true,
     "offline": true,
@@ -333,8 +350,9 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `stage2.provider` | string | _required_ | Provider for forge (synthesis/review) |
 | `stage2.id` | string | _required_ | Model ID for forge |
 | `stage2.thinking` | `off` — `xhigh` | `xhigh` | Thinking level for forge |
-| `auto` | boolean | `false` | Auto-trigger mode (LLM proactively uses cdev) |
-| `promptsEnabled` | boolean | `true` | Enable/disable custom prompts |
+  | `auto` | boolean | `false` | Auto-trigger mode (LLM proactively uses cdev) |
+  | `autoVerify` | boolean | `true` | Automatic scout ×2 for higher accuracy |
+  | `promptsEnabled` | boolean | `true` | Enable/disable custom prompts |
 | `prompts.explore` | string | — | Custom scout exploration prompt |
 | `prompts.synthesize` | string | — | Custom forge synthesis prompt |
 | `prompts.review` | string | — | Custom review prompt |

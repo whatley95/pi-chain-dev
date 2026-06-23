@@ -47,6 +47,8 @@ export interface AutoForkConfig {
   memory: boolean;
   /** Use theme.bg() for richer TUI rendering (progress, results). Default true. */
   themed: boolean;
+  /** Run scout twice automatically for higher accuracy. */
+  autoVerify: boolean;
   /** Custom signature shown in /cdev status (e.g. name, handle). */
   signature?: string;
   /** Maximum cost (USD) for a single fork. 0 = unlimited. */
@@ -215,6 +217,10 @@ export interface Stage2Report {
   learnings: string;
   /** Concrete, verifiable tasks as checkboxes. */
   actionItems: string[];
+  /** 0-1 score of how well claims are grounded in the provided evidence. */
+  groundingScore?: number;
+  /** Claims that could not be backed by the stage 1 evidence. */
+  ungroundedClaims?: string[];
 }
 
 export function isStage2Report(value: unknown): value is Stage2Report {
@@ -229,6 +235,8 @@ export function isStage2Report(value: unknown): value is Stage2Report {
   for (const item of v.actionItems) {
     if (typeof item !== "string") return false;
   }
+  if (v.groundingScore !== undefined && typeof v.groundingScore !== "number") return false;
+  if (v.ungroundedClaims !== undefined && !Array.isArray(v.ungroundedClaims)) return false;
   return true;
 }
 

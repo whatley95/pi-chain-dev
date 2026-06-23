@@ -44,6 +44,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   promptsEnabled: true,
   memory: true,
   themed: false,
+  autoVerify: true,
   signature: undefined,
   maxForkCost: 0,
   maxSessionCost: 0,
@@ -161,6 +162,7 @@ function readNamespacedConfig(settingsPath: string): Partial<AutoForkConfig> {
     if (typeof config.promptsEnabled === "boolean") parsed.promptsEnabled = config.promptsEnabled;
     if (typeof config.memory === "boolean") parsed.memory = config.memory;
     if (typeof config.themed === "boolean") parsed.themed = config.themed;
+    if (typeof config.autoVerify === "boolean") parsed.autoVerify = config.autoVerify;
     if (typeof config.signature === "string") parsed.signature = config.signature;
     if (typeof config.maxForkCost === "number") parsed.maxForkCost = Math.max(0, config.maxForkCost);
     if (typeof config.maxSessionCost === "number") parsed.maxSessionCost = Math.max(0, config.maxSessionCost);

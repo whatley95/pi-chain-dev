@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import { parseInheritedCliArgs } from "../src/runner-cli.js";
 import { processPiEvent, processPiJsonLine, getFinalAssistantText, stableStringify } from "../src/runner-events.js";
 import { buildSessionSnapshotJsonl, resolveStageProfiles, formatResultContent, estimateSessionSize, checkSessionCostAlert } from "../src/extension-context.js";
+import { formatStage2Report, parseStage2Report, buildPiArgs } from "../src/runner.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
 import { emptyUsage, emptyFailedResult } from "../src/types.js";
@@ -230,6 +231,79 @@ describe("checkSessionCostAlert (extension-context.ts)", () => {
       if (previous !== null) writeFileSync(costPath, previous, "utf-8");
       else unlinkSync(costPath);
     }
+  });
+});
+
+describe("formatStage2Report (runner.ts)", () => {
+  it("includes grounding score and ungrounded claims", () => {
+    const report = {
+      status: "ok" as const,
+      summary: "summary",
+      output: "output",
+      evidence: "evidence",
+      learnings: "learnings",
+      actionItems: [],
+      groundingScore: 0.5,
+      ungroundedClaims: ["claim A", "claim B"],
+    };
+    const text = formatStage2Report(report);
+    assert.ok(text.includes("Grounding ⚠️ 50%"));
+    assert.ok(text.includes("claim A"));
+    assert.ok(text.includes("claim B"));
+  });
+
+  it("reports fully grounded when no ungrounded claims", () => {
+    const report = {
+      status: "ok" as const,
+      summary: "summary",
+      output: "output",
+      evidence: "evidence",
+      learnings: "learnings",
+      actionItems: [],
+      groundingScore: 1,
+      ungroundedClaims: [],
+    };
+    const text = formatStage2Report(report);
+    assert.ok(text.includes("Grounding ✅ 100%"));
+    assert.ok(text.includes("All claims are grounded"));
+  });
+});
+
+describe("parseStage2Report (runner.ts)", () => {
+  it("accepts groundingScore and ungroundedClaims", () => {
+    const json = JSON.stringify({
+      status: "ok",
+      summary: "s",
+      output: "o",
+      evidence: "e",
+      learnings: "l",
+      actionItems: [],
+      groundingScore: 0.75,
+      ungroundedClaims: ["x"],
+    });
+    const report = parseStage2Report(json);
+    assert.ok(report);
+    assert.strictEqual(report!.groundingScore, 0.75);
+    assert.deepStrictEqual(report!.ungroundedClaims, ["x"]);
+  });
+});
+
+describe("buildPiArgs (runner.ts)", () => {
+  const stageProfile = { provider: "opencode-go", id: "deepseek-v4-flash", thinking: "minimal" as const };
+
+  it("uses read-only tool allowlist for scout mode", () => {
+    const args = buildPiArgs("task", "/tmp/session.jsonl", null, stageProfile, "scout");
+    const toolsIndex = args.indexOf("--tools");
+    assert.ok(toolsIndex > -1);
+    assert.strictEqual(args[toolsIndex + 1], "read,bash,ls,grep,find,cat");
+    assert.ok(!args.includes("--no-tools"));
+  });
+
+  it("uses --no-tools for forge mode", () => {
+    const args = buildPiArgs("task", "/tmp/session.jsonl", null, stageProfile, "forge");
+    assert.ok(args.includes("--no-tools"));
+    const toolsIndex = args.indexOf("--tools");
+    assert.strictEqual(toolsIndex, -1);
   });
 });
 
