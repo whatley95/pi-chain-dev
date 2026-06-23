@@ -31,10 +31,10 @@ export function createCdevModelHandler(): (args: string, ctx: ExtensionContext) 
       const config = loadConfig(ctx.cwd);
       const reviewProfile = config.review ?? config.stage2;
       const stagePick = await ctx.ui.select("Pick model:", [
-        `Scout A (explore)  [${config.stage1.provider || "?"}/${config.stage1.id || "?"}]`,
-        `Scout B (verify)   [${config.stage1b?.provider || config.stage1.provider || "?"}/${config.stage1b?.id || config.stage1.id || "?"}]`,
-        `Forge (synthesize)  [${config.stage2.provider || "?"}/${config.stage2.id || "?"}]`,
-        `Review  [${reviewProfile.provider || "?"}/${reviewProfile.id || "?"}]`,
+        `Scout A (explore)  [${config.stage1.provider || "?"}/${config.stage1.id || "?"} • ${config.stage1.thinking || "?"}]`,
+        `Scout B (verify)   [${config.stage1b?.provider || config.stage1.provider || "?"}/${config.stage1b?.id || config.stage1.id || "?"} • ${config.stage1b?.thinking || config.stage1.thinking || "?"}]`,
+        `Forge (synthesize)  [${config.stage2.provider || "?"}/${config.stage2.id || "?"} • ${config.stage2.thinking || "?"}]`,
+        `Review  [${reviewProfile.provider || "?"}/${reviewProfile.id || "?"} • ${reviewProfile.thinking || config.stage2.thinking || "?"}]`,
       ]);
       if (!stagePick) return;
       const stage = stagePick.startsWith("Scout A") ? "stage1"
