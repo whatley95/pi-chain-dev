@@ -153,6 +153,7 @@ Logged for: tool crashes, review failures, full-mode failures, deep-scan failure
 
 - **Session size** is read-only. When it reaches ~40 messages, cdev warns: "Consider running /compact before the next cdev task." It never modifies the parent session automatically.
 - **Cost budgets** are configured with `maxSessionCost` (and `maxForkCost`) in settings. Alerts fire at 80% (warn) and 95% (critical) of the session budget. Budget checks also block forks that would exceed the limit.
+- **Cost tracking is cdev-only.** Session cost, today's cost, and budgets measure only the tokens consumed by cdev child forks (scout, forge, review, yolo). They do **not** include the main/parent Pi agent's own usage.
 
 ## How it works
 
@@ -353,26 +354,17 @@ Auto-discovered from `~/.pi/agent/extensions/pi-chain-dev/` — no install comma
 
 ### Build date hook
 
-The `Version` line in `/cdev status` includes a build timestamp that is auto-updated on every commit. After cloning or installing dependencies, the hook is installed automatically via `npm install` (`postinstall`).
-
-If you bypass `npm install`, install it manually:
+The `Version` line in `/cdev status` includes a build timestamp that is auto-updated on every commit. To enable it, install the pre-commit hook once per clone:
 
 ```bash
-npm run postinstall
+npm run setup-hook
 ```
 
-Or copy the script directly:
+The installer refuses to overwrite an existing pre-commit hook unless you pass `--force`. If you already have a pre-commit hook, chain or copy `scripts/update-build-date.cjs` manually.
 
-```bash
-# On Unix/macOS
-cp scripts/update-build-date.js .git/hooks/pre-commit
-chmod +x .git/hooks/pre-commit
+`npm run build` also updates the build date before compiling, so a fresh build always shows the current timestamp even without the hook.
 
-# On Windows (PowerShell)
-copy scripts\update-build-date.js .git\hooks\pre-commit
-```
-
-The hook rewrites `src/build-date.ts` with the current UTC timestamp and stages it before each commit. `npm run build` also updates the build date before compiling.
+The hook rewrites `src/build-date.ts` with the current UTC timestamp and stages it before each commit.
 
 ### .gitignore / svn:ignore
 

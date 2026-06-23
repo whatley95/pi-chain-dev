@@ -13,7 +13,7 @@ function isPathUnderCwd(cwd: string, target: string): boolean {
   const resolvedCwd = resolve(cwd);
   const resolvedTarget = resolve(target);
   const rel = relative(resolvedCwd, resolvedTarget);
-  return !rel.startsWith("..") && !rel.startsWith(".");
+  return !rel.startsWith("..") && rel !== "";
 }
 
 export function writeReportFile(opts: {

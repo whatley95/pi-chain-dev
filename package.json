@@ -6,6 +6,7 @@
   "main": "src/index.ts",
   "files": [
     "src",
+    "scripts",
     "README.md"
   ],
   "pi": {
@@ -22,11 +23,11 @@
     "pi-package"
   ],
   "scripts": {
-    "build": "node scripts/update-build-date.js && tsc",
+    "build": "node scripts/update-build-date.cjs && tsc",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test test/**/*.test.ts",
     "test:watch": "tsx --test --watch test/**/*.test.ts",
-    "postinstall": "node scripts/install-hook.js"
+    "setup-hook": "node scripts/install-hook.cjs"
   },
   "license": "MIT",
   "peerDependencies": {
