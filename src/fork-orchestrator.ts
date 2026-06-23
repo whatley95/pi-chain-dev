@@ -48,7 +48,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   const scoutModelLabel = stage1Profile.thinking ? `${stage1Profile.provider}:${stage1Profile.id} • ${stage1Profile.thinking}` : `${stage1Profile.provider}:${stage1Profile.id}`;
   opts.onProgress?.("scout", scoutModelLabel);
-  const stage1Task = buildStage1Prompt(task, customExplorePrompt, editMode);
+  const stage1Task = buildStage1Prompt(task, customExplorePrompt, editMode, cwd);
 
   let stage1Result: ForkResult;
   let stage1Findings: Stage1Findings | null = null;

@@ -1,0 +1,80 @@
+import assert from "node:assert";
+import { describe, it } from "node:test";
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { generateProjectMap, loadProjectMap, saveProjectMap, getMapPath, summarizeMapForPrompt } from "../src/project-map.js";
+
+describe("project-map", () => {
+  function makeTempDir(prefix: string): string {
+    return mkdtempSync(join(tmpdir(), prefix));
+  }
+
+  it("detects a Flutter project", () => {
+    const cwd = makeTempDir("cdev-flutter-");
+    writeFileSync(join(cwd, "pubspec.yaml"), "name: flutter_app\ndependencies:\n  flutter:\n    sdk: flutter\n", "utf-8");
+    mkdirSync(join(cwd, "lib"));
+    writeFileSync(join(cwd, "lib", "main.dart"), "void main() {}\n", "utf-8");
+
+    const map = generateProjectMap(cwd);
+    assert.strictEqual(map.project.type, "flutter-mobile");
+    assert.ok(map.project.languages.includes("Dart"));
+    assert.ok(map.stack.mobile.includes("Flutter"));
+    assert.ok(map.project.entryPoints.includes("lib/main.dart"));
+    assert.ok(map.structure.sourceRoots.includes("lib"));
+    assert.ok(map.config.runCommands.includes("flutter run"));
+  });
+
+  it("detects a Spring Boot project", () => {
+    const cwd = makeTempDir("cdev-spring-");
+    writeFileSync(
+      join(cwd, "build.gradle"),
+      'plugins {\n  id "java"\n  id "org.springframework.boot" version "3.0.0"\n}\ndependencies {\n  implementation "org.springframework.boot:spring-boot-starter-web"\n}\n',
+      "utf-8"
+    );
+    mkdirSync(join(cwd, "src", "main", "java", "com", "example"), { recursive: true });
+    writeFileSync(join(cwd, "src", "main", "java", "com", "example", "Application.java"), "package com.example;\n", "utf-8");
+
+    const map = generateProjectMap(cwd);
+    assert.strictEqual(map.project.type, "spring-boot-backend");
+    assert.ok(map.project.languages.includes("Java"));
+    assert.ok(map.stack.backend.includes("Spring Boot"));
+    assert.ok(map.config.runCommands.includes("./gradlew bootRun"));
+  });
+
+  it("detects a Python project", () => {
+    const cwd = makeTempDir("cdev-python-");
+    writeFileSync(join(cwd, "requirements.txt"), "flask\n", "utf-8");
+    writeFileSync(join(cwd, "app.py"), "from flask import Flask\n", "utf-8");
+
+    const map = generateProjectMap(cwd);
+    assert.ok(map.project.languages.includes("Python"));
+    assert.ok(map.project.entryPoints.includes("app.py"));
+    assert.ok(map.config.testCommands.includes("pytest"));
+  });
+
+  it("saves and loads a project map", () => {
+    const cwd = makeTempDir("cdev-map-persist-");
+    const map = generateProjectMap(cwd);
+    saveProjectMap(cwd, map);
+
+    const loaded = loadProjectMap(cwd);
+    assert.ok(loaded);
+    assert.strictEqual(loaded.project.name, map.project.name);
+    assert.ok(existsSync(getMapPath(cwd)));
+  });
+
+  it("summarizes map for prompt injection", () => {
+    const cwd = makeTempDir("cdev-map-summary-");
+    writeFileSync(join(cwd, "pubspec.yaml"), "name: x\ndependencies:\n  flutter:\n    sdk: flutter\n", "utf-8");
+    mkdirSync(join(cwd, "lib"));
+    writeFileSync(join(cwd, "lib", "main.dart"), "void main() {}\n", "utf-8");
+
+    const map = generateProjectMap(cwd);
+    const summary = summarizeMapForPrompt(map);
+    assert.ok(summary.includes("<project_map>"));
+    assert.ok(summary.includes("Dart"));
+    assert.ok(summary.includes("flutter-mobile") || summary.includes("Flutter"));
+    assert.ok(summary.includes("</project_map>"));
+  });
+});

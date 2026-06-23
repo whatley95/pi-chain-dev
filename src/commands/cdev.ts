@@ -16,6 +16,7 @@ import {
 } from "../extension-context.js";
 import { handleScan } from "./cdev-scan.js";
 import { handleMemory, memoryTopicCount } from "./cdev-memory.js";
+import { handleMap } from "./cdev-map.js";
 import { writeAgentSetting, writeProjectSetting } from "../settings-helpers.js";
 import { formatCost } from "../extension-context.js";
 import { normalizeYoloConfig } from "../types.js";
@@ -65,6 +66,9 @@ export function registerCdevCommand(
 
       // ── Subcommands: scan, scan deep ──
       if (await handleScan(trimmed, ctx, config, updatePromptsStatus)) return;
+
+      // ── Subcommands: map, map refresh, map show ──
+      if (await handleMap(trimmed, ctx, config)) return;
 
       // ── Subcommands: recall, view, memory *, memory on/off ──
       if (await handleMemory(trimmed, ctx, config)) return;
@@ -377,6 +381,9 @@ export function registerCdevCommand(
           "/cdev review [path]    Forge review session/file",
           "/cdev review A..B      Review git/svn diff",
           "/cdev scan [deep]      Generate custom prompts",
+          "/cdev map              Generate project map",
+          "/cdev map refresh      Regenerate project map via scout+forge",
+          "/cdev map show         View project map",
           "/cdev history [n]      Past session details",
           "/cdev recall [topic]   Check project memory",
           "/cdev memory refresh <topic>  Re-explore stale topic",

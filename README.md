@@ -41,6 +41,9 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 | `/cdev-model` | Interactive model picker — choose scout/forge models from configured providers |
 | `/cdev scan` | Instant template scan — detects stack from package.json, generates prompts (free, no LLM) |
 | `/cdev scan deep` | LLM-powered scan — reads actual codebase, writes truly custom prompts (scout → forge) |
+| `/cdev map` | Generate a project map for any stack (Flutter, Spring Boot, Python, Go, etc.) |
+| `/cdev map refresh` | Regenerate project map via scout+forge |
+| `/cdev map show` | View existing project map |
 | `/cdev prompts on` | Enable custom prompts (after scanning) |
 | `/cdev prompts off` | Disable custom prompts — use generic ones instead |
 | `/cdev history` | List recent cdev sessions (date, task, cost, status, model chain) |
@@ -78,6 +81,8 @@ The LLM can also call `cdev` via a registered tool — no typing commands:
 Auto-trigger mode tells the LLM to use the tool proactively. The agent also receives prompt guidelines:
 - Use `recall=<topic>` before re-exploring — costs $0, avoids duplicate work
 - Use `recall=""` to list all known topics when starting in a project
+- Use `plan:true` before a refactor to get a roadmap with checklist and verification commands
+- Run `/cdev map` to generate a project map for any stack; scouts use it automatically for context
 - Use `review:true` after significant code changes
 - Use `quick:true` for quick file tracing
 - Use `verify:true` for high-stakes exploration where accuracy matters more than speed or cost
@@ -426,7 +431,7 @@ svn propset svn:ignore '.pi' .
 svn commit -m "Ignore cdev data"
 ```
 
-Contains: sessions (`.pi/cdev/sessions/`), reports (`.pi/cdev/reports/`), memory (`.pi/cdev/memory.json`), error logs (`.pi/cdev/errors.jsonl`).
+Contains: sessions (`.pi/cdev/sessions/`), reports (`.pi/cdev/reports/`), maps (`.pi/cdev/map.yaml`), memory (`.pi/cdev/memory.json`), error logs (`.pi/cdev/errors.jsonl`).
 
 On `session_start`, cdev warns if `.gitignore`/`svn:ignore` is set up but `.pi/` is missing.
 
@@ -541,22 +546,93 @@ LLM: wants a roadmap → calls cdev({ task: "plan auth middleware refactor", pla
 LLM / you: fix issues, re-review if needed
 ```
 
+## Project map
+
+### `/cdev map` — Stack-agnostic project overview
+
+`/cdev map` generates `.pi/cdev/map.yaml`, a structured project overview that any scout can load before exploring. It works for any project type: Flutter, Spring Boot, Python, Go, Rust, Ruby, PHP, etc.
+
+```yaml
+project:
+  name: my-app
+  type: flutter-mobile
+  language: Dart
+  languages: [Dart]
+  entryPoints: [lib/main.dart]
+stack:
+  framework: [Flutter]
+  backend: []
+  frontend: []
+  mobile: [Flutter]
+  orm: []
+  auth: []
+  testing: [flutter_test]
+  validation: []
+  styling: []
+  build: []
+  stateManagement: []
+  packageManager: [pub]
+  db: []
+  monorepo: []
+structure:
+  rootDirs: [lib, test, android, ios]
+  sourceRoots: [lib]
+  testRoots: [test]
+  configFiles: [pubspec.yaml, analysis_options.yaml]
+  importantFiles: [lib/main.dart]
+conventions:
+  folderStructure: Feature-first or layer-first under lib/
+  naming: snake_case files, PascalCase widgets/classes
+  stateManagement: Check for Riverpod, Bloc, Provider, or GetX
+config:
+  envFiles: []
+  buildCommands: [flutter build apk]
+  testCommands: [flutter test]
+  runCommands: [flutter run]
+  lintCommands: [flutter analyze]
+architecture:
+  patterns: [Widget tree, Feature modules]
+  layers:
+    presentation: [lib/**/widgets/, lib/**/screens/]
+    domain: [lib/**/models/]
+    data: [lib/**/repositories/]
+notes:
+  - This map is a starting point. Run `/cdev map refresh` after major structural changes.
+  - Scout will use this map when available to focus exploration.
+generatedAt: "2026-06-23T16:00:00.000Z"
+generatedBy: "cdev scout+forge map generator"
+```
+
+Commands:
+
+| Command | What it does |
+|---|---|
+| `/cdev map` | Generate map from template detection |
+| `/cdev map refresh` | Regenerate via scout+forge (reads actual source files) |
+| `/cdev map show` | Display existing map |
+
+When a map exists, every scout prompt automatically includes a `<project_map>` summary so the model knows the stack, entry points, conventions, and architecture before reading files.
+
 ## Stack detection
 
 ### `/cdev scan` — Template (free, instant)
 
-Reads `package.json`, config files, and project structure to detect stack from 40+ pre-coded patterns:
+Reads project files (`package.json`, `pubspec.yaml`, `pom.xml`, `build.gradle`, `go.mod`, etc.) and directory structure to detect stack from pre-coded patterns:
 
-- **Framework**: NestJS, Next.js, React, Vue, Angular, Express, Fastify, Koa, SvelteKit, Nuxt, Remix, Astro
-- **ORM**: Prisma, TypeORM, Drizzle, Mongoose, Sequelize, Knex
+- **Mobile**: Flutter
+- **Backend (Java/Kotlin)**: Spring Boot
+- **Backend (Node)**: NestJS, Express, Fastify, Koa, Hono
+- **Frontend**: Next.js, React, Vue, Angular, SvelteKit, Nuxt, Remix, Astro
+- **ORM**: Prisma, TypeORM, Drizzle, Mongoose, Sequelize, Knex, MikroORM
 - **Auth**: JWT, Passport, NextAuth, Clerk, Lucia
 - **Testing**: Jest, Vitest, Mocha, Cypress, Playwright
 - **Validation**: Zod, class-validator, Joi, Yup, Valibot
 - **Styling**: Tailwind, styled-components, Emotion, Sass, Shadcn/ui, Radix, Mantine, Chakra, Ant Design
 - **Build**: Vite, Webpack, tsup, esbuild, Rollup
 - **State**: Zustand, Redux, Jotai, MobX, Pinia, TanStack Query
-- **DB**: PostgreSQL, MySQL, MongoDB, Redis, SQLite (from docker-compose.yml + Prisma schema)
+- **DB**: PostgreSQL, MySQL, MongoDB, Redis, SQLite, H2 (from docker-compose.yml, Prisma schema, Gradle deps)
 - **Monorepo**: Turborepo, Nx, Lerna
+- **Languages**: TypeScript, JavaScript, Dart, Java, Kotlin, Python, Go, Rust, Ruby, PHP, Swift, C#, C++, C
 
 Generates stack-specific, focused prompts automatically. Accuracy: ~90% stack detection, ~60% prompt relevance.
 

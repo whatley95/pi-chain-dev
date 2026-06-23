@@ -1,9 +1,11 @@
 import { appendTaskToSessionJsonl } from "./fork-stage.js";
+import { loadProjectMap, summarizeMapForPrompt } from "./project-map.js";
 
 export const STAGE_AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
 
-export function buildStage1Prompt(task: string, customPrompt?: string, editMode?: boolean): string {
+export function buildStage1Prompt(task: string, customPrompt?: string, editMode?: boolean, cwd?: string): string {
   const guard = editMode ? "" : STAGE_AUDIT_GUARD;
+  const mapContext = cwd ? loadMapContext(cwd) : "";
   const jsonSchema = `{
   "summary": "one-sentence summary of what was explored",
   "findings": [
@@ -25,7 +27,7 @@ export function buildStage1Prompt(task: string, customPrompt?: string, editMode?
   }
 }`;
   if (customPrompt) {
-    return `${customPrompt}
+    return `${customPrompt}${mapContext}
 
 Task: ${task}
 
@@ -37,7 +39,7 @@ Efficiency rules:
 - Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
 - Read a file individually only when you need the full content of a specific, named file.${guard}`;
   }
-  return `${task}
+  return `${task}${mapContext}
 
 You are in EXPLORATION MODE. Your job is to gather information, not to write a final report.
 
@@ -357,4 +359,12 @@ export function buildStage2FindingsPrompt(stage1Output: string, customPrompt?: s
 <previous_findings>
 ${stage1Output}
 </previous_findings>`;
+}
+
+function loadMapContext(cwd: string): string {
+  try {
+    const map = loadProjectMap(cwd);
+    if (map) return `\n\n${summarizeMapForPrompt(map)}`;
+  } catch { /* ignore */ }
+  return "";
 }
