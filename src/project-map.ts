@@ -259,14 +259,10 @@ function detectCommands(cwd: string, pkgManager: string[], languages: string[]):
   const scripts = (pkgJson?.scripts as Record<string, string>) || {};
 
   if (pkgManager.includes("npm") || pkgManager.includes("pnpm") || pkgManager.includes("yarn") || pkgManager.includes("bun")) {
-    const pkgBuild = scripts.build ? "npm run build" : "npm run build";
-    const pkgTest = scripts.test ? "npm test" : "npm test";
-    const pkgRun = scripts.start ? "npm start" : "npm start";
-    const pkgLint = scripts.lint ? "npm run lint" : "npm run lint";
-    build.push(pkgBuild);
-    test.push(pkgTest);
-    run.push(pkgRun);
-    lint.push(pkgLint);
+    if (scripts.build) build.push("npm run build");
+    if (scripts.test) test.push("npm test");
+    if (scripts.start) run.push("npm start");
+    if (scripts.lint) lint.push("npm run lint");
   }
 
   if (languages.includes("Dart")) {
@@ -468,7 +464,9 @@ function extractTopDependencies(cwd: string, languages: string[]): Record<string
     const starters: string[] = [];
     let m: RegExpExecArray | null;
     while ((m = starterRe.exec(gradle)) !== null) {
-      const name = m[1].split("-").pop() ?? m[1];
+      const coord = m[1];
+      if (!coord.startsWith("org.springframework.boot:")) continue;
+      const name = coord.split("-").pop() ?? coord;
       starters.push(`Spring Boot Starter: ${name}`);
     }
     if (starters.length) deps.springBoot = Array.from(new Set(starters)).slice(0, 30);
@@ -476,12 +474,17 @@ function extractTopDependencies(cwd: string, languages: string[]): Record<string
 
   const pom = tryReadText(join(cwd, "pom.xml"));
   if (pom && (languages.includes("Java") || languages.includes("Kotlin"))) {
-    const starterRe = /<artifactId>(spring-boot-starter-[\w-]+)<\/artifactId>/g;
     const starters: string[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = starterRe.exec(pom)) !== null) {
-      const name = m[1].split("-").pop() ?? m[1];
-      starters.push(`Spring Boot Starter: ${name}`);
+    const dependencyBlockRe = /<dependency>([\s\S]*?)<\/dependency>/g;
+    let depMatch: RegExpExecArray | null;
+    while ((depMatch = dependencyBlockRe.exec(pom)) !== null) {
+      const block = depMatch[1];
+      const groupId = block.match(/<groupId>([^<]+)<\/groupId>/)?.[1];
+      const artifactId = block.match(/<artifactId>(spring-boot-starter-[\w-]+)<\/artifactId>/)?.[1];
+      if (groupId === "org.springframework.boot" && artifactId) {
+        const name = artifactId.split("-").pop() ?? artifactId;
+        starters.push(`Spring Boot Starter: ${name}`);
+      }
     }
     if (starters.length) {
       const existing = new Set(deps.springBoot || []);
@@ -632,11 +635,19 @@ function detectRoutes(cwd: string, framework: string[]): Record<string, string[]
   if (framework.includes("Angular")) {
     routes.angular = ["src/app/"];
   }
-  if (framework.includes("Vue") && existsSync(join(cwd, "src", "views"))) {
-    routes.vue = ["src/views/"];
+  if (framework.includes("Vue")) {
+    const vueRoutes: string[] = [];
+    if (existsSync(join(cwd, "src", "views"))) vueRoutes.push("src/views/");
+    if (existsSync(join(cwd, "src", "pages"))) vueRoutes.push("src/pages/");
+    if (existsSync(join(cwd, "src", "router"))) vueRoutes.push("src/router/");
+    if (vueRoutes.length) routes.vue = vueRoutes;
   }
-  if (framework.includes("React") && existsSync(join(cwd, "src", "pages"))) {
-    routes.react = ["src/pages/"];
+  if (framework.includes("React")) {
+    const reactRoutes: string[] = [];
+    if (existsSync(join(cwd, "src", "pages"))) reactRoutes.push("src/pages/");
+    if (existsSync(join(cwd, "src", "routes"))) reactRoutes.push("src/routes/");
+    if (existsSync(join(cwd, "app"))) reactRoutes.push("app/");
+    if (reactRoutes.length) routes.react = reactRoutes;
   }
   return routes;
 }
