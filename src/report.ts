@@ -1,7 +1,6 @@
-import { mkdirSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
-import { join, basename, resolve } from "node:path";
-import { logError, logWarn } from "./logger.js";
-import { isPathUnderCwd } from "./path-guards.js";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join, basename } from "node:path";
+import { logError } from "./logger.js";
 import { PROMPT_VERSION } from "./prompt-version.js";
 
 export function sanitizeReportFileName(fileName: string): string {
@@ -18,10 +17,8 @@ export function writeReportFile(opts: {
   title: string;
   reviewer?: string;
   body: string;
-  appendTo?: string;
-  appendBody?: string;
 }): { reportRelPath: string; written: boolean; error?: string } {
-  const { cwd, fileName, title, reviewer, body, appendTo, appendBody } = opts;
+  const { cwd, fileName, title, reviewer, body } = opts;
   const reportsDir = join(cwd, ".pi", "cdev", "reports");
   const safeName = sanitizeReportFileName(fileName);
   const reportRelPath = `.pi/cdev/reports/${safeName}`;
@@ -33,18 +30,6 @@ export function writeReportFile(opts: {
       ? `# ${title}\n\n**Date:** ${date}\n**Reviewer:** ${reviewer}\n**Prompt version:** ${PROMPT_VERSION}\n\n`
       : `# ${title}\n\n**Date:** ${date}\n**Prompt version:** ${PROMPT_VERSION}\n\n`;
     writeFileSync(reportPath, `${header}${body}\n`, "utf-8");
-    if (appendTo && appendBody) {
-      const appendTarget = resolve(cwd, appendTo);
-      if (existsSync(appendTarget) && isPathUnderCwd(cwd, appendTarget)) {
-        try {
-          appendFileSync(appendTarget, appendBody, "utf-8");
-        } catch (err) {
-          logWarn(cwd, "writeReportFile", "failed to append to target file", { appendTo, error: String(err) });
-        }
-      } else {
-        logWarn(cwd, "writeReportFile", "append target rejected", { appendTo });
-      }
-    }
     return { reportRelPath, written: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);

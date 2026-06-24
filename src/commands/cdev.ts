@@ -1,6 +1,26 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
+
+function levenshtein(a: string, b: string): number {
+  if (a.length < b.length) return levenshtein(b, a);
+  if (b.length === 0) return a.length;
+  const prev: number[] = new Array(b.length + 1).fill(0).map((_, i) => i);
+  const curr: number[] = new Array(b.length + 1);
+  for (let i = 0; i < a.length; i++) {
+    curr[0] = i + 1;
+    for (let j = 0; j < b.length; j++) {
+      const cost = a[i] === b[j] ? 0 : 1;
+      curr[j + 1] = Math.min(
+        curr[j] + 1,
+        prev[j + 1] + 1,
+        prev[j] + cost
+      );
+    }
+    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
+  }
+  return prev[b.length];
+}
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "../config.js";
 import { listSessions, getSession, formatHistory, formatSessionRecord, purgeOldSessions } from "../history.js";
@@ -452,19 +472,11 @@ export function registerCdevCommand(
       const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "help", "clear", "yolo", "verify", "plan"];
       const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
       const isSingleWord = !trimmed.includes(" ");
-      const fuzzy = subcommands.find(cmd => {
-        if (cmd === firstWord) return false;
-        if (cmd.startsWith(firstWord) || firstWord.startsWith(cmd)) return true;
-        if (firstWord.length >= 3 && cmd.length >= 3) {
-          let diffs = 0;
-          const shorter = firstWord.length < cmd.length ? firstWord : cmd;
-          for (let i = 0; i < shorter.length; i++) {
-            if (firstWord[i] !== cmd[i]) diffs++;
-          }
-          if (diffs <= 1) return true;
-        }
-        return false;
-      });
+      const fuzzy = subcommands
+        .filter(cmd => cmd !== firstWord)
+        .map(cmd => ({ cmd, dist: levenshtein(firstWord, cmd) }))
+        .filter(({ dist }) => dist <= 2)
+        .sort((a, b) => a.dist - b.dist)[0]?.cmd;
       if (fuzzy && isSingleWord) {
         const choice = await ctx.ui.select(
           `Unknown: /cdev ${firstWord}`,

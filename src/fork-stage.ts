@@ -65,11 +65,52 @@ function resolvePiSpawn(): { command: string; prefixArgs: string[] } {
   return { command: process.execPath, prefixArgs: [] };
 }
 
+interface PreparedSession {
+  jsonl: string;
+  filePath: string;
+  tmpDir: string;
+}
+
+let sharedPreparedSession: PreparedSession | null = null;
+let sharedPreparedSessionRefCount = 0;
+
+export function prepareSharedSession(sanitizedJsonl: string): PreparedSession {
+  if (sharedPreparedSession && sharedPreparedSession.jsonl === sanitizedJsonl) {
+    sharedPreparedSessionRefCount++;
+    return sharedPreparedSession;
+  }
+  // If a different snapshot is being prepared, clean up the old one first.
+  if (sharedPreparedSession) {
+    cleanupTempDir("", sharedPreparedSession.tmpDir);
+  }
+  const tmp = writeTempSessionJsonl(sanitizedJsonl);
+  sharedPreparedSession = { jsonl: sanitizedJsonl, filePath: tmp.filePath, tmpDir: tmp.dir };
+  sharedPreparedSessionRefCount = 1;
+  return sharedPreparedSession;
+}
+
+export function releaseSharedSession(): void {
+  if (!sharedPreparedSession) return;
+  sharedPreparedSessionRefCount--;
+  if (sharedPreparedSessionRefCount <= 0) {
+    cleanupTempDir("", sharedPreparedSession.tmpDir);
+    sharedPreparedSession = null;
+  }
+}
+
 function writeTempSessionJsonl(sessionJsonl: string): { dir: string; filePath: string } {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-chain-dev-"));
   const filePath = path.join(tmpDir, "cdev.jsonl");
   fs.writeFileSync(filePath, sessionJsonl, { encoding: "utf-8", mode: 0o600 });
   return { dir: tmpDir, filePath };
+}
+
+export function clearSharedSession(): void {
+  if (sharedPreparedSession) {
+    cleanupTempDir("", sharedPreparedSession.tmpDir);
+    sharedPreparedSession = null;
+    sharedPreparedSessionRefCount = 0;
+  }
 }
 
 export function appendTaskToSessionJsonl(sessionJsonl: string, task: string): string {
@@ -100,8 +141,8 @@ function redactSensitiveContent(text: string): string {
   if (!text) return text;
   let redacted = text;
   redacted = redacted.replace(/\b(sk-[a-zA-Z0-9_-]{20,})\b/g, "[REDACTED_API_KEY]");
-  redacted = redacted.replace(/\b([a-f0-9]{40,})\b/gi, "[REDACTED_HEX_KEY]");
-  redacted = redacted.replace(/\b([A-Za-z0-9+/]{40,}={0,2})\b/g, "[REDACTED_B64_KEY]");
+  redacted = redacted.replace(/\b([a-f0-9]{64,})\b/gi, "[REDACTED_HEX_KEY]");
+  redacted = redacted.replace(/\b([A-Za-z0-9+/]{48,}={0,2})\b/g, "[REDACTED_B64_KEY]");
   redacted = redacted.replace(/(--api-key\s+)\S+/gi, "$1[REDACTED]");
   return redacted;
 }
@@ -351,8 +392,18 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
   if (sanitized.stripped > 0) {
     result.stderr += `[cdev] stripped ${sanitized.stripped} orphaned tool message(s) from session snapshot\n`;
   }
-  const tmp = writeTempSessionJsonl(sanitized.jsonl);
-  const sessionFilePath = tmp.filePath;
+  // Use a shared temp session file when the caller prepared one; otherwise fall back to a per-run temp file.
+  const prepared = sanitizedSessionJsonl ? prepareSharedSession(sanitized.jsonl) : null;
+  let ownsPrepared = false;
+  let tmpDirToClean: string | null = null;
+  const sessionFilePath = prepared ? prepared.filePath : (() => {
+    const tmp = writeTempSessionJsonl(sanitized.jsonl);
+    tmpDirToClean = tmp.dir;
+    return tmp.filePath;
+  })();
+  if (prepared) {
+    ownsPrepared = true;
+  }
   let taskArg = task;
   let exitCode: number;
 
@@ -476,6 +527,10 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
 
   return result;
 } finally {
-    cleanupTempDir(cwd, tmp.dir);
+    if (ownsPrepared) {
+      releaseSharedSession();
+    } else if (tmpDirToClean) {
+      cleanupTempDir(cwd, tmpDirToClean);
+    }
   }
 }

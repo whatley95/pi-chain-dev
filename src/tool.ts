@@ -275,9 +275,16 @@ export async function executeCdevTool(
       // Diff review
       if (typeof p.diffSpec === "string" && p.diffSpec.trim()) {
         const diffSpec = p.diffSpec.trim();
-        if (diffSpec.startsWith("-")) {
+        if (diffSpec.startsWith("-") || /(^|\s)--?\w/.test(diffSpec)) {
           return {
-            content: [{ type: "text" as const, text: `cdev review error: diffSpec must not start with '-': ${diffSpec}` }],
+            content: [{ type: "text" as const, text: `cdev review error: diffSpec must not start with '-' or contain flag-like tokens: ${diffSpec}` }],
+            details: { stage1: null, stage2: null },
+            isError: true,
+          };
+        }
+        if (/\.\.|^\/|\\/.test(diffSpec)) {
+          return {
+            content: [{ type: "text" as const, text: `cdev review error: diffSpec must not contain path traversal or absolute paths: ${diffSpec}` }],
             details: { stage1: null, stage2: null },
             isError: true,
           };

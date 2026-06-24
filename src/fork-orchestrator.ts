@@ -75,10 +75,24 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   if (verify) {
     const secondProfile = stage1bProfile && stage1bProfile.provider && stage1bProfile.id ? stage1bProfile : stage1Profile;
-    const [runA, runB] = await Promise.all([
-      runStage1Run("exploration A", stage1Profile),
-      runStage1Run("exploration B", secondProfile),
-    ]);
+    let runA: ForkResult;
+    let runB: ForkResult;
+    try {
+      [runA, runB] = await Promise.all([
+        runStage1Run("exploration A", stage1Profile),
+        runStage1Run("exploration B", secondProfile),
+      ]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        result: {
+          ...emptyFailedResult(task, `Verify mode exploration failed: ${message}`),
+          provider: stage1Profile.provider,
+          model: stage1Profile.id,
+        },
+        details,
+      };
+    }
 
     const combinedUsage: UsageStats = emptyUsage();
     const addUsage = (usage: UsageStats | undefined | null) => {
@@ -135,11 +149,47 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     stage1Findings = parseStage1Findings(stage1Text);
     const validation = stage1Findings ? validateStage1Findings(stage1Findings, "exploration") : { valid: false, reason: "output was not valid JSON findings" };
 
-    if (!validation.valid) {
-      stage1Result.stderr += `\n[cdev] ${validation.reason}; retrying stage 1 with stricter prompt\n`;
-      const retryResult = await runStage1Run("exploration (validation retry)");
-      details.stage1 = retryResult;
+    const reExploreCheck = shouldReExplore(stage1Findings, verify);
+    const gateCheck = stage1Findings ? evaluateConfidenceGates(stage1Findings, confidenceGates) : { passed: false, reasons: ["no valid findings"] };
+    const gateAutoReExplore = confidenceGates?.autoReExplore ?? true;
+    const needsMoreExploration = reExploreCheck.should || (!gateCheck.passed && gateAutoReExplore);
+    if (!gateCheck.passed && !gateAutoReExplore) {
+      stage1Result.stderr += `\n[cdev] confidence gate failed but autoReExplore is off: ${gateCheck.reasons.join("; ")}\n`;
+    }
 
+    // Fire validation retry and/or coverage pass concurrently where possible.
+    // They are independent, so parallelism saves wall-clock time without reducing accuracy.
+    let retryResult: ForkResult | undefined;
+    let secondRun: ForkResult | undefined;
+
+    if (!validation.valid || needsMoreExploration) {
+      const promises: Promise<ForkResult>[] = [];
+      const labels: string[] = [];
+
+      if (!validation.valid) {
+        stage1Result.stderr += `\n[cdev] ${validation.reason}; retrying stage 1 with stricter prompt\n`;
+        promises.push(runStage1Run("exploration (validation retry)"));
+        labels.push("validation retry");
+      }
+
+      if (needsMoreExploration) {
+        const reason = gateCheck.passed ? reExploreCheck.reason : `confidence gate failed: ${gateCheck.reasons.join("; ")}`;
+        stage1Result.stderr += `\n[cdev] ${reason}; running a second exploration pass\n`;
+        promises.push(runStage1Run("exploration (coverage pass)"));
+        labels.push("coverage pass");
+      }
+
+      const results = await Promise.all(promises);
+      if (labels.includes("validation retry")) {
+        retryResult = results[labels.indexOf("validation retry")];
+      }
+      if (labels.includes("coverage pass")) {
+        secondRun = results[labels.indexOf("coverage pass")];
+      }
+    }
+
+    if (retryResult) {
+      details.stage1 = retryResult;
       const retryText = getFinalAssistantText(retryResult.messages) || "";
       const retryFindings = parseStage1Findings(retryText);
       const retryValidation = retryFindings ? validateStage1Findings(retryFindings, "exploration retry") : { valid: false, reason: "retry output was not valid JSON findings" };
@@ -156,38 +206,24 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       }
     }
 
-    const reExploreCheck = shouldReExplore(stage1Findings, verify);
-    const gateCheck = stage1Findings ? evaluateConfidenceGates(stage1Findings, confidenceGates) : { passed: false, reasons: ["no valid findings"] };
-    const gateAutoReExplore = confidenceGates?.autoReExplore ?? true;
-    const needsMoreExploration = reExploreCheck.should || (!gateCheck.passed && gateAutoReExplore);
-    if (!gateCheck.passed && !gateAutoReExplore) {
-      stage1Result.stderr += `\n[cdev] confidence gate failed but autoReExplore is off: ${gateCheck.reasons.join("; ")}\n`;
-    }
-    if (needsMoreExploration && !verify) {
-      const reason = gateCheck.passed ? reExploreCheck.reason : `confidence gate failed: ${gateCheck.reasons.join("; ")}`;
-      stage1Result.stderr += `\n[cdev] ${reason}; running a second exploration pass\n`;
-      const secondRun = await runStage1Run("exploration (coverage pass)");
+    if (secondRun && stage1Findings) {
       const secondText = getFinalAssistantText(secondRun.messages) || "";
       const secondFindings = parseStage1Findings(secondText);
       const secondValidation = secondFindings ? validateStage1Findings(secondFindings, "coverage pass") : { valid: false, reason: "coverage pass output was not valid JSON findings" };
-      if (secondValidation.valid) {
-        if (stage1Findings && secondFindings) {
-          stage1Findings = mergeStage1Findings(stage1Findings, secondFindings);
-          stage1Result.stderr += `\n[cdev] merged second pass: ${stage1Findings.findings.length} total findings\n`;
-          const finalGate = evaluateConfidenceGates(stage1Findings, confidenceGates);
-          if (!finalGate.passed) {
-            stage1Result.stderr += `\n[cdev] confidence gates still not met after second pass: ${finalGate.reasons.join("; ")}\n`;
-          }
-        } else if (secondFindings) {
-          stage1Findings = secondFindings;
+      if (secondValidation.valid && secondFindings) {
+        stage1Findings = mergeStage1Findings(stage1Findings, secondFindings);
+        stage1Result.stderr += `\n[cdev] merged second pass: ${stage1Findings.findings.length} total findings\n`;
+        const finalGate = evaluateConfidenceGates(stage1Findings, confidenceGates);
+        if (!finalGate.passed) {
+          stage1Result.stderr += `\n[cdev] confidence gates still not met after second pass: ${finalGate.reasons.join("; ")}\n`;
         }
-        stage1Result = {
-          ...secondRun,
-          stderr: [stage1Result.stderr, secondRun.stderr].filter(Boolean).join("\n"),
-        };
       } else {
         stage1Result.stderr += `\n[cdev] coverage pass invalid (${secondValidation.reason}); using first pass\n`;
       }
+      stage1Result = {
+        ...secondRun,
+        stderr: [stage1Result.stderr, secondRun.stderr].filter(Boolean).join("\n"),
+      };
     }
   }
 
@@ -584,15 +620,15 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
 
   const totalUsage: UsageStats = emptyUsage();
 
-  function checkYoloBudget(spentSoFar: number, nextEstimate: number): { allowed: boolean; reason?: string } {
+  function checkYoloBudget(_spentSoFar: number, nextEstimate: number): { allowed: boolean; reason?: string } {
     const maxForkCost = opts.config.maxForkCost ?? 0;
     const maxSessionCost = opts.config.maxSessionCost ?? 0;
     if (maxForkCost > 0 && nextEstimate > maxForkCost) {
       return { allowed: false, reason: `next fork estimate ${formatCost(nextEstimate)} exceeds maxForkCost ${formatCost(maxForkCost)}` };
     }
     const sessionCost = getSessionForkCost(cwd);
-    if (maxSessionCost > 0 && sessionCost + spentSoFar + nextEstimate > maxSessionCost) {
-      return { allowed: false, reason: `YOLO session cost would reach ${formatCost(sessionCost + spentSoFar + nextEstimate)}, exceeding maxSessionCost ${formatCost(maxSessionCost)}` };
+    if (maxSessionCost > 0 && sessionCost + nextEstimate > maxSessionCost) {
+      return { allowed: false, reason: `YOLO session cost would reach ${formatCost(sessionCost + nextEstimate)}, exceeding maxSessionCost ${formatCost(maxSessionCost)}` };
     }
     return { allowed: true };
   }
@@ -644,6 +680,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       stage1Profile,
       stage2Profile: reviewProfile,
       forkSessionSnapshotJsonl,
+      quick: true,
     });
     const reviewBudget = checkYoloBudget(totalUsage.cost, reviewEstimate.cost);
     if (!reviewBudget.allowed) {
@@ -725,6 +762,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       stage1Profile,
       stage2Profile: fixProfile,
       forkSessionSnapshotJsonl,
+      quick: yoloConfig.autoApply !== "auto",
     });
     const fixBudget = checkYoloBudget(totalUsage.cost, fixEstimate.cost);
     if (!fixBudget.allowed) {

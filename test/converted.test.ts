@@ -3,7 +3,7 @@
  */
 
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import { parseInheritedCliArgs } from "../src/runner-cli.js";
 import { processPiEvent, getFinalAssistantText, stableStringify } from "../src/runner-events.js";
 import { buildSessionSnapshotJsonl, resolveStageProfiles, formatResultContent, formatForkResultOutput, estimateSessionSize, checkSessionCostAlert } from "../src/extension-context.js";
@@ -341,10 +341,24 @@ describe("buildPiArgs (fork-stage.ts)", () => {
 
 // ── Memory refresh integration ───────────────────────────
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { memoryClear, memoryGetTopic, indexFindings, memoryForget } from "../src/memory.js";
 
 describe("memory refresh integration", () => {
-  const cwd = process.cwd();
+  let cwd: string;
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), "cdev-memory-test-"));
+    mkdirSync(join(cwd, "src"), { recursive: true });
+    writeFileSync(join(cwd, "src", "types.ts"), "export {}\n", "utf-8");
+    writeFileSync(join(cwd, "src", "runner.ts"), "export {}\n", "utf-8");
+  });
+
+  afterEach(() => {
+    try { rmSync(cwd, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
 
   it("indexes findings and retrieves the topic", () => {
     memoryClear(cwd);
@@ -361,9 +375,12 @@ describe("memory refresh integration", () => {
 
     assert.strictEqual(topic, "types-module");
     const entry = memoryGetTopic(cwd, topic!);
-    assert.ok(entry);
+    assert.ok(entry, "topic entry should exist");
     assert.strictEqual(entry!.forkCount, 1);
-    assert.ok(entry!.files.includes("src/types.ts") || entry!.files.includes("src/runner.ts"));
+    assert.ok(
+      entry!.files.includes("src/types.ts") || entry!.files.includes("src/runner.ts"),
+      `expected src/types.ts or src/runner.ts, got: ${entry ? entry.files.join(",") : "<no entry>"}`
+    );
     memoryClear(cwd);
   });
 
@@ -383,6 +400,7 @@ describe("memory refresh integration", () => {
     assert.strictEqual(memoryForget(cwd, "payment-gateway"), true);
     assert.strictEqual(memoryGetTopic(cwd, "payment-gateway"), null);
     memoryClear(cwd);
+    try { rmSync(cwd, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 });
 

@@ -156,10 +156,11 @@ export function loadConfig(cwd: string): AutoForkConfig {
 
     if (piForkProfiles) {
       if (!resolved.stage1.provider || !resolved.stage1.id) {
-        // fast → stage1, deep → stage2, balanced → fallback to either
         const s1 = piForkProfiles["fast"] || piForkProfiles["balanced"] || piForkProfiles["deep"];
-        const s2 = piForkProfiles["deep"] || piForkProfiles["balanced"];
         if (s1) resolved.stage1 = s1;
+      }
+      if (!resolved.stage2.provider || !resolved.stage2.id) {
+        const s2 = piForkProfiles["deep"] || piForkProfiles["balanced"];
         if (s2) resolved.stage2 = s2;
       }
     }

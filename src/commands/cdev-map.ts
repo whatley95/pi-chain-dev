@@ -104,8 +104,9 @@ function mergeMaps(base: ReturnType<typeof generateProjectMap>, generated: unkno
     return typeof value === "string" ? value : fallback;
   }
 
-  function arr(value: unknown): string[] {
-    return Array.isArray(value) && value.every((v) => typeof v === "string") ? value : [];
+  function arr(value: unknown, fallback?: string[]): string[] {
+    if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) return fallback ?? [];
+    return value.length > 0 ? value : (fallback ?? []);
   }
 
   function record(value: unknown): Record<string, string[]> {
@@ -139,32 +140,32 @@ function mergeMaps(base: ReturnType<typeof generateProjectMap>, generated: unkno
       name: str(gProject?.name, base.project.name),
       type: str(gProject?.type, base.project.type),
       language: str(gProject?.language, base.project.language),
-      languages: arr(gProject?.languages).length ? arr(gProject?.languages) : base.project.languages,
-      entryPoints: arr(gProject?.entryPoints).length ? arr(gProject?.entryPoints) : base.project.entryPoints,
+      languages: arr(gProject?.languages, base.project.languages),
+      entryPoints: arr(gProject?.entryPoints, base.project.entryPoints),
     },
     stack: {
       ...base.stack,
-      framework: arr(gStack?.framework).length ? arr(gStack?.framework) : base.stack.framework,
-      backend: arr(gStack?.backend).length ? arr(gStack?.backend) : base.stack.backend,
-      frontend: arr(gStack?.frontend).length ? arr(gStack?.frontend) : base.stack.frontend,
-      mobile: arr(gStack?.mobile).length ? arr(gStack?.mobile) : base.stack.mobile,
-      orm: arr(gStack?.orm).length ? arr(gStack?.orm) : base.stack.orm,
-      auth: arr(gStack?.auth).length ? arr(gStack?.auth) : base.stack.auth,
-      testing: arr(gStack?.testing).length ? arr(gStack?.testing) : base.stack.testing,
-      validation: arr(gStack?.validation).length ? arr(gStack?.validation) : base.stack.validation,
-      styling: arr(gStack?.styling).length ? arr(gStack?.styling) : base.stack.styling,
-      build: arr(gStack?.build).length ? arr(gStack?.build) : base.stack.build,
-      stateManagement: arr(gStack?.stateManagement).length ? arr(gStack?.stateManagement) : base.stack.stateManagement,
-      packageManager: arr(gStack?.packageManager).length ? arr(gStack?.packageManager) : base.stack.packageManager,
-      db: arr(gStack?.db).length ? arr(gStack?.db) : base.stack.db,
-      monorepo: arr(gStack?.monorepo).length ? arr(gStack?.monorepo) : base.stack.monorepo,
+      framework: arr(gStack?.framework, base.stack.framework),
+      backend: arr(gStack?.backend, base.stack.backend),
+      frontend: arr(gStack?.frontend, base.stack.frontend),
+      mobile: arr(gStack?.mobile, base.stack.mobile),
+      orm: arr(gStack?.orm, base.stack.orm),
+      auth: arr(gStack?.auth, base.stack.auth),
+      testing: arr(gStack?.testing, base.stack.testing),
+      validation: arr(gStack?.validation, base.stack.validation),
+      styling: arr(gStack?.styling, base.stack.styling),
+      build: arr(gStack?.build, base.stack.build),
+      stateManagement: arr(gStack?.stateManagement, base.stack.stateManagement),
+      packageManager: arr(gStack?.packageManager, base.stack.packageManager),
+      db: arr(gStack?.db, base.stack.db),
+      monorepo: arr(gStack?.monorepo, base.stack.monorepo),
     },
     structure: {
-      rootDirs: arr(gStructure?.rootDirs).length ? arr(gStructure?.rootDirs) : base.structure.rootDirs,
-      sourceRoots: arr(gStructure?.sourceRoots).length ? arr(gStructure?.sourceRoots) : base.structure.sourceRoots,
-      testRoots: arr(gStructure?.testRoots).length ? arr(gStructure?.testRoots) : base.structure.testRoots,
-      configFiles: arr(gStructure?.configFiles).length ? arr(gStructure?.configFiles) : base.structure.configFiles,
-      importantFiles: arr(gStructure?.importantFiles).length ? arr(gStructure?.importantFiles) : base.structure.importantFiles,
+      rootDirs: arr(gStructure?.rootDirs, base.structure.rootDirs),
+      sourceRoots: arr(gStructure?.sourceRoots, base.structure.sourceRoots),
+      testRoots: arr(gStructure?.testRoots, base.structure.testRoots),
+      configFiles: arr(gStructure?.configFiles, base.structure.configFiles),
+      importantFiles: arr(gStructure?.importantFiles, base.structure.importantFiles),
     },
     conventions: mergedConventions,
     config: {

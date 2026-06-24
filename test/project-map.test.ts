@@ -1,14 +1,24 @@
 import assert from "node:assert";
-import { describe, it } from "node:test";
-import { mkdtempSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { describe, it, afterEach } from "node:test";
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateProjectMap, loadProjectMap, saveProjectMap, getMapPath, summarizeMapForPrompt } from "../src/project-map.js";
 
 describe("project-map", () => {
+  const tempDirs: string[] = [];
+
   function makeTempDir(prefix: string): string {
-    return mkdtempSync(join(tmpdir(), prefix));
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    tempDirs.push(dir);
+    return dir;
   }
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  });
 
   it("detects a Flutter project", () => {
     const cwd = makeTempDir("cdev-flutter-");

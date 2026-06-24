@@ -155,17 +155,18 @@ export function extractFilePaths(text: string, cwd: string): string[] {
   // Multiple patterns to catch different path representations.
   // Each pattern's LAST capture group must be the path; the second-to-last (if present)
   // is an optional prefix like ./ or ../. Keep this invariant when adding patterns.
+  const MAX_MATCHES = 100;
   const patterns = [
     // Explicit paths: src/foo/bar.ts, app/models/user.rb
-    /(?:^|\s|[`'"([{<])(\.{0,2}[/\\])?([\w@.-]+(?:[/\\][\w@.-]+)+(?:\.\w{1,8}))(?=[:"',)}\]>\s]|$)/gm,
+    /(?:^|\s|[`'"([{<])(\.{0,2}[/\\])?((?:[\w@.-]+[/\\]){1,6}[\w@.-]+\.\w{1,8})(?=[:"',)}\]><\s]|$)/gm,
     // Paths after common markers: "in file X", "at path X", "the file X"
-    /(?:file|path|module|package|class)\s+[`'"]?(\.{0,2}[/\\])?([\w@.-]+(?:[/\\][\w@.-]+)+(?:\.\w{1,8}))[`'"]?/gi,
-    // Backtick-enclosed paths with directory: `src/foo/bar.ts`
-    /`(\.{0,2}[/\\])?([\w@.-]+(?:[/\\][\w@.-]+)+(?:\.\w{1,8}))`/g,
-    // Backtick-enclosed bare filenames with extension: `config.ts`
-    /`([\w@.-]+\.\w{1,8})`/g,
-    // JSON-like paths: "path/to/file.ts"
-    /"([\w@.-]+(?:[/\\][\w@.-]+)+(?:\.\w{1,8}))"/g,
+    /(?:file|path|module|package|class)\s+[`'" ]?(\.{0,2}[/\\])?((?:[\w@.-]+[/\\]){1,6}[\w@.-]+\.\w{1,8})[`'" ]?(?=["',)\]>.\s]|$)/gi,
+    // Backtick-enclosed paths with directory or bare filename: `src/foo/bar.ts`, `config.ts`
+    /`((?:[\w@.-]+[/\\]){0,6}[\w@.-]+\.\w{1,8})`/g,
+    // Double-quoted paths: "path/to/file.ts"
+    /"((?:[\w@.-]+[/\\]){1,6}[\w@.-]+\.\w{1,8})"/g,
+    // Single-quoted paths: 'path/to/file.ts'
+    /'((?:[\w@.-]+[/\\]){1,6}[\w@.-]+\.\w{1,8})'/g,
   ];
 
   const paths: string[] = [];
@@ -173,8 +174,10 @@ export function extractFilePaths(text: string, cwd: string): string[] {
 
   for (const pattern of patterns) {
     let match: RegExpExecArray | null;
+    let matchCount = 0;
     pattern.lastIndex = 0;
     while ((match = pattern.exec(text)) !== null) {
+      if (++matchCount > MAX_MATCHES) break;
       // Last capture group is the path; optional prefix is second-to-last.
       const pathGroup = match[match.length - 1];
       const prefixGroup = match.length >= 3 ? match[match.length - 2] : "";

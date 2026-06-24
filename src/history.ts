@@ -72,7 +72,7 @@ export function saveSession(
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
   const now = Date.now();
-  const id = new Date(startedAt).toISOString().replace(/[:.]/g, "-") + "-" + randomBytes(3).toString("hex");
+  const id = new Date(startedAt).toISOString().replace(/[:.]/g, "-") + "-" + randomBytes(8).toString("hex");
   const resultText = getFinalAssistantText(result.messages) || "";
   
   const record: SessionRecord = {

@@ -33,10 +33,11 @@ describe("sanitizeSessionJsonl", () => {
   });
 
   it("redacts a hex secret", () => {
+    const hex = "deadbeef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const jsonl = line({
       type: "message",
       role: "assistant",
-      content: [{ type: "text", text: "secret: deadbeef0123456789abcdef0123456789abcdef" }],
+      content: [{ type: "text", text: `secret: ${hex}` }],
     });
     const result = sanitizeSessionJsonl(jsonl);
     assert.ok(result.jsonl.includes("[REDACTED_HEX_KEY]"));

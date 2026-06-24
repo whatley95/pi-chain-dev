@@ -55,11 +55,15 @@ export function getFinalAssistantText(messages: unknown): string {
       continue;
     }
 
+    const texts: string[] = [];
     for (const part of message.content) {
       const typedPart = part as ContentPart;
       if (typedPart?.type === "text" && typeof typedPart.text === "string" && typedPart.text.length > 0) {
-        return typedPart.text;
+        texts.push(typedPart.text);
       }
+    }
+    if (texts.length > 0) {
+      return texts.join("\n").trim();
     }
   }
 
