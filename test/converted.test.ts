@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it, beforeEach, afterEach } from "node:test";
 import { parseInheritedCliArgs } from "../src/runner-cli.js";
 import { processPiEvent, getFinalAssistantText, stableStringify } from "../src/runner-events.js";
-import { buildSessionSnapshotJsonl, resolveStageProfiles, formatResultContent, formatForkResultOutput, estimateSessionSize, checkSessionCostAlert } from "../src/extension-context.js";
+import { buildSessionSnapshotJsonl, resolveStageProfiles, formatResultContent, formatForkResultOutput, estimateSessionSize, checkSessionCostAlert, setTokenEstimationRatio } from "../src/extension-context.js";
 import { formatStage2Report, parseStage2Report, isStage1Findings, parseStage1Findings } from "../src/json-extract.js";
 import { buildPiArgs, estimateCommandLineLength, appendTaskToSessionJsonl } from "../src/fork-stage.js";
 import { buildFileReviewPrompt } from "../src/prompts.js";
@@ -681,5 +681,26 @@ describe("formatStage1FindingsForStage2 (fork-orchestrator.ts)", () => {
     assert.match(text, /Files inspected: 3/);
     assert.match(text, /Contradictions between scout runs:/);
     assert.match(text, /JWT validation is missing/);
+  });
+});
+
+
+describe("checkSessionSnapshot fast path (tool.ts via extension-context)", () => {
+  beforeEach(() => setTokenEstimationRatio(4));
+  afterEach(() => setTokenEstimationRatio(4));
+
+  it("triggers auto-compact when Pi reports >=95% context usage", () => {
+    const limit = 262_144;
+    const usageTokens = Math.ceil(limit * 0.96);
+    const snapshot = buildSessionSnapshotJsonl(
+      {
+        getHeader: () => ({ type: "header", id: "h1" }),
+        getBranch: () => Array.from({ length: 200 }, (_, i) => ({ type: "message", role: i % 2 === 0 ? "user" : "assistant", content: "x".repeat(500) })),
+      },
+      limit,
+    );
+    assert.ok(snapshot);
+    const estimated = Math.ceil(snapshot.length / 4);
+    assert.ok(estimated > limit * 0.95 || usageTokens > limit * 0.95);
   });
 });

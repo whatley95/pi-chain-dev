@@ -77,7 +77,7 @@ The LLM can also call `cdev` via a registered tool — no typing commands:
 | `quick` | boolean | Scout only (raw findings, skip forge) |
 | `verify` | boolean | Scout ×2 + forge (self-consistency, higher accuracy) |
 | `parallel` | integer | Split scout into N parallel sub-task scouts (1-3). Requires project map. |
-| `parallelBackup` | boolean | Backup scout takes over failed parallel sub-tasks (default `true`) |
+| `parallelBackup` | boolean | Backup scout takes over failed parallel sub-tasks (default `false`) |
 | `review` | boolean | Forge only (code review, skip scout) |
 | `recall` | string | Retrieve past findings from project memory (e.g. `"auth"`) — $0, no fork |
 | `recall` | `""` (empty) | List all known topics |
@@ -215,12 +215,12 @@ You can also configure a second scout model (`pi-chain-dev.stage1b`) so the two 
 
 ### Auto-compact (`/cdev auto-compact`)
 
-By default, when a session snapshot is estimated to exceed ~95% of `modelContextLimit`, cdev refuses to run and steers `/compact` on the parent session. This lets the main agent compact the conversation before retrying, avoiding model context limit errors.
+By default, when a session snapshot is estimated to exceed ~95% of `modelContextLimit`, cdev refuses to run and compacts the parent session directly via Pi's native `ctx.compact()` API. This lets the main agent compact the conversation before retrying, avoiding model context limit errors.
 
-- `/cdev auto-compact on` — auto-steer `/compact` near limit (default)
+- `/cdev auto-compact on` — auto-compact near limit (default)
 - `/cdev auto-compact off` — only warn near limit
 
-The setting is stored in `~/.pi/agent/settings.json` under `pi-chain-dev.autoCompactOnLimit`. You can also adjust `pi-chain-dev.modelContextLimit` to match your model's actual context window.
+The setting is stored in `~/.pi/agent/settings.json` under `pi-chain-dev.autoCompactOnLimit`. You can also adjust `pi-chain-dev.modelContextLimit` to match your model's actual context window. On older Pi versions without `ctx.compact()`, cdev falls back to steering `/compact`.
 
 ### Accuracy safeguards
 
@@ -242,6 +242,31 @@ or
 ```
 
 If grounding is low or findings were sparse/low-confidence, cdev automatically re-explored before forge. You can still re-run with `/cdev verify <task>` or `/cdev quick <topic>` for deeper confirmation.
+
+### Research mode (`/cdev research <issue>`)
+
+Research mode runs an agent-driven investigation without ever editing code. It uses the configured `research` profile (falls back to the scout model) and returns structured findings, a decision, and recommended next steps.
+
+```
+  /cdev research why login endpoint returns 502
+       │
+       ▼
+  ┌──────────────────────────────────────────────┐
+  │  RESEARCH — selected model                   │
+  │  Investigates root cause, reads logs/code    │
+  │  Returns findings, decision, action items    │
+  └──────────────────┬───────────────────────────┘
+                     │ report
+                     ▼
+              PARENT decides and edits
+```
+
+Use it for:
+- Issue triage and root-cause analysis
+- Investigating failures before deciding on a fix
+- Questions where you want the main agent to own any changes
+
+Configure the research model via `/cdev-model` → "Research". Custom prompt via `prompts.research`.
 
 ### Verify mode (`/cdev verify <task>`)
 
@@ -525,7 +550,7 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
     "auto": false,
     "autoVerify": false,
     "parallel": 1,
-    "parallelBackup": true,
+    "parallelBackup": false,
     "promptsEnabled": true,
     "memory": true,
     "offline": true,
@@ -860,13 +885,30 @@ Forks recorded to `.pi/cdev/sessions/<id>.json`. Auto-purged after 7 days.
 
   👤 whatley.xyz
 
-  Current model:    opencode-go:deepseek-v4-pro     ← your Pi /model
-  Scout:  opencode-go:deepseek-v4-flash  •  minimal   ← exploration
-  Forge:  opencode-go:deepseek-v4-pro   •  xhigh     ← synthesis + review
+  Version:          0.1.0 · 2026-06-24T14:29:48.644Z
+  Current model:    opencode-go:deepseek-v4-pro
+  Scout A:          opencode-go:deepseek-v4-flash  •  minimal
+  Scout B:          ↳ Scout A (deepseek-v4-flash)
+  Scout C:          ↳ Scout A (deepseek-v4-flash)
+  Backup scout:     ↳ Scout A (deepseek-v4-flash)
+  Forge:            opencode-go:deepseek-v4-pro   •  xhigh
+  Review:           ↳ Forge (deepseek-v4-pro)
+  Research:         ↳ Scout A (deepseek-v4-flash)
   Auto-trigger:     OFF
   Custom prompts:   — (none)
   Cost footer:      ON
   Project memory:   ON
+  Auto-verify:      OFF (scout ×1)
+  Multi scouts:     OFF
+  Scout timeout:    600s
+  Forge timeout:    180s
+  YOLO:             OFF
+  Project map:      — missing  /cdev map
+  Session size:     32 messages
+  Context usage:    45,123 / 262,144 tokens  (17.2%)
+  Context limit:    262,144 tokens  (auto-compact ON, 4 chars/token fallback)
+  Session cost:     $0.0234 / $1.0000  🟡 23% of budget
+  Today's cost:     $0.0234
   Offline mode:     ON
   Extensions:       inherit
 

@@ -85,7 +85,7 @@ export function registerCdevCommand(
       if (trimmed === "auto-compact on" || trimmed === "auto-compact off") {
         const enable = trimmed === "auto-compact on";
         writeAgentSetting("autoCompactOnLimit", enable);
-        ctx.ui.notify(`cdev auto-compact ${enable ? "ON" : "OFF"} — ${enable ? "will steer /compact when session snapshot nears model limit" : "will only warn near model limit"}`, "info");
+        ctx.ui.notify(`cdev auto-compact ${enable ? "ON" : "OFF"} — ${enable ? "will compact parent session when snapshot nears model limit" : "will only warn near model limit"}`, "info");
         return;
       }
 
@@ -404,6 +404,7 @@ export function registerCdevCommand(
         }
         lines.push(`  Forge:            ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`);
         lines.push(`  Review:           ${config.review ? `${config.review.provider}:${config.review.id}  •  ${config.review.thinking}` : `↳ Forge (${config.stage2.id})`}`);
+        lines.push(`  Research:         ${config.research ? `${config.research.provider}:${config.research.id}  •  ${config.research.thinking}` : `↳ Scout A (${config.stage1.id})`}`);
         lines.push(`  Auto-trigger:     ${config.auto ? "⚡ ON (sends steer every 3 turns to prompt cdev use)" : "OFF (agent uses cdev only when asked or it decides)"}`);
         lines.push(`  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`);
         lines.push(`  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`);
@@ -475,8 +476,8 @@ export function registerCdevCommand(
           "/cdev prompts on|off   Toggle custom prompts",
           "/cdev themed on|off    Toggle themed TUI",
           "/cdev auto on|off      Toggle auto-trigger",
-          "/cdev auto-verify on/off  Toggle automatic scout ×2",
-        "/cdev auto-compact on/off Toggle auto /compact near model limit",
+       "/cdev auto-verify on/off  Toggle automatic scout ×2",
+       "/cdev auto-compact on/off Toggle auto-compact near model limit",
           "/cdev yolo on|off              Toggle YOLO review loops",
           "/cdev yolo manual|propose|auto  Who applies fixes (auto = cdev edits files)",
         ]);
