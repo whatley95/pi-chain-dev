@@ -46,7 +46,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   promptsEnabled: true,
   memory: true,
   themed: false,
-  autoVerify: true,
+  autoVerify: false,
   signature: undefined,
   maxForkCost: 0,
   maxSessionCost: 0,
