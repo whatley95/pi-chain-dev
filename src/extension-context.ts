@@ -282,12 +282,21 @@ export interface SessionSnapshotSource {
   getBranch: () => unknown[];
 }
 
-const AVG_CHARS_PER_TOKEN = 4;
 const DEFAULT_CONTEXT_LIMIT = 262_144;
 const SNAPSHOT_RESERVE_TOKENS = 8_000;
 
+let avgCharsPerToken = 4;
+
+export function setTokenEstimationRatio(charsPerToken: number): void {
+  avgCharsPerToken = Math.max(1, charsPerToken);
+}
+
+export function getTokenEstimationRatio(): number {
+  return avgCharsPerToken;
+}
+
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / AVG_CHARS_PER_TOKEN);
+  return Math.ceil(text.length / avgCharsPerToken);
 }
 
 export function buildSessionSnapshotJsonl(sessionManager: SessionSnapshotSource, maxTokens?: number): string | null {
@@ -315,7 +324,7 @@ export function buildSessionSnapshotJsonl(sessionManager: SessionSnapshotSource,
 export function truncateSessionJsonl(sessionJsonl: string, maxTokens: number): { jsonl: string; dropped: number } {
   if (!sessionJsonl || !sessionJsonl.trim()) return { jsonl: sessionJsonl, dropped: 0 };
 
-  const maxChars = maxTokens * AVG_CHARS_PER_TOKEN;
+  const maxChars = maxTokens * avgCharsPerToken;
   if (sessionJsonl.length <= maxChars) return { jsonl: sessionJsonl, dropped: 0 };
 
   const rawLines = sessionJsonl.trim().split("\n");

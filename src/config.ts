@@ -54,6 +54,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   forgeTimeoutMs: 180_000,
   modelContextLimit: 262_144,
   autoCompactOnLimit: true,
+  tokenEstimationCharsPerToken: 4,
   signature: undefined,
   maxForkCost: 0,
   maxSessionCost: 0,
@@ -163,6 +164,7 @@ export function loadConfig(cwd: string): AutoForkConfig {
     forgeTimeoutMs: projectConfig.forgeTimeoutMs ?? globalConfig.forgeTimeoutMs ?? DEFAULT_CONFIG.forgeTimeoutMs,
     modelContextLimit: projectConfig.modelContextLimit ?? globalConfig.modelContextLimit ?? DEFAULT_CONFIG.modelContextLimit,
     autoCompactOnLimit: projectConfig.autoCompactOnLimit ?? globalConfig.autoCompactOnLimit ?? DEFAULT_CONFIG.autoCompactOnLimit,
+    tokenEstimationCharsPerToken: projectConfig.tokenEstimationCharsPerToken ?? globalConfig.tokenEstimationCharsPerToken ?? DEFAULT_CONFIG.tokenEstimationCharsPerToken,
     signature: projectConfig.signature ?? globalConfig.signature,
   };
 
@@ -233,6 +235,7 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (typeof config.forgeTimeoutMs === "number") parsed.forgeTimeoutMs = Math.max(30_000, Math.min(3_600_000, Number.isFinite(config.forgeTimeoutMs) ? config.forgeTimeoutMs : 180_000));
     if (typeof config.modelContextLimit === "number") parsed.modelContextLimit = Math.max(8_192, Math.min(2_000_000, Number.isFinite(config.modelContextLimit) ? config.modelContextLimit : 262_144));
     if (typeof config.autoCompactOnLimit === "boolean") parsed.autoCompactOnLimit = config.autoCompactOnLimit;
+    if (typeof config.tokenEstimationCharsPerToken === "number") parsed.tokenEstimationCharsPerToken = Math.max(1, Math.min(64, Number.isFinite(config.tokenEstimationCharsPerToken) ? config.tokenEstimationCharsPerToken : 4));
     if (typeof config.maxForkCost === "number") parsed.maxForkCost = Math.max(0, Number.isFinite(config.maxForkCost) ? config.maxForkCost : 0);
     if (typeof config.maxSessionCost === "number") parsed.maxSessionCost = Math.max(0, Number.isFinite(config.maxSessionCost) ? config.maxSessionCost : 0);
 

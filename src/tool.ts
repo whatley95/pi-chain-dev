@@ -17,6 +17,7 @@ import {
   makeThemedBg,
   buildSessionSnapshotJsonl,
   estimateTokens,
+  setTokenEstimationRatio,
   resolveStageProfiles,
   logError,
   checkCostBudget,
@@ -158,6 +159,7 @@ export async function executeCdevTool(
   try {
     const config = loadConfig(ctx.cwd);
     setStageSemaphoreMaxConcurrency(config.maxConcurrentStages ?? 3);
+    setTokenEstimationRatio(config.tokenEstimationCharsPerToken ?? 4);
     const themedBg = makeThemedBg(ctx, config.themed);
 
     // ── Recall mode ──

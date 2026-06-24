@@ -412,7 +412,7 @@ export function registerCdevCommand(
         lines.push(`  Multi scouts:     ${config.parallel && config.parallel > 1 ? `${config.parallel} (backup ${config.parallelBackup ? "on" : "off"})` : "OFF"}`);
         lines.push(`  Scout timeout:    ${((config.scoutTimeoutMs ?? 600_000) / 1000).toFixed(0)}s`);
         lines.push(`  Forge timeout:    ${((config.forgeTimeoutMs ?? 180_000) / 1000).toFixed(0)}s`);
-        lines.push(`  Context limit:    ${(config.modelContextLimit ?? 262_144).toLocaleString()} tokens  (auto-compact ${config.autoCompactOnLimit ? "ON" : "OFF"})`);
+        lines.push(`  Context limit:    ${(config.modelContextLimit ?? 262_144).toLocaleString()} tokens  (auto-compact ${config.autoCompactOnLimit ? "ON" : "OFF"}, ${config.tokenEstimationCharsPerToken ?? 4} chars/token)`);
         const yolo = normalizeYoloConfig(config.yolo);
         lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, ${yolo.autoApply === "auto" ? "auto-edit" : yolo.autoApply === "propose" ? "propose fixes" : "main agent fixes"})` : "OFF"}`);
         const hasMap = !!loadProjectMap(ctx.cwd);

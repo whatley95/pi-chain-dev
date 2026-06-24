@@ -89,6 +89,8 @@ export interface AutoForkConfig {
   modelContextLimit?: number;
   /** If true, automatically steer /compact when session snapshot exceeds model limit. Default false. */
   autoCompactOnLimit?: boolean;
+  /** Characters per token used to estimate snapshot size. Default 4. Increase if cdev overestimates vs Pi's status bar. */
+  tokenEstimationCharsPerToken?: number;
   /** Custom signature shown in /cdev status (e.g. name, handle). */
   signature?: string;
   /** Maximum cost (USD) for a single fork. 0 = unlimited. */

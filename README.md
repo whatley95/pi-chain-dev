@@ -531,6 +531,7 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
     "offline": true,
     "modelContextLimit": 262144,
     "autoCompactOnLimit": true,
+    "tokenEstimationCharsPerToken": 4,
     "costFooter": true,
     "yolo": {
       "enabled": false,
@@ -570,6 +571,7 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `forgeTimeoutMs` | number | `180000` | Forge/plan/review stage timeout in milliseconds (min 30s, max 1h) |
 | `modelContextLimit` | number | `262144` | Model context-window limit in tokens (used for snapshot sizing and warnings) |
 | `autoCompactOnLimit` | boolean | `true` | Auto-steer `/compact` when session snapshot exceeds 95% of `modelContextLimit` |
+| `tokenEstimationCharsPerToken` | number | `4` | Characters per token used to estimate snapshot size. Increase (e.g. `8`–`12`) if cdev estimates much higher than Pi's status bar |
 | `promptsEnabled` | boolean | `true` | Enable/disable custom prompts |
 | `prompts.explore` | string | — | Custom scout exploration prompt |
 | `prompts.synthesize` | string | — | Custom forge synthesis prompt |
