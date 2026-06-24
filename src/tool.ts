@@ -62,17 +62,45 @@ function resolveSnapshotTokens(snapshot: string, ctx: ExtensionContext): number 
   return estimateTokens(snapshot);
 }
 
+function resolveContextLimit(ctx: ExtensionContext, config: Awaited<ReturnType<typeof loadConfig>>): number {
+  const usage = ctx.getContextUsage?.();
+  if (usage && typeof usage.contextWindow === "number" && Number.isFinite(usage.contextWindow)) {
+    return usage.contextWindow;
+  }
+  return config.modelContextLimit ?? 262_144;
+}
+
 function checkSessionSnapshot(
   ctx: ExtensionContext,
   config: Awaited<ReturnType<typeof loadConfig>>,
 ): SnapshotResult {
-  const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, config.modelContextLimit);
+  const usage = ctx.getContextUsage?.();
+  const limit = resolveContextLimit(ctx, config);
+
+  // Fast path: Pi already knows we're near/over the limit. Trigger compact without building snapshot.
+  if (
+    usage &&
+    usage.percent !== null &&
+    usage.percent >= 95 &&
+    config.autoCompactOnLimit
+  ) {
+    const tokens = usage.tokens ?? Math.ceil(limit * (usage.percent / 100));
+    ctx.ui.notify(`Session snapshot is ~${tokens.toLocaleString()} tokens — auto-compacting parent session. Retry after /compact completes.`, "warn");
+    if (ctx.compact) {
+      ctx.compact({ customInstructions: "Triggered by cdev because Pi reported the session at 95%+ of the model context limit. Summarize recent work and keep details needed for the next cdev task." });
+    }
+    return { autoCompact: { tokens, limit } };
+  }
+
+  const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, limit);
   if (!snapshot) return null;
   const snapshotTokens = resolveSnapshotTokens(snapshot, ctx);
-  const limit = config.modelContextLimit ?? 262_144;
   if (snapshotTokens > limit * 0.95) {
     if (config.autoCompactOnLimit) {
       ctx.ui.notify(`Session snapshot is ~${snapshotTokens.toLocaleString()} tokens — auto-compacting parent session. Retry after /compact completes.`, "warn");
+      if (ctx.compact) {
+        ctx.compact({ customInstructions: "Triggered by cdev because the session snapshot exceeded the configured model context limit. Summarize recent work and keep details needed for the next cdev task." });
+      }
       return { autoCompact: { tokens: snapshotTokens, limit } };
     }
     ctx.ui.notify(`Session snapshot is ~${snapshotTokens.toLocaleString()} tokens. Consider running /compact to avoid model limit errors.`, "warn");

@@ -30,7 +30,7 @@ declare module "@earendil-works/pi-coding-agent" {
 
   export interface ExtensionContext {
     cwd: string;
-    model?: { id: string; provider: string };
+    model?: { id: string; provider: string; contextWindow?: number };
     modelRegistry: {
       getAvailable(): Array<{ id: string; provider: string }>;
       getAll?(): Array<{ id: string; provider: string }>;

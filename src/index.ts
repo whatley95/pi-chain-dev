@@ -160,7 +160,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const result = await executeCdevTool(params, signal, ctx);
       const details = (result.details ?? {}) as { autoCompact?: { tokens: number; limit: number } };
-      if (details.autoCompact) {
+      if (details.autoCompact && !ctx.compact) {
         pi.sendUserMessage("/compact", { triggerTurn: true, deliverAs: "steer" });
       }
       return result;

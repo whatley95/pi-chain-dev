@@ -412,7 +412,6 @@ export function registerCdevCommand(
         lines.push(`  Multi scouts:     ${config.parallel && config.parallel > 1 ? `${config.parallel} (backup ${config.parallelBackup ? "on" : "off"})` : "OFF"}`);
         lines.push(`  Scout timeout:    ${((config.scoutTimeoutMs ?? 600_000) / 1000).toFixed(0)}s`);
         lines.push(`  Forge timeout:    ${((config.forgeTimeoutMs ?? 180_000) / 1000).toFixed(0)}s`);
-        lines.push(`  Context limit:    ${(config.modelContextLimit ?? 262_144).toLocaleString()} tokens  (auto-compact ${config.autoCompactOnLimit ? "ON" : "OFF"}, ${config.tokenEstimationCharsPerToken ?? 4} chars/token)`);
         const yolo = normalizeYoloConfig(config.yolo);
         lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, ${yolo.autoApply === "auto" ? "auto-edit" : yolo.autoApply === "propose" ? "propose fixes" : "main agent fixes"})` : "OFF"}`);
         const hasMap = !!loadProjectMap(ctx.cwd);
@@ -423,6 +422,7 @@ export function registerCdevCommand(
           : "";
         lines.push(`  Session size:     ${sessionSize} message${sessionSize === 1 ? "" : "s"}${sessionSize >= 40 ? "  ⚠️ consider /compact" : ""}`);
         if (usageLine) lines.push(usageLine);
+        lines.push(`  Context limit:    ${(usage?.contextWindow ?? config.modelContextLimit ?? 262_144).toLocaleString()} tokens  (auto-compact ${config.autoCompactOnLimit ? "ON" : "OFF"}${typeof config.tokenEstimationCharsPerToken === "number" ? ", " + config.tokenEstimationCharsPerToken + " chars/token fallback" : ""})`);
         lines.push(`  Session cost:     ${formatCost(sessionCost)}${config.maxSessionCost ? ` / ${formatCost(config.maxSessionCost)}` : ""}${costAlert ? `  ${costAlert.level === "critical" ? "🔴" : "🟡"} ${(costAlert.percent * 100).toFixed(0)}% of budget` : ""}`);
         lines.push(`  Today's cost:     ${formatCost(todayCost)}  (cdev forks only — excludes main agent usage)`);
         if (config.themed) {
