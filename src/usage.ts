@@ -41,7 +41,7 @@ export function mergeUsage(a: UsageStats, b: UsageStats): UsageStats {
 }
 
 export function addNestedForkUsage(result: ForkResult, message: { role?: unknown; toolName?: unknown; toolCallId?: unknown; details?: { results?: unknown } }): boolean {
-  if (message.role !== "toolResult" || message.toolName !== "fork") return false;
+  if (message.role !== "toolResult" || message.toolName !== "cdev") return false;
 
   const results = message.details?.results;
   if (!Array.isArray(results)) return false;

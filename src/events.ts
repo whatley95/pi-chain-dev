@@ -286,9 +286,9 @@ function formatToolCallPreview(toolName: string, args: ToolArgs): string {
       return `find ${truncateInline(stringifyPreview(args.pattern || "*", 60), 60)} in ${shortPath(String(args.path || "."))}`;
     case "grep":
       return `grep ${truncateInline(stringifyPreview(args.pattern || "", 60), 60)} in ${shortPath(String(args.path || "."))}`;
-    case "fork": {
+    case "cdev": {
       const task = typeof args.task === "string" ? args.task : stringifyPreview(args, 80);
-      return `fork ${truncateInline(task, 80)}`;
+      return `cdev ${truncateInline(task, 80)}`;
     }
     default: {
       const argsPreview = truncateInline(stringifyPreview(args, 70), 70);

@@ -201,6 +201,7 @@ export interface AutoForkState {
 
 export interface AutoForkDetails {
   stage1: ForkResult | null;
+  stage1b?: ForkResult | null;
   stage2: ForkResult | null;
   ui?: AutoForkUiDetails;
 }

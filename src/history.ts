@@ -37,6 +37,15 @@ export interface SessionRecord {
     cost: number;
     errorDetails: string;
   } | null;
+  /** Stage 1B details (only in verify mode). */
+  stage1b?: {
+    model: string;
+    exitCode: number;
+    inputTokens: number;
+    outputTokens: number;
+    cost: number;
+    errorDetails: string;
+  } | null;
   /** Stage 2 details (null for quick mode). */
   stage2: {
     model: string;
@@ -92,6 +101,18 @@ export function saveSession(
           outputTokens: details.stage1.usage?.output ?? 0,
           cost: details.stage1.usage?.cost ?? 0,
           errorDetails: (details.stage1.errorMessage || details.stage1.stderr || "").slice(0, 200),
+        }
+      : null,
+    stage1b: details.stage1b
+      ? {
+          model: (details.stage1b.provider && details.stage1b.model)
+            ? `${details.stage1b.provider}:${details.stage1b.model}`
+            : details.stage1b.model ?? "unknown",
+          exitCode: details.stage1b.exitCode ?? -1,
+          inputTokens: details.stage1b.usage?.input ?? 0,
+          outputTokens: details.stage1b.usage?.output ?? 0,
+          cost: details.stage1b.usage?.cost ?? 0,
+          errorDetails: (details.stage1b.errorMessage || details.stage1b.stderr || "").slice(0, 200),
         }
       : null,
     stage2: details.stage2
@@ -209,12 +230,14 @@ export function formatHistory(sessions: SessionRecord[]): string {
     const duration = (s.durationMs / 1000).toFixed(1) + "s";
     const mode = s.isReview ? "review" : "full  ";
     const status = s.status === "success" ? "✓" : "✗";
-    const combinedCost = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
+    const combinedCost = (s.stage1?.cost ?? 0) + (s.stage1b?.cost ?? 0) + (s.stage2?.cost ?? 0);
     totalCost += combinedCost;
     const costStr = combinedCost > 0 ? ` ${formatCost(combinedCost)}`.padStart(9) : "";
     const s1Model = s.stage1 ? s.stage1.model.split(":").pop()?.slice(0, 12) ?? "?" : "—";
+    const s1bModel = s.stage1b ? s.stage1b.model.split(":").pop()?.slice(0, 12) ?? "?" : "";
     const s2Model = s.stage2 ? s.stage2.model.split(":").pop()?.slice(0, 12) ?? "?" : "—";
-    const models = s.stage1 && s.stage2 ? `${s1Model}→${s2Model}` : (s.stage1 || s.stage2 ? s1Model !== "—" ? s1Model : s2Model : "?");
+    const scoutPart = s1bModel ? `${s1Model}+${s1bModel}` : s1Model;
+    const models = s.stage1 && s.stage2 ? `${scoutPart}→${s2Model}` : (s.stage1 || s.stage2 ? scoutPart !== "—" ? scoutPart : s2Model : "?");
     const task = s.task.length > 40 ? s.task.slice(0, 40) + "…" : s.task;
 
     lines.push(
@@ -258,6 +281,20 @@ export function formatSessionRecord(s: SessionRecord): string {
     lines.push("");
   }
 
+  if (s.stage1b) {
+    lines.push(`  Stage 1B (verify scout):`, ``);
+    lines.push(`    Model:      ${s.stage1b.model}`);
+    lines.push(`    Exit code:  ${s.stage1b.exitCode}`);
+    if (s.stage1b.inputTokens || s.stage1b.outputTokens) {
+      lines.push(`    Tokens:     ${s.stage1b.inputTokens} in / ${s.stage1b.outputTokens} out`);
+    }
+    if (s.stage1b.cost > 0) {
+      lines.push(`    Cost:       ${formatCost(s.stage1b.cost)}`);
+    }
+    if (s.stage1b.errorDetails) lines.push(`    Error:      ${s.stage1b.errorDetails}`);
+    lines.push("");
+  }
+
   if (s.stage2) {
     lines.push(`  Stage 2 (synthesize):`, ``);
     lines.push(`    Model:      ${s.stage2.model}`);
@@ -273,7 +310,7 @@ export function formatSessionRecord(s: SessionRecord): string {
     }
   }
 
-  const totalCost = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
+  const totalCost = (s.stage1?.cost ?? 0) + (s.stage1b?.cost ?? 0) + (s.stage2?.cost ?? 0);
   if (totalCost > 0) {
     lines.push("");
     lines.push(`  Total cost:  ${formatCost(totalCost)}`);

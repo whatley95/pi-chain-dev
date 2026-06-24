@@ -123,8 +123,10 @@ export function renderResult(
     : "";
 
   const stage1Model = details?.stage1?.model ?? "";
+  const stage1bModel = details?.stage1b?.model ?? "";
   const stage2Model = details?.stage2?.model ?? "";
-  const modelChain = [stage1Model, stage2Model].filter(Boolean).join("→");
+  const scoutChain = stage1bModel ? `${stage1Model}+${stage1bModel}` : stage1Model;
+  const modelChain = [scoutChain, stage2Model].filter(Boolean).join("→");
 
   const costNum = (details?.stage1?.usage?.cost ?? 0) + (details?.stage2?.usage?.cost ?? 0);
   const costStr = fmtCost(costNum);
@@ -153,6 +155,12 @@ export function renderResult(
       const s1Text = `  Scout: ${s1.model} (exit ${s1.exitCode ?? "?"}${dur1 ? `, ${dur1}` : ""})`;
       lines.push(bg("toolStageBg", fg("dim", s1Text), theme, themed));
     }
+    if (details?.stage1b?.model) {
+      const s1b = details.stage1b;
+      const dur1b = fmtDuration(s1b.durationMs);
+      const s1bText = `  Scout B: ${s1b.model} (exit ${s1b.exitCode ?? "?"}${dur1b ? `, ${dur1b}` : ""})`;
+      lines.push(bg("toolStageBg", fg("dim", s1bText), theme, themed));
+    }
     if (details?.stage2?.model) {
       const s2 = details.stage2;
       const dur2 = fmtDuration(s2.durationMs);
@@ -175,7 +183,7 @@ export function renderResult(
       lines.push(fg("muted", trunc(textOut.split("\n")[0], MAX_PREVIEW_CHARS - 2)));
     }
     const hasMore = textOut && textOut.split("\n").length > 1;
-    if (hasMore) lines.push(`(${keyHint("expand")})`);
+    if (hasMore) lines.push(`(${keyHint("expand") || "expand"})`);
   }
 
   return new SimpleText(lines.join("\n")) as unknown as Component;

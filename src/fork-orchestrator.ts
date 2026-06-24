@@ -9,6 +9,12 @@ import { writeReportFile } from "./report.js";
 import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, AutoForkConfig, YoloConfig, ConfidenceGateConfig } from "./types.js";
 import { emptyUsage, emptyFailedResult, evaluateConfidenceGates } from "./types.js";
 
+function fmtDuration(ms: number | undefined): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 export interface RunAutoForkOptions {
   cwd: string;
   task: string;
@@ -75,6 +81,9 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   if (verify) {
     const secondProfile = stage1bProfile && stage1bProfile.provider && stage1bProfile.id ? stage1bProfile : stage1Profile;
+    const modelA = stage1Profile.thinking ? `${stage1Profile.provider}:${stage1Profile.id} • ${stage1Profile.thinking}` : `${stage1Profile.provider}:${stage1Profile.id}`;
+    const modelB = secondProfile.thinking ? `${secondProfile.provider}:${secondProfile.id} • ${secondProfile.thinking}` : `${secondProfile.provider}:${secondProfile.id}`;
+    opts.onProgress?.("scout", `${modelA} + ${modelB}`);
     let runA: ForkResult;
     let runB: ForkResult;
     try {
@@ -108,14 +117,21 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     addUsage(runA.usage);
     addUsage(runB.usage);
 
+    const aDuration = fmtDuration(runA.durationMs);
+    const bDuration = fmtDuration(runB.durationMs);
     stage1Result = {
       ...runA,
       task,
       usage: combinedUsage,
-      stderr: [runA.stderr, runB.stderr].filter(Boolean).join("\n"),
+      stderr: [
+        `[cdev] verify mode: Scout A ${modelA}${aDuration ? ` in ${aDuration}` : ""} | Scout B ${modelB}${bDuration ? ` in ${bDuration}` : ""}`,
+        runA.stderr,
+        runB.stderr,
+      ].filter(Boolean).join("\n"),
       durationMs: Math.max(runA.durationMs ?? 0, runB.durationMs ?? 0),
     };
     details.stage1 = stage1Result;
+    details.stage1b = runB;
 
     const textA = getFinalAssistantText(runA.messages) || "";
     const textB = getFinalAssistantText(runB.messages) || "";
