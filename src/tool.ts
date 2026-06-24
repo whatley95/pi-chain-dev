@@ -54,13 +54,21 @@ interface CompactTrigger {
 
 type SnapshotResult = SnapshotOk | CompactTrigger | null;
 
+function resolveSnapshotTokens(snapshot: string, ctx: ExtensionContext): number {
+  const usage = ctx.getContextUsage?.();
+  if (usage && typeof usage.tokens === "number" && Number.isFinite(usage.tokens)) {
+    return Math.ceil(usage.tokens);
+  }
+  return estimateTokens(snapshot);
+}
+
 function checkSessionSnapshot(
   ctx: ExtensionContext,
   config: Awaited<ReturnType<typeof loadConfig>>,
 ): SnapshotResult {
   const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, config.modelContextLimit);
   if (!snapshot) return null;
-  const snapshotTokens = estimateTokens(snapshot);
+  const snapshotTokens = resolveSnapshotTokens(snapshot, ctx);
   const limit = config.modelContextLimit ?? 262_144;
   if (snapshotTokens > limit * 0.95) {
     if (config.autoCompactOnLimit) {

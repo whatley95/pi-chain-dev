@@ -170,7 +170,7 @@ Logged for: tool crashes, review failures, full-mode failures, deep-scan failure
 ```
 
 - **Session size** is read-only. When it reaches ~40 messages, cdev warns: "Consider running /compact before the next cdev task." It never modifies the parent session automatically.
-- **Context limit** defaults to 262,144 tokens. When a session snapshot is estimated to exceed ~95% of this limit, cdev warns. With `autoCompactOnLimit` (default `true`, toggled via `/cdev auto-compact on|off`), cdev steers `/compact` on the parent session instead of running the fork, so the main agent can compact and retry.
+- **Context limit** defaults to 262,144 tokens. When a session snapshot is estimated to exceed ~95% of this limit, cdev warns. With `autoCompactOnLimit` (default `true`, toggled via `/cdev auto-compact on|off`), cdev steers `/compact` on the parent session instead of running the fork, so the main agent can compact and retry. When Pi reports a live context token count via `ctx.getContextUsage()`, cdev uses that exact number; otherwise it falls back to the configurable `tokenEstimationCharsPerToken` heuristic.
 - **Cost budgets** are configured with `maxSessionCost` (and `maxForkCost`) in settings. Alerts fire at 80% (warn) and 95% (critical) of the session budget. Budget checks also block forks that would exceed the limit.
 - **Cost tracking is cdev-only.** Session cost, today's cost, and budgets measure only the tokens consumed by cdev child forks (scout, forge, review, yolo). They do **not** include the main/parent Pi agent's own usage.
 

@@ -53,6 +53,10 @@ declare module "@earendil-works/pi-coding-agent" {
       setStatus(key: string, value: string | undefined): void;
       setWidget(key: string, value: unknown): void;
     };
+    /** Get current context usage for the active model. */
+    getContextUsage?(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined;
+    /** Trigger compaction without awaiting completion. */
+    compact?(options?: Record<string, unknown>): void;
   }
 
   export function getAgentDir(): string;
