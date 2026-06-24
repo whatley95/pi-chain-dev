@@ -103,6 +103,49 @@ export interface MapBoundary {
   type: "layer" | "feature" | "domain";
 }
 
+export interface ParallelSubTask {
+  label: string;
+  focus: string;
+  scope: string[];
+}
+
+export function splitTaskByMap(task: string, map: ProjectMap | null, parallel: number): ParallelSubTask[] {
+  if (parallel <= 1 || !map) return [{ label: "full", focus: task, scope: [] }];
+
+  const units: { name: string; path: string; globs: string[] }[] = [];
+
+  for (const m of map.structure.modules) {
+    units.push({ name: m.name, path: m.path, globs: [m.path] });
+  }
+  for (const b of map.structure.boundaries) {
+    if (!units.some((u) => u.name === b.name)) {
+      units.push({ name: b.name, path: b.name, globs: b.globs });
+    }
+  }
+  for (const d of map.structure.sourceRoots) {
+    if (!units.some((u) => u.path === d)) {
+      units.push({ name: d.replace(/\/$/, "").split("/").pop() || d, path: d, globs: [d] });
+    }
+  }
+
+  if (units.length === 0) return [{ label: "full", focus: task, scope: [] }];
+
+  const chunks: typeof units[] = Array.from({ length: parallel }, () => []);
+  for (let i = 0; i < units.length; i++) {
+    chunks[i % parallel].push(units[i]);
+  }
+
+  return chunks.map((chunk, idx) => {
+    const labels = chunk.map((u) => u.name);
+    const globs = chunk.flatMap((u) => u.globs);
+    return {
+      label: String.fromCharCode(65 + idx),
+      focus: `${task} — focus on: ${labels.join(", ")}`,
+      scope: [...new Set(globs)],
+    };
+  });
+}
+
 export const MAP_PATH = [".pi", "cdev", "map.yaml"];
 
 export function getMapPath(cwd: string): string {

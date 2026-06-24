@@ -46,6 +46,24 @@ export interface SessionRecord {
     cost: number;
     errorDetails: string;
   } | null;
+  /** Stage 1C details (parallel mode). */
+  stage1c?: {
+    model: string;
+    exitCode: number;
+    inputTokens: number;
+    outputTokens: number;
+    cost: number;
+    errorDetails: string;
+  } | null;
+  /** Backup scout details (parallel mode). */
+  stage1Backup?: {
+    model: string;
+    exitCode: number;
+    inputTokens: number;
+    outputTokens: number;
+    cost: number;
+    errorDetails: string;
+  } | null;
   /** Stage 2 details (null for quick mode). */
   stage2: {
     model: string;
@@ -113,6 +131,30 @@ export function saveSession(
           outputTokens: details.stage1b.usage?.output ?? 0,
           cost: details.stage1b.usage?.cost ?? 0,
           errorDetails: (details.stage1b.errorMessage || details.stage1b.stderr || "").slice(0, 200),
+        }
+      : null,
+    stage1c: details.stage1c
+      ? {
+          model: (details.stage1c.provider && details.stage1c.model)
+            ? `${details.stage1c.provider}:${details.stage1c.model}`
+            : details.stage1c.model ?? "unknown",
+          exitCode: details.stage1c.exitCode ?? -1,
+          inputTokens: details.stage1c.usage?.input ?? 0,
+          outputTokens: details.stage1c.usage?.output ?? 0,
+          cost: details.stage1c.usage?.cost ?? 0,
+          errorDetails: (details.stage1c.errorMessage || details.stage1c.stderr || "").slice(0, 200),
+        }
+      : null,
+    stage1Backup: details.stage1Backup
+      ? {
+          model: (details.stage1Backup.provider && details.stage1Backup.model)
+            ? `${details.stage1Backup.provider}:${details.stage1Backup.model}`
+            : details.stage1Backup.model ?? "unknown",
+          exitCode: details.stage1Backup.exitCode ?? -1,
+          inputTokens: details.stage1Backup.usage?.input ?? 0,
+          outputTokens: details.stage1Backup.usage?.output ?? 0,
+          cost: details.stage1Backup.usage?.cost ?? 0,
+          errorDetails: (details.stage1Backup.errorMessage || details.stage1Backup.stderr || "").slice(0, 200),
         }
       : null,
     stage2: details.stage2
@@ -230,13 +272,15 @@ export function formatHistory(sessions: SessionRecord[]): string {
     const duration = (s.durationMs / 1000).toFixed(1) + "s";
     const mode = s.isReview ? "review" : "full  ";
     const status = s.status === "success" ? "✓" : "✗";
-    const combinedCost = (s.stage1?.cost ?? 0) + (s.stage1b?.cost ?? 0) + (s.stage2?.cost ?? 0);
+    const combinedCost = (s.stage1?.cost ?? 0) + (s.stage1b?.cost ?? 0) + (s.stage1c?.cost ?? 0) + (s.stage1Backup?.cost ?? 0) + (s.stage2?.cost ?? 0);
     totalCost += combinedCost;
     const costStr = combinedCost > 0 ? ` ${formatCost(combinedCost)}`.padStart(9) : "";
     const s1Model = s.stage1 ? s.stage1.model.split(":").pop()?.slice(0, 12) ?? "?" : "—";
-    const s1bModel = s.stage1b ? s.stage1b.model.split(":").pop()?.slice(0, 12) ?? "?" : "";
+    const s1bModel = s.stage1b ? s.stage1b.model.split(":").pop()?.slice(0, 12) ?? "" : "";
+    const s1cModel = s.stage1c ? s.stage1c.model.split(":").pop()?.slice(0, 12) ?? "" : "";
     const s2Model = s.stage2 ? s.stage2.model.split(":").pop()?.slice(0, 12) ?? "?" : "—";
-    const scoutPart = s1bModel ? `${s1Model}+${s1bModel}` : s1Model;
+    const scoutParts = [s1Model, s1bModel, s1cModel].filter(Boolean);
+    const scoutPart = scoutParts.length > 1 ? scoutParts.join("+") : s1Model;
     const models = s.stage1 && s.stage2 ? `${scoutPart}→${s2Model}` : (s.stage1 || s.stage2 ? scoutPart !== "—" ? scoutPart : s2Model : "?");
     const task = s.task.length > 40 ? s.task.slice(0, 40) + "…" : s.task;
 
@@ -295,6 +339,34 @@ export function formatSessionRecord(s: SessionRecord): string {
     lines.push("");
   }
 
+  if (s.stage1c) {
+    lines.push(`  Stage 1C (parallel scout):`, ``);
+    lines.push(`    Model:      ${s.stage1c.model}`);
+    lines.push(`    Exit code:  ${s.stage1c.exitCode}`);
+    if (s.stage1c.inputTokens || s.stage1c.outputTokens) {
+      lines.push(`    Tokens:     ${s.stage1c.inputTokens} in / ${s.stage1c.outputTokens} out`);
+    }
+    if (s.stage1c.cost > 0) {
+      lines.push(`    Cost:       ${formatCost(s.stage1c.cost)}`);
+    }
+    if (s.stage1c.errorDetails) lines.push(`    Error:      ${s.stage1c.errorDetails}`);
+    lines.push("");
+  }
+
+  if (s.stage1Backup) {
+    lines.push(`  Backup scout (parallel):`, ``);
+    lines.push(`    Model:      ${s.stage1Backup.model}`);
+    lines.push(`    Exit code:  ${s.stage1Backup.exitCode}`);
+    if (s.stage1Backup.inputTokens || s.stage1Backup.outputTokens) {
+      lines.push(`    Tokens:     ${s.stage1Backup.inputTokens} in / ${s.stage1Backup.outputTokens} out`);
+    }
+    if (s.stage1Backup.cost > 0) {
+      lines.push(`    Cost:       ${formatCost(s.stage1Backup.cost)}`);
+    }
+    if (s.stage1Backup.errorDetails) lines.push(`    Error:      ${s.stage1Backup.errorDetails}`);
+    lines.push("");
+  }
+
   if (s.stage2) {
     lines.push(`  Stage 2 (synthesize):`, ``);
     lines.push(`    Model:      ${s.stage2.model}`);
@@ -310,7 +382,7 @@ export function formatSessionRecord(s: SessionRecord): string {
     }
   }
 
-  const totalCost = (s.stage1?.cost ?? 0) + (s.stage1b?.cost ?? 0) + (s.stage2?.cost ?? 0);
+  const totalCost = (s.stage1?.cost ?? 0) + (s.stage1b?.cost ?? 0) + (s.stage1c?.cost ?? 0) + (s.stage1Backup?.cost ?? 0) + (s.stage2?.cost ?? 0);
   if (totalCost > 0) {
     lines.push("");
     lines.push(`  Total cost:  ${formatCost(totalCost)}`);

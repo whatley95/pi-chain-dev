@@ -43,6 +43,10 @@ export interface AutoForkConfig {
   stage1: StageProfile;
   /** Optional second scout model for verify mode. Falls back to stage1 if unset. */
   stage1b?: StageProfile;
+  /** Optional third scout model for parallel mode. Falls back to stage1 if unset. */
+  stage1c?: StageProfile;
+  /** Optional backup scout that takes over failed parallel sub-tasks. Falls back to stage1 if unset. */
+  stage1Backup?: StageProfile;
   /** Model profile for Stage 2 (expensive synthesis). */
   stage2: StageProfile;
   /** Optional override model for review mode. Falls back to stage2 if unset. */
@@ -67,6 +71,10 @@ export interface AutoForkConfig {
   themed: boolean;
   /** Run scout twice automatically for higher accuracy. */
   autoVerify: boolean;
+  /** Split scout into N parallel sub-task scouts (1-3). Default 1. */
+  parallel?: number;
+  /** If true, a backup scout takes over failed parallel sub-tasks. Default true. */
+  parallelBackup?: boolean;
   /** Custom signature shown in /cdev status (e.g. name, handle). */
   signature?: string;
   /** Maximum cost (USD) for a single fork. 0 = unlimited. */
@@ -202,6 +210,8 @@ export interface AutoForkState {
 export interface AutoForkDetails {
   stage1: ForkResult | null;
   stage1b?: ForkResult | null;
+  stage1c?: ForkResult | null;
+  stage1Backup?: ForkResult | null;
   stage2: ForkResult | null;
   ui?: AutoForkUiDetails;
 }

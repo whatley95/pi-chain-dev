@@ -33,6 +33,8 @@ export interface AutoForkParamsType {
   verify?: boolean;
   plan?: boolean;
   yolo?: boolean;
+  parallel?: number;
+  parallelBackup?: boolean;
   recall?: string;
   reviewFile?: string;
   diffSpec?: string;
@@ -626,9 +628,14 @@ export async function executeCdevTool(
     }
 
     const isPlan = p.plan === true;
+    const parallel = Math.max(1, Math.min(3, Number.isFinite(p.parallel) ? (p.parallel as number) : (config.parallel ?? 1)));
+    const parallelBackup = typeof p.parallelBackup === "boolean" ? p.parallelBackup : (config.parallelBackup ?? true);
+    const useParallel = parallel > 1 && !quick && !verify;
+
     const onProgress = (stage: string, model: string) => {
       if (stage === "scout") {
-        ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${verify ? "🔍🔍" : "🔍"} Scout exploring…  (${model})`)]);
+        const icon = useParallel ? "🔀" : verify ? "🔍🔍" : "🔍";
+        ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} Scout exploring…  (${model})`)]);
       } else {
         ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${isPlan ? "📋" : "⚒️"} Forge ${isPlan ? "planning" : "synthesizing"}…  (${model})`)]);
       }
@@ -642,6 +649,8 @@ export async function executeCdevTool(
       forkSessionSnapshotJsonl: snapshot,
       stage1Profile: profiles.stage1,
       stage1bProfile: config.stage1b,
+      stage1cProfile: config.stage1c,
+      stage1BackupProfile: config.stage1Backup,
       stage2Profile: profiles.stage2,
       customExplorePrompt: config.promptsEnabled ? config.prompts?.explore : undefined,
       customSynthesizePrompt: config.promptsEnabled ? config.prompts?.synthesize : undefined,
@@ -649,6 +658,8 @@ export async function executeCdevTool(
       quick,
       verify,
       plan: isPlan,
+      parallel,
+      parallelBackup,
       confidenceGates: config.confidenceGates,
       onProgress,
       onUpdate: (update) => {
@@ -692,14 +703,17 @@ export async function executeCdevTool(
     if (config.memory) {
       indexFindingsAsync({
         task: p.task,
-        resultText: getFinalAssistantText(result.messages) || "",
-        stage1Model: config.stage1.id,
-        stage2Model: p.quick ? undefined : config.stage2.id,
-        isReview: false,
-        quick: p.quick ?? false,
-        cost: result.usage?.cost ?? 0,
-        cwd: ctx.cwd,
-      });
+      resultText: getFinalAssistantText(result.messages) || "",
+      stage1Model: config.stage1.id,
+      stage2Model: p.quick ? undefined : config.stage2.id,
+      stage1bModel: config.stage1b?.id,
+      stage1cModel: config.stage1c?.id,
+      stage1BackupModel: config.stage1Backup?.id,
+      isReview: false,
+      quick: p.quick ?? false,
+      cost: result.usage?.cost ?? 0,
+      cwd: ctx.cwd,
+    });
     }
 
     const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);

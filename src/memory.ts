@@ -265,6 +265,9 @@ export interface IndexFindingsInput {
   resultText: string;       // final assistant text from the fork
   stage1Model?: string;     // e.g. "flash"
   stage2Model?: string;     // e.g. "pro"
+  stage1bModel?: string;
+  stage1cModel?: string;
+  stage1BackupModel?: string;
   isReview: boolean;
   quick: boolean;
   cost: number;
@@ -287,7 +290,7 @@ export function indexFindingsAsync(input: IndexFindingsInput): Promise<string | 
 }
 
 function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
-  const { task, resultText, stage1Model, stage2Model, isReview, quick, cost, cwd, promptVersion } = input;
+  const { task, resultText, stage1Model, stage2Model, stage1bModel, stage1cModel, isReview, quick, cost, cwd, promptVersion } = input;
 
   const filePaths = extractFilePaths(resultText, cwd);
   const topic = extractTopicFromTask(task, filePaths);
@@ -315,7 +318,8 @@ function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
     models = stage1Model ?? "?";
   } else {
     stage = "stage2";
-    models = stage1Model && stage2Model ? `${stage1Model}→${stage2Model}` : (stage2Model ?? "?");
+    const scoutParts = [stage1Model, stage1bModel, stage1cModel].filter(Boolean).join("+");
+    models = scoutParts && stage2Model ? `${scoutParts}→${stage2Model}` : (stage2Model ?? "?");
   }
 
   const finding: CdevFindingRecord = {

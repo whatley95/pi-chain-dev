@@ -1,11 +1,15 @@
 import { appendTaskToSessionJsonl } from "./fork-stage.js";
-import { loadProjectMap, summarizeMapForPrompt } from "./project-map.js";
+import { loadProjectMap, summarizeMapForPrompt, type ParallelSubTask } from "./project-map.js";
 
 export const STAGE_AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
 
-export function buildStage1Prompt(task: string, customPrompt?: string, editMode?: boolean, cwd?: string): string {
+export function buildStage1Prompt(task: string, customPrompt?: string, editMode?: boolean, cwd?: string, subTask?: ParallelSubTask): string {
   const guard = editMode ? "" : STAGE_AUDIT_GUARD;
   const mapContext = cwd ? loadMapContext(cwd) : "";
+  const scopeHint = subTask?.scope?.length
+    ? `\n\nFocus your exploration on these areas: ${subTask.scope.join(", ")}`
+    : "";
+  const focusTask = subTask ? subTask.focus : task;
   const jsonSchema = `{
   "summary": "one-sentence summary of what was explored",
   "findings": [
@@ -27,9 +31,9 @@ export function buildStage1Prompt(task: string, customPrompt?: string, editMode?
   }
 }`;
   if (customPrompt) {
-    return `${customPrompt}${mapContext}
+    return `${customPrompt}${mapContext}${scopeHint}
 
-Task: ${task}
+Task: ${focusTask}
 
 Return your findings as a single JSON object matching this schema (no markdown fences, no extra prose):
 ${jsonSchema}
@@ -39,7 +43,7 @@ Efficiency rules:
 - Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
 - Read a file individually only when you need the full content of a specific, named file.${guard}`;
   }
-  return `${task}${mapContext}
+  return `${focusTask}${mapContext}${scopeHint}
 
 You are in EXPLORATION MODE. Your job is to gather information, not to write a final report.
 

@@ -132,6 +132,14 @@ export default function (pi: ExtensionAPI) {
         description:
           "If true, run the scout stage twice and merge the findings before sending them to the forge stage. The two independent runs increase coverage for high-stakes tasks at ~2x stage 1 cost and slower speed.",
       })),
+      parallel: Type.Optional(Type.Integer({
+        description:
+          "Split the scout stage into N parallel sub-task scouts (1-3). Requires a project map for task splitting. Each scout can use a different model via /cdev-model. A backup scout can take over failed sub-tasks if configured.",
+      })),
+      parallelBackup: Type.Optional(Type.Boolean({
+        description:
+          "If true (default), a backup scout takes over failed parallel sub-tasks. Set to false to save cost at the risk of missing coverage.",
+      })),
       plan: Type.Optional(Type.Boolean({
         description:
           "If true, run scout plus a planner-style forge response that returns an implementation plan only. Use before editing when you want risks, files, steps, and verification commands.",
@@ -167,6 +175,8 @@ export default function (pi: ExtensionAPI) {
         "/cdev <task>           Scout + Forge explore",
         "/cdev quick <task>     Scout only (fast)",
         "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
+        "/cdev parallel <n> <task>  Split scout into N parallel scouts (requires map)",
+        "/cdev parallel <n> no-backup <task>  Parallel scouts without backup takeover",
         "/cdev plan <task>      Scout + planner (implementation plan only)",
         "/cdev yolo <task>     Scout + forge, then review loops",
         "/cdev yolo manual|propose|auto  Who applies fixes (auto = cdev edits files)",

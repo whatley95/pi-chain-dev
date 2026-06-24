@@ -124,11 +124,13 @@ export function renderResult(
 
   const stage1Model = details?.stage1?.model ?? "";
   const stage1bModel = details?.stage1b?.model ?? "";
+  const stage1cModel = details?.stage1c?.model ?? "";
   const stage2Model = details?.stage2?.model ?? "";
-  const scoutChain = stage1bModel ? `${stage1Model}+${stage1bModel}` : stage1Model;
+  const scoutParts = [stage1Model, stage1bModel, stage1cModel].filter(Boolean);
+  const scoutChain = scoutParts.length > 1 ? scoutParts.join("+") : stage1Model;
   const modelChain = [scoutChain, stage2Model].filter(Boolean).join("→");
 
-  const costNum = (details?.stage1?.usage?.cost ?? 0) + (details?.stage2?.usage?.cost ?? 0);
+  const costNum = (details?.stage1?.usage?.cost ?? 0) + (details?.stage1b?.usage?.cost ?? 0) + (details?.stage1c?.usage?.cost ?? 0) + (details?.stage2?.usage?.cost ?? 0);
   const costStr = fmtCost(costNum);
   const modeLabel = formatModeLabel(ui?.mode, details);
   const metrics = formatUiMetrics(ui);
@@ -160,6 +162,18 @@ export function renderResult(
       const dur1b = fmtDuration(s1b.durationMs);
       const s1bText = `  Scout B: ${s1b.model} (exit ${s1b.exitCode ?? "?"}${dur1b ? `, ${dur1b}` : ""})`;
       lines.push(bg("toolStageBg", fg("dim", s1bText), theme, themed));
+    }
+    if (details?.stage1c?.model) {
+      const s1c = details.stage1c;
+      const dur1c = fmtDuration(s1c.durationMs);
+      const s1cText = `  Scout C: ${s1c.model} (exit ${s1c.exitCode ?? "?"}${dur1c ? `, ${dur1c}` : ""})`;
+      lines.push(bg("toolStageBg", fg("dim", s1cText), theme, themed));
+    }
+    if (details?.stage1Backup?.model) {
+      const sb = details.stage1Backup;
+      const durB = fmtDuration(sb.durationMs);
+      const sbText = `  Backup: ${sb.model} (exit ${sb.exitCode ?? "?"}${durB ? `, ${durB}` : ""})`;
+      lines.push(bg("toolStageBg", fg("dim", sbText), theme, themed));
     }
     if (details?.stage2?.model) {
       const s2 = details.stage2;

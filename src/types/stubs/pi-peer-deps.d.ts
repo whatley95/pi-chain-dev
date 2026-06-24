@@ -82,5 +82,7 @@ declare module "@sinclair/typebox" {
     Optional(schema: unknown): unknown;
     String(options?: Record<string, unknown>): unknown;
     Boolean(options?: Record<string, unknown>): unknown;
+    Integer(options?: Record<string, unknown>): unknown;
+    Number(options?: Record<string, unknown>): unknown;
   };
 }

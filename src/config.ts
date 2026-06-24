@@ -121,6 +121,8 @@ export function loadConfig(cwd: string): AutoForkConfig {
     ...projectConfig,
     stage1: projectConfig.stage1 || globalConfig.stage1 || DEFAULT_CONFIG.stage1,
     stage1b: projectConfig.stage1b || globalConfig.stage1b,
+    stage1c: projectConfig.stage1c || globalConfig.stage1c,
+    stage1Backup: projectConfig.stage1Backup || globalConfig.stage1Backup,
     stage2: projectConfig.stage2 || globalConfig.stage2 || DEFAULT_CONFIG.stage2,
     // Deep-merge prompts so project can override individual keys without losing global
     prompts: {
@@ -182,6 +184,8 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
 
     const stage1 = parseStageProfile(config.stage1);
     const stage1b = parseStageProfile(config.stage1b);
+    const stage1c = parseStageProfile(config.stage1c);
+    const stage1Backup = parseStageProfile(config.stage1Backup);
     const stage2 = parseStageProfile(config.stage2);
     const review = parseStageProfile(config.review);
 
@@ -191,6 +195,8 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
 
     if (stage1) parsed.stage1 = stage1;
     if (stage1b) parsed.stage1b = stage1b;
+    if (stage1c) parsed.stage1c = stage1c;
+    if (stage1Backup) parsed.stage1Backup = stage1Backup;
     if (stage2) parsed.stage2 = stage2;
     if (review) parsed.review = review;
     if (typeof config.offline === "boolean") parsed.offline = config.offline;
@@ -201,6 +207,8 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (typeof config.themed === "boolean") parsed.themed = config.themed;
     if (typeof config.autoVerify === "boolean") parsed.autoVerify = config.autoVerify;
     if (typeof config.signature === "string") parsed.signature = config.signature;
+    if (typeof config.parallel === "number") parsed.parallel = Math.max(1, Math.min(3, Number.isFinite(config.parallel) ? config.parallel : 1));
+    if (typeof config.parallelBackup === "boolean") parsed.parallelBackup = config.parallelBackup;
     if (typeof config.maxForkCost === "number") parsed.maxForkCost = Math.max(0, Number.isFinite(config.maxForkCost) ? config.maxForkCost : 0);
     if (typeof config.maxSessionCost === "number") parsed.maxSessionCost = Math.max(0, Number.isFinite(config.maxSessionCost) ? config.maxSessionCost : 0);
 

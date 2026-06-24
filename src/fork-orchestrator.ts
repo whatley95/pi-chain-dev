@@ -6,6 +6,7 @@ import { runCdevReview } from "./review.js";
 import { withAuditGuard, formatCost, estimateForkCost, getSessionForkCost, recordForkCost } from "./extension-context.js";
 import { saveSession } from "./history.js";
 import { writeReportFile } from "./report.js";
+import { loadProjectMap, splitTaskByMap, type ParallelSubTask } from "./project-map.js";
 import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, AutoForkConfig, YoloConfig, ConfidenceGateConfig } from "./types.js";
 import { emptyUsage, emptyFailedResult, evaluateConfidenceGates } from "./types.js";
 
@@ -21,6 +22,8 @@ export interface RunAutoForkOptions {
   forkSessionSnapshotJsonl: string;
   stage1Profile: StageProfile;
   stage1bProfile?: StageProfile;
+  stage1cProfile?: StageProfile;
+  stage1BackupProfile?: StageProfile;
   stage2Profile: StageProfile;
   customExplorePrompt?: string;
   customSynthesizePrompt?: string;
@@ -28,6 +31,8 @@ export interface RunAutoForkOptions {
   quick?: boolean;
   verify?: boolean;
   plan?: boolean;
+  parallel?: number;
+  parallelBackup?: boolean;
   editMode?: boolean;
   confidenceGates?: ConfidenceGateConfig;
   onProgress?: (stage: "scout" | "forge", model: string) => void;
@@ -43,7 +48,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   details: AutoForkDetails;
 }> {
   const { cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage1bProfile,
-          stage2Profile, customExplorePrompt, customSynthesizePrompt, customPlanPrompt,
+          stage1cProfile, stage1BackupProfile, stage2Profile, customExplorePrompt,
+          customSynthesizePrompt, customPlanPrompt,
           quick = false, verify = false, plan = false, editMode = false,
           confidenceGates,
           extensions = null, environment = {}, offline = true, signal } = opts;
@@ -52,18 +58,19 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   const sanitizedSnapshot = sanitizeSessionJsonl(forkSessionSnapshotJsonl);
 
-  const scoutModelLabel = stage1Profile.thinking ? `${stage1Profile.provider}:${stage1Profile.id} • ${stage1Profile.thinking}` : `${stage1Profile.provider}:${stage1Profile.id}`;
-  opts.onProgress?.("scout", scoutModelLabel);
-  const stage1Task = buildStage1Prompt(task, customExplorePrompt, editMode, cwd);
-
-  let stage1Result: ForkResult;
-  let stage1Findings: Stage1Findings | null = null;
   const onUpdate = opts.onUpdate;
+  const parallel = Math.max(1, Math.min(3, Number.isFinite(opts.parallel) ? (opts.parallel as number) : 1));
+  const useParallel = parallel > 1 && !quick && !verify;
 
-  async function runStage1Run(label: string, profile?: StageProfile): Promise<ForkResult> {
+  function modelLabel(prof: StageProfile): string {
+    return prof.thinking ? `${prof.provider}:${prof.id} • ${prof.thinking}` : `${prof.provider}:${prof.id}`;
+  }
+
+  async function runStage1Run(label: string, stageTask: string, profile?: StageProfile, subTask?: ParallelSubTask): Promise<ForkResult> {
+    const prompt = buildStage1Prompt(stageTask, customExplorePrompt, editMode, cwd, subTask);
     return runStageWithRetry({
       cwd,
-      task: stage1Task,
+      task: prompt,
       stageLabel: label,
       forkSessionJsonl: forkSessionSnapshotJsonl,
       stageProfile: profile || stage1Profile,
@@ -79,7 +86,106 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     });
   }
 
-  if (verify) {
+  let stage1Result: ForkResult;
+  let stage1Findings: Stage1Findings | null = null;
+
+  if (useParallel) {
+    const map = loadProjectMap(cwd);
+    const subTasks = splitTaskByMap(task, map, parallel);
+    const workerProfiles: (StageProfile | undefined)[] = [stage1Profile, stage1bProfile, stage1cProfile];
+    const activeProfiles = workerProfiles.slice(0, subTasks.length).map((p) => p || stage1Profile);
+    const labels = subTasks.map((s) => `scout ${s.label}`);
+    const modelLabels = activeProfiles.map(modelLabel);
+    opts.onProgress?.("scout", modelLabels.join(" + "));
+
+    const workerRuns = await Promise.all(
+      subTasks.map((subTask, i) =>
+        runStage1Run(labels[i], task, activeProfiles[i], subTask).then((r): { result: ForkResult; subTask: ParallelSubTask; index: number } => ({ result: r, subTask, index: i }))
+      )
+    );
+
+    const failedRuns = workerRuns.filter((w) => w.result.exitCode !== 0 || !getFinalAssistantText(w.result.messages));
+    const backupProfile = stage1BackupProfile && stage1BackupProfile.provider && stage1BackupProfile.id ? stage1BackupProfile : stage1Profile;
+    const useBackup = opts.parallelBackup !== false && failedRuns.length > 0 && backupProfile;
+    let backupRuns: { result: ForkResult; subTask: ParallelSubTask; index: number }[] | undefined;
+
+    if (useBackup) {
+      opts.onProgress?.("scout", `backup ${modelLabel(backupProfile)} taking over ${failedRuns.length} failed sub-task(s)`);
+      backupRuns = await Promise.all(
+        failedRuns.map((w) =>
+          runStage1Run(`backup ${w.subTask.label}`, task, backupProfile, w.subTask).then((r): { result: ForkResult; subTask: ParallelSubTask; index: number } => ({ result: r, subTask: w.subTask, index: w.index }))
+        )
+      );
+      for (const b of backupRuns) {
+        workerRuns[b.index] = b;
+      }
+    }
+
+    const successful = workerRuns.filter((w) => w.result.exitCode === 0 && getFinalAssistantText(w.result.messages));
+    if (successful.length === 0) {
+      return {
+        result: {
+          ...emptyFailedResult(task, `Parallel scout failed: all ${workerRuns.length} sub-task scout(s) failed`),
+          provider: stage1Profile.provider,
+          model: stage1Profile.id,
+        },
+        details,
+      };
+    }
+
+    const combinedUsage: UsageStats = emptyUsage();
+    const addUsage = (usage: UsageStats | undefined | null) => {
+      if (!usage) return;
+      combinedUsage.input += usage.input || 0;
+      combinedUsage.output += usage.output || 0;
+      combinedUsage.cacheRead += usage.cacheRead || 0;
+      combinedUsage.cacheWrite += usage.cacheWrite || 0;
+      combinedUsage.cost += usage.cost || 0;
+      combinedUsage.turns += usage.turns || 0;
+      combinedUsage.contextTokens = Math.max(combinedUsage.contextTokens, usage.contextTokens || 0);
+    };
+
+    const maxDuration = Math.max(...workerRuns.map((w) => w.result.durationMs ?? 0), useBackup ? Math.max(...workerRuns.map((w) => w.result.durationMs ?? 0)) : 0);
+
+    const stderrLines: string[] = [
+      `[cdev] parallel mode: ${successful.length}/${workerRuns.length} scout(s) succeeded${useBackup ? " (backup used)" : ""}`,
+      ...workerRuns.map((w) => {
+        const status = w.result.exitCode === 0 && getFinalAssistantText(w.result.messages) ? "ok" : "failed";
+        const dur = fmtDuration(w.result.durationMs);
+        return `  scout ${w.subTask.label}: ${status}${dur ? ` in ${dur}` : ""}${w.result.errorMessage ? ` — ${w.result.errorMessage}` : ""}`;
+      }),
+    ];
+
+    let mergedFindings: Stage1Findings | null = null;
+    for (const w of successful) {
+      const text = getFinalAssistantText(w.result.messages) || "";
+      const findings = parseStage1Findings(text);
+      if (!findings) continue;
+      if (!mergedFindings) {
+        mergedFindings = findings;
+      } else {
+        mergedFindings = mergeStage1Findings(mergedFindings, findings);
+      }
+    }
+
+    for (const w of workerRuns) addUsage(w.result.usage);
+
+    stage1Result = {
+      ...successful[0].result,
+      task,
+      usage: combinedUsage,
+      stderr: stderrLines.filter(Boolean).join("\n"),
+      durationMs: maxDuration,
+    };
+    details.stage1 = successful[0].result;
+    details.stage1b = workerRuns.find((w) => w.subTask.label === "B")?.result ?? null;
+    details.stage1c = workerRuns.find((w) => w.subTask.label === "C")?.result ?? null;
+    details.stage1Backup = backupRuns?.[0]?.result ?? null;
+    stage1Findings = mergedFindings;
+    if (!stage1Findings) {
+      stage1Result.stderr += "\n[cdev] parallel mode: no valid findings produced by any scout";
+    }
+  } else if (verify) {
     const secondProfile = stage1bProfile && stage1bProfile.provider && stage1bProfile.id ? stage1bProfile : stage1Profile;
     const modelA = stage1Profile.thinking ? `${stage1Profile.provider}:${stage1Profile.id} • ${stage1Profile.thinking}` : `${stage1Profile.provider}:${stage1Profile.id}`;
     const modelB = secondProfile.thinking ? `${secondProfile.provider}:${secondProfile.id} • ${secondProfile.thinking}` : `${secondProfile.provider}:${secondProfile.id}`;
@@ -88,8 +194,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     let runB: ForkResult;
     try {
       [runA, runB] = await Promise.all([
-        runStage1Run("exploration A", stage1Profile),
-        runStage1Run("exploration B", secondProfile),
+        runStage1Run("exploration A", task, stage1Profile),
+        runStage1Run("exploration B", task, secondProfile),
       ]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -159,7 +265,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       stage1Result.stderr += `\n[cdev] verify mode: both explorations invalid (${validationA.reason}; ${validationB.reason})\n`;
     }
   } else {
-    stage1Result = await runStage1Run("exploration");
+    stage1Result = await runStage1Run("exploration", task);
     details.stage1 = stage1Result;
 
     const stage1Text = getFinalAssistantText(stage1Result.messages) || "";
@@ -185,14 +291,14 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
       if (!validation.valid) {
         stage1Result.stderr += `\n[cdev] ${validation.reason}; retrying stage 1 with stricter prompt\n`;
-        promises.push(runStage1Run("exploration (validation retry)"));
+        promises.push(runStage1Run("exploration (validation retry)", task));
         labels.push("validation retry");
       }
 
       if (needsMoreExploration) {
         const reason = gateCheck.passed ? reExploreCheck.reason : `confidence gate failed: ${gateCheck.reasons.join("; ")}`;
         stage1Result.stderr += `\n[cdev] ${reason}; running a second exploration pass\n`;
-        promises.push(runStage1Run("exploration (coverage pass)"));
+        promises.push(runStage1Run("exploration (coverage pass)", task));
         labels.push("coverage pass");
       }
 

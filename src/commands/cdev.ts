@@ -259,6 +259,25 @@ export function registerCdevCommand(
         return;
       }
 
+      // ── Subcommand: parallel n [no-backup] task ──
+      const parallelMatch = trimmed.match(/^parallel\s+(\d)(?:\s+(no-backup))?\s+(.+)$/i);
+      if (parallelMatch) {
+        const n = parseInt(parallelMatch[1], 10);
+        const noBackup = Boolean(parallelMatch[2]);
+        const parallelTask = parallelMatch[3].trim();
+        if (n < 1 || n > 3 || !parallelTask) {
+          ctx.ui.notify("Usage: /cdev parallel <1-3> [no-backup] <task>", "warn");
+          return;
+        }
+        if (!loadProjectMap(ctx.cwd)) {
+          ctx.ui.notify("Project map missing. Run /cdev map first to enable parallel scouting.", "warn");
+          return;
+        }
+        ctx.ui.notify(`Queuing parallel exploration (${n} scout${n > 1 ? "s" : ""}${noBackup ? ", no backup" : ""})...`, "info");
+        pi.sendUserMessage(`Use cdev with parallel=${n}, parallelBackup=${!noBackup} to: ${parallelTask}`, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
+
       // ── Subcommand: plan ──
       if (trimmed.startsWith("plan ")) {
         const planTask = trimmed.slice(5).trim();
@@ -353,6 +372,16 @@ export function registerCdevCommand(
         } else {
           lines.push(`  Scout B:          ↳ Scout A (${config.stage1.id})`);
         }
+        if (config.stage1c?.provider && config.stage1c?.id) {
+          lines.push(`  Scout C:          ${config.stage1c.provider}:${config.stage1c.id}  •  ${config.stage1c.thinking}`);
+        } else {
+          lines.push(`  Scout C:          ↳ Scout A (${config.stage1.id})`);
+        }
+        if (config.stage1Backup?.provider && config.stage1Backup?.id) {
+          lines.push(`  Backup scout:     ${config.stage1Backup.provider}:${config.stage1Backup.id}  •  ${config.stage1Backup.thinking}`);
+        } else {
+          lines.push(`  Backup scout:     ↳ Scout A (${config.stage1.id})`);
+        }
         lines.push(`  Forge:            ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`);
         lines.push(`  Review:           ${config.review ? `${config.review.provider}:${config.review.id}  •  ${config.review.thinking}` : `↳ Forge (${config.stage2.id})`}`);
         lines.push(`  Auto-trigger:     ${config.auto ? "⚡ ON (sends steer every 3 turns to prompt cdev use)" : "OFF (agent uses cdev only when asked or it decides)"}`);
@@ -360,6 +389,7 @@ export function registerCdevCommand(
         lines.push(`  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`);
         lines.push(`  Project memory:   ${config.memory ? "ON" : "OFF"}`);
         lines.push(`  Auto-verify:      ${config.autoVerify ? "✓ ON (scout ×2)" : "OFF (scout ×1)"}`);
+        lines.push(`  Parallel scouts:  ${config.parallel && config.parallel > 1 ? `${config.parallel} (backup ${config.parallelBackup !== false ? "on" : "off"})` : "OFF"}`);
         const yolo = normalizeYoloConfig(config.yolo);
         lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, ${yolo.autoApply === "auto" ? "auto-edit" : yolo.autoApply === "propose" ? "propose fixes" : "main agent fixes"})` : "OFF"}`);
         const hasMap = !!loadProjectMap(ctx.cwd);
