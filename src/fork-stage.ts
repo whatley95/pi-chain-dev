@@ -354,10 +354,12 @@ async function sleep(ms: number): Promise<void> {
 export async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResult> {
   const retries = Math.max(0, opts.retries ?? 0);
   let lastResult: ForkResult | undefined;
+  const stageStart = Date.now();
   for (let attempt = 0; attempt <= retries; attempt++) {
     const release = await stageSemaphore.acquire();
     try {
       const result = await runStageCore({ ...opts, stageLabel: attempt > 0 ? `${opts.stageLabel} (retry ${attempt})` : opts.stageLabel });
+      result.durationMs = Date.now() - stageStart;
       lastResult = result;
       if (result.exitCode === 0 || getFinalAssistantText(result.messages) || opts.signal?.aborted) {
         return result;
@@ -372,7 +374,11 @@ export async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResu
       release();
     }
   }
-  return lastResult ?? emptyFailedResult(opts.task, `${opts.stageLabel} stage failed after ${retries} retries`);
+  if (lastResult) {
+    lastResult.durationMs = Date.now() - stageStart;
+    return lastResult;
+  }
+  return emptyFailedResult(opts.task, `${opts.stageLabel} stage failed after ${retries} retries`);
 }
 
 export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {

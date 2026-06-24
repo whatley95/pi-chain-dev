@@ -338,18 +338,24 @@ export function resolveStageProfiles(
   return { stage1, stage2 };
 }
 
+function fmtDuration(ms: number | undefined): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 export function formatResultContent(result: ForkResult, details: AutoForkDetails): string {
   const finalText = getFinalAssistantText(result.messages);
 
   if (result.errorMessage && !finalText) {
     const scoutInfo = details.stage1
-      ? ` | Scout: ${details.stage1.model || "?"} (exit ${details.stage1.exitCode})`
+      ? ` | Scout: ${details.stage1.model || "?"} (exit ${details.stage1.exitCode ?? "?"}${fmtDuration(details.stage1.durationMs) ? `, ${fmtDuration(details.stage1.durationMs)}` : ""})`
       : "";
     const forgeInfo = details.stage2
-      ? ` | Forge: ${details.stage2.model || "?"} (exit ${details.stage2.exitCode})`
+      ? ` | Forge: ${details.stage2.model || "?"} (exit ${details.stage2.exitCode ?? "?"}${fmtDuration(details.stage2.durationMs) ? `, ${fmtDuration(details.stage2.durationMs)}` : ""})`
       : "";
     const costInfo = (result.usage?.cost ?? 0) > 0 ? ` — cost: ${formatCost(result.usage?.cost ?? 0)}` : "";
-    return `cdev failed: ${result.errorMessage}${scoutInfo}${forgeInfo}${costInfo}`;
+    return `cdev failed: ${result.errorMessage ?? "unknown error"}${scoutInfo}${forgeInfo}${costInfo}`;
   }
 
   const summary = finalText || getResultSummaryText(result);
@@ -357,13 +363,13 @@ export function formatResultContent(result: ForkResult, details: AutoForkDetails
   let header = "";
   const isReview = details.stage1 === null && details.stage2 !== null;
   if (isReview) {
-    header += `Review ran with ${details.stage2?.model || "?"}: ${details.stage2?.exitCode ?? "?"} exit\n\n`;
+    header += `Review ran with ${details.stage2?.model || "?"}: ${details.stage2?.exitCode ?? "?"} exit${fmtDuration(details.stage2?.durationMs) ? ` in ${fmtDuration(details.stage2?.durationMs)}` : ""}\n\n`;
   } else {
     if (details.stage1) {
-      header += `Scout (exploration) ran with ${details.stage1.model || "?"}: ${details.stage1.exitCode} exit\n`;
+      header += `Scout (exploration) ran with ${details.stage1.model || "?"}: ${details.stage1.exitCode ?? "?"} exit${fmtDuration(details.stage1.durationMs) ? ` in ${fmtDuration(details.stage1.durationMs)}` : ""}\n`;
     }
     if (details.stage2) {
-      header += `Forge (synthesis) ran with ${details.stage2.model || "?"}: ${details.stage2.exitCode} exit\n`;
+      header += `Forge (synthesis) ran with ${details.stage2.model || "?"}: ${details.stage2.exitCode ?? "?"} exit${fmtDuration(details.stage2.durationMs) ? ` in ${fmtDuration(details.stage2.durationMs)}` : ""}\n`;
     }
     if (header) header += "\n";
   }

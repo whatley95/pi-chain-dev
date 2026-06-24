@@ -170,6 +170,8 @@ export interface ForkResult {
   model?: string;
   stopReason?: string;
   errorMessage?: string;
+  /** Wall-clock duration of this stage/run in milliseconds. */
+  durationMs?: number;
   /** Internal retry tracking populated by runner-events. */
   retry?: {
     active?: boolean;

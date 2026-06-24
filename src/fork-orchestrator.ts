@@ -113,6 +113,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       task,
       usage: combinedUsage,
       stderr: [runA.stderr, runB.stderr].filter(Boolean).join("\n"),
+      durationMs: Math.max(runA.durationMs ?? 0, runB.durationMs ?? 0),
     };
     details.stage1 = stage1Result;
 
@@ -305,6 +306,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       model: planResult.model || stage2Profile.id,
       stopReason: planResult.stopReason,
       errorMessage: planResult.errorMessage,
+      durationMs: (stage1Result.durationMs ?? 0) + (planResult.durationMs ?? 0),
     };
 
     return { result: finalResult, details };
@@ -362,6 +364,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     model: stage2Result.model || stage2Profile.id,
     stopReason: stage2Result.stopReason,
     errorMessage: stage2Result.errorMessage,
+    durationMs: (stage1Result.durationMs ?? 0) + (stage2Result.durationMs ?? 0),
   };
 
   const stage2Text = getFinalAssistantText(stage2Result.messages);

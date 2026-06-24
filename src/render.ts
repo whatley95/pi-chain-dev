@@ -149,12 +149,14 @@ export function renderResult(
     if (ui?.reportPath) lines.push(fg("dim", `  report: ${ui.reportPath}`));
     if (details?.stage1?.model) {
       const s1 = details.stage1;
-      const s1Text = `  Scout: ${s1.model} (exit ${s1.exitCode ?? "?"})`;
+      const dur1 = fmtDuration(s1.durationMs);
+      const s1Text = `  Scout: ${s1.model} (exit ${s1.exitCode ?? "?"}${dur1 ? `, ${dur1}` : ""})`;
       lines.push(bg("toolStageBg", fg("dim", s1Text), theme, themed));
     }
     if (details?.stage2?.model) {
       const s2 = details.stage2;
-      const s2Text = `  Forge: ${s2.model} (exit ${s2.exitCode ?? "?"})`;
+      const dur2 = fmtDuration(s2.durationMs);
+      const s2Text = `  Forge: ${s2.model} (exit ${s2.exitCode ?? "?"}${dur2 ? `, ${dur2}` : ""})`;
       lines.push(bg("toolStageBg", fg("dim", s2Text), theme, themed));
     }
     if (isErr && textOut) {
@@ -205,6 +207,12 @@ function formatModeLabel(mode: unknown, details: any): string {
   if (!details?.stage1 && details?.stage2) return "review";
   if (details?.stage1 && details?.stage2) return "fork";
   return "";
+}
+
+function fmtDuration(ms: number | undefined): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function formatScore(score: unknown): string | null {
