@@ -361,8 +361,11 @@ export function formatResultContent(result: ForkResult, details: AutoForkDetails
   const summary = finalText || getResultSummaryText(result);
 
   let header = "";
-  const isReview = details.stage1 === null && details.stage2 !== null;
-  if (isReview) {
+  const isReview = details.stage1 === null && details.stage2 !== null && !details.research;
+  const isResearch = details.research !== undefined;
+  if (isResearch) {
+    header += `Research ran with ${details.stage1?.model || "?"}: ${details.stage1?.exitCode ?? "?"} exit${fmtDuration(details.stage1?.durationMs) ? ` in ${fmtDuration(details.stage1?.durationMs)}` : ""}\n\n`;
+  } else if (isReview) {
     header += `Review ran with ${details.stage2?.model || "?"}: ${details.stage2?.exitCode ?? "?"} exit${fmtDuration(details.stage2?.durationMs) ? ` in ${fmtDuration(details.stage2?.durationMs)}` : ""}\n\n`;
   } else {
     if (details.stage1) {
@@ -415,8 +418,9 @@ export function updateForkCostStatus(ctx: ExtensionContext): void {
           const message = (entry as Record<string, unknown>).message as Record<string, unknown> | undefined;
           if (message?.role === "toolResult" && message?.toolName === "cdev") {
             const details = message.details as AutoForkDetails | undefined;
-            if (details?.stage1?.usage?.cost) totalCost += details.stage1.usage.cost;
-            if (details?.stage2?.usage?.cost) totalCost += details.stage2.usage.cost;
+          if (details?.stage1?.usage?.cost) totalCost += details.stage1.usage.cost;
+          if (details?.stage2?.usage?.cost) totalCost += details.stage2.usage.cost;
+          if (details?.research && (details.research as { cost?: number }).cost) totalCost += (details.research as { cost?: number }).cost || 0;
           }
         }
       }

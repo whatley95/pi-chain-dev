@@ -15,9 +15,11 @@ const SIGKILL_TIMEOUT_MS = 5000;
 class Semaphore {
   private queue: (() => void)[] = [];
   private count: number;
+  private maxConcurrency: number;
 
   constructor(maxConcurrency: number) {
-    this.count = maxConcurrency;
+    this.maxConcurrency = Math.max(1, maxConcurrency);
+    this.count = this.maxConcurrency;
   }
 
   acquire(): Promise<() => void> {
@@ -44,9 +46,21 @@ class Semaphore {
       next?.();
     }
   }
+
+  setMaxConcurrency(n: number): void {
+    const newMax = Math.max(1, n);
+    const diff = newMax - this.maxConcurrency;
+    this.maxConcurrency = newMax;
+    this.count = Math.max(0, this.count + diff);
+    this.drain();
+  }
 }
 
-const stageSemaphore = new Semaphore(2);
+const stageSemaphore = new Semaphore(3);
+
+export function setStageSemaphoreMaxConcurrency(n: number): void {
+  stageSemaphore.setMaxConcurrency(Math.max(1, n));
+}
 
 let testPiSpawnResolver: (() => { command: string; prefixArgs: string[] }) | null = null;
 

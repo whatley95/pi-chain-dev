@@ -38,8 +38,8 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 | `/cdev yolo auto` | cdev reviews and edits files automatically between rounds (high trust) |
 | `/cdev auto on` | Auto-trigger mode — LLM proactively uses `cdev` for exploration tasks |
 | `/cdev auto off` | Disable auto-trigger |
-| `/cdev auto-verify on` | Automatic scout ×2 for every `/cdev <task>` (default) — ~2× stage 1 cost |
-| `/cdev auto-verify off` | Scout ×1 unless `/cdev verify` is used explicitly |
+| `/cdev auto-verify on` | Automatic scout ×2 for every `/cdev <task>` — ~2× stage 1 cost |
+| `/cdev auto-verify off` | Scout ×1 unless `/cdev verify` is used explicitly (default) |
 | `/cdev-model` | Interactive model picker — choose scout/forge models from configured providers |
 | `/cdev scan` | Instant template scan — detects stack from package.json, generates prompts (free, no LLM) |
 | `/cdev scan deep` | LLM-powered scan — reads actual codebase, writes truly custom prompts (scout → forge) |
@@ -549,7 +549,10 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `auto` | boolean | `false` | Auto-trigger mode (LLM proactively uses cdev) |
 | `autoVerify` | boolean | `false` | Automatic scout ×2 for higher accuracy |
 | `parallel` | integer | `1` | Default number of parallel scouts for `cdev` tool calls |
-| `parallelBackup` | boolean | `true` | Backup scout takes over failed parallel sub-tasks |
+| `parallelBackup` | boolean | `false` | Backup scout takes over failed parallel sub-tasks |
+| `maxConcurrentStages` | integer | `3` | Max child Pi processes cdev spawns simultaneously |
+| `scoutTimeoutMs` | number | `600000` | Per-scout stage timeout in milliseconds (min 30s, max 1h) |
+| `forgeTimeoutMs` | number | `180000` | Forge/plan/review stage timeout in milliseconds (min 30s, max 1h) |
 | `promptsEnabled` | boolean | `true` | Enable/disable custom prompts |
 | `prompts.explore` | string | — | Custom scout exploration prompt |
 | `prompts.synthesize` | string | — | Custom forge synthesis prompt |

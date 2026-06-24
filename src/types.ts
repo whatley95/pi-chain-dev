@@ -21,6 +21,8 @@ export interface PromptsConfig {
   plan?: string;
   /** Custom prompt for review mode. */
   review?: string;
+  /** Custom prompt for research mode. */
+  research?: string;
 }
 
 /** Gate thresholds for deciding whether scout evidence is strong enough for forge. */
@@ -51,6 +53,8 @@ export interface AutoForkConfig {
   stage2: StageProfile;
   /** Optional override model for review mode. Falls back to stage2 if unset. */
   review?: StageProfile;
+  /** Optional model for research mode. Falls back to stage1 if unset. */
+  research?: StageProfile;
   /** Custom prompts for each stage. */
   prompts?: PromptsConfig;
   /** Extensions to load in child processes. null = normal, [] = none. */
@@ -73,8 +77,14 @@ export interface AutoForkConfig {
   autoVerify: boolean;
   /** Split scout into N parallel sub-task scouts (1-3). Default 1. */
   parallel?: number;
-  /** If true, a backup scout takes over failed parallel sub-tasks. Default true. */
+  /** If true, a backup scout takes over failed parallel sub-tasks. Default false. */
   parallelBackup?: boolean;
+  /** Max concurrent child Pi processes cdev will spawn at once. Default 3. */
+  maxConcurrentStages?: number;
+  /** Per-scout stage timeout in milliseconds. Default 600000 (10 minutes). */
+  scoutTimeoutMs?: number;
+  /** Forge/plan/review stage timeout in milliseconds. Default 180000 (3 minutes). */
+  forgeTimeoutMs?: number;
   /** Custom signature shown in /cdev status (e.g. name, handle). */
   signature?: string;
   /** Maximum cost (USD) for a single fork. 0 = unlimited. */
@@ -213,10 +223,12 @@ export interface AutoForkDetails {
   stage1c?: ForkResult | null;
   stage1Backup?: ForkResult | null;
   stage2: ForkResult | null;
+  /** Research output expected from /cdev research. */
+  research?: Stage1Findings | null;
   ui?: AutoForkUiDetails;
 }
 
-export type CdevUiMode = "fork" | "quick" | "verify" | "plan" | "review" | "yolo" | "recall";
+export type CdevUiMode = "fork" | "quick" | "verify" | "plan" | "review" | "yolo" | "recall" | "parallel" | "research";
 
 export interface AutoForkUiDetails {
   mode?: CdevUiMode;

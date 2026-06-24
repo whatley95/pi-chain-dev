@@ -33,6 +33,8 @@ export interface RunAutoForkOptions {
   plan?: boolean;
   parallel?: number;
   parallelBackup?: boolean;
+  scoutTimeoutMs?: number;
+  forgeTimeoutMs?: number;
   editMode?: boolean;
   confidenceGates?: ConfidenceGateConfig;
   onProgress?: (stage: "scout" | "forge", model: string) => void;
@@ -53,6 +55,9 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
           quick = false, verify = false, plan = false, editMode = false,
           confidenceGates,
           extensions = null, environment = {}, offline = true, signal } = opts;
+
+  const scoutTimeoutMs = Number.isFinite(opts.scoutTimeoutMs) && (opts.scoutTimeoutMs as number) > 0 ? (opts.scoutTimeoutMs as number) : 600_000;
+  const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeoutMs as number) > 0 ? (opts.forgeTimeoutMs as number) : 180_000;
 
   const details: AutoForkDetails = { stage1: null, stage2: null };
 
@@ -78,7 +83,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       environment,
       offline,
       signal,
-      stageTimeoutMs: 300_000,
+      stageTimeoutMs: scoutTimeoutMs,
       sanitizedSessionJsonl: sanitizedSnapshot,
       retries: 1,
       toolMode: "scout",
@@ -145,7 +150,13 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       combinedUsage.contextTokens = Math.max(combinedUsage.contextTokens, usage.contextTokens || 0);
     };
 
-    const maxDuration = Math.max(...workerRuns.map((w) => w.result.durationMs ?? 0), useBackup ? Math.max(...workerRuns.map((w) => w.result.durationMs ?? 0)) : 0);
+    for (const w of workerRuns) addUsage(w.result.usage);
+
+    const maxDuration = Math.max(0, ...workerRuns.map((w) => w.result.durationMs ?? 0));
+    const totalDuration = useBackup
+      ? (Math.max(0, ...workerRuns.filter((w) => !failedRuns.some((f) => f.index === w.index)).map((w) => w.result.durationMs ?? 0)) +
+         failedRuns.reduce((sum, w) => sum + (w.result.durationMs ?? 0), 0))
+      : maxDuration;
 
     const stderrLines: string[] = [
       `[cdev] parallel mode: ${successful.length}/${workerRuns.length} scout(s) succeeded${useBackup ? " (backup used)" : ""}`,
@@ -168,14 +179,12 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       }
     }
 
-    for (const w of workerRuns) addUsage(w.result.usage);
-
     stage1Result = {
       ...successful[0].result,
       task,
       usage: combinedUsage,
       stderr: stderrLines.filter(Boolean).join("\n"),
-      durationMs: maxDuration,
+      durationMs: totalDuration,
     };
     details.stage1 = successful[0].result;
     details.stage1b = workerRuns.find((w) => w.subTask.label === "B")?.result ?? null;
@@ -190,18 +199,25 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     const modelA = stage1Profile.thinking ? `${stage1Profile.provider}:${stage1Profile.id} • ${stage1Profile.thinking}` : `${stage1Profile.provider}:${stage1Profile.id}`;
     const modelB = secondProfile.thinking ? `${secondProfile.provider}:${secondProfile.id} • ${secondProfile.thinking}` : `${secondProfile.provider}:${secondProfile.id}`;
     opts.onProgress?.("scout", `${modelA} + ${modelB}`);
-    let runA: ForkResult;
-    let runB: ForkResult;
-    try {
-      [runA, runB] = await Promise.all([
-        runStage1Run("exploration A", task, stage1Profile),
-        runStage1Run("exploration B", task, secondProfile),
-      ]);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+
+    const [settledA, settledB] = await Promise.allSettled([
+      runStage1Run("exploration A", task, stage1Profile),
+      runStage1Run("exploration B", task, secondProfile),
+    ]);
+
+    const emptyRun = (label: string, err?: string): ForkResult => ({
+      ...emptyFailedResult(task, `${label} failed${err ? `: ${err}` : ""}`),
+      provider: stage1Profile.provider,
+      model: stage1Profile.id,
+    });
+
+    const runA = settledA.status === "fulfilled" ? settledA.value : emptyRun("exploration A", settledA.reason instanceof Error ? settledA.reason.message : String(settledA.reason));
+    const runB = settledB.status === "fulfilled" ? settledB.value : emptyRun("exploration B", settledB.reason instanceof Error ? settledB.reason.message : String(settledB.reason));
+
+    if (!getFinalAssistantText(runA.messages) && !getFinalAssistantText(runB.messages)) {
       return {
         result: {
-          ...emptyFailedResult(task, `Verify mode exploration failed: ${message}`),
+          ...emptyFailedResult(task, `Verify mode exploration failed: both scout runs failed (${runA.errorMessage || "A"}; ${runB.errorMessage || "B"})`),
           provider: stage1Profile.provider,
           model: stage1Profile.id,
         },
@@ -225,8 +241,9 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
     const aDuration = fmtDuration(runA.durationMs);
     const bDuration = fmtDuration(runB.durationMs);
+    const primaryRun = getFinalAssistantText(runA.messages) ? runA : runB;
     stage1Result = {
-      ...runA,
+      ...primaryRun,
       task,
       usage: combinedUsage,
       stderr: [
@@ -236,7 +253,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       ].filter(Boolean).join("\n"),
       durationMs: Math.max(runA.durationMs ?? 0, runB.durationMs ?? 0),
     };
-    details.stage1 = stage1Result;
+    details.stage1 = runA;
     details.stage1b = runB;
 
     const textA = getFinalAssistantText(runA.messages) || "";
@@ -393,7 +410,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
         signal,
         noTools: true,
         toolMode: "forge",
-        stageTimeoutMs: 180_000,
+        stageTimeoutMs: forgeTimeoutMs,
         sanitizedSessionJsonl: sanitizedSnapshot,
         retries: 1,
         onUpdate,
@@ -450,7 +467,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       signal,
       noTools: !editMode,
       toolMode: editMode ? undefined : "forge",
-      stageTimeoutMs: 180_000,
+      stageTimeoutMs: forgeTimeoutMs,
       sanitizedSessionJsonl: sanitizedSnapshot,
       retries: 1,
       onUpdate,
@@ -726,6 +743,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
   const {
     cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage1bProfile, stage2Profile,
     yoloConfig, reviewProfile, fixProfile, customExplorePrompt, customSynthesizePrompt, customReviewPrompt,
+    scoutTimeoutMs, forgeTimeoutMs,
     extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate,
   } = opts;
 
@@ -770,6 +788,8 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
     customSynthesizePrompt,
     quick: false,
     verify: false,
+    scoutTimeoutMs,
+    forgeTimeoutMs,
     onProgress: (stage, model) => onProgress?.(stage, model),
     onUpdate,
     extensions,
@@ -833,6 +853,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       cwd,
       forkSessionSnapshotJsonl: reviewSnapshot,
       stageProfile: reviewProfile,
+      stageTimeoutMs: forgeTimeoutMs,
       customReviewPrompt,
       onProgress: (_stage, model) => onProgress?.("review", model, round),
       onUpdate,
@@ -920,6 +941,8 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       quick: false,
       verify: false,
       editMode: yoloConfig.autoApply === "auto",
+      scoutTimeoutMs,
+      forgeTimeoutMs,
       onProgress: (stage, model) => onProgress?.(stage === "scout" || stage === "forge" ? stage : "fix", model, round),
       onUpdate,
       extensions,

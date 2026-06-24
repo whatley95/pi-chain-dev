@@ -184,6 +184,57 @@ Rules:
 - "coverage", "qualityScore", "qualityNotes" are required.`;
 }
 
+export function buildResearchPrompt(task: string, customPrompt?: string, cwd?: string): string {
+  const mapContext = cwd ? loadMapContext(cwd) : "";
+  const jsonSchema = `{
+  "summary": "one-sentence summary of the issue and what you found",
+  "findings": [
+    {
+      "file": "optional relative file path",
+      "observation": "concrete observation about the issue",
+      "evidence": "supporting snippet, command output, or value",
+      "confidence": "high|medium|low"
+    }
+  ],
+  "decision": "your recommended decision or next step for the main agent",
+  "deadEnds": ["optional paths that did not pan out"],
+  "assumptions": ["optional assumptions made"],
+  "openQuestions": ["optional questions the main agent must resolve"],
+  "coverage": {
+    "filesInspected": 0,
+    "filesCited": 0,
+    "commandsRun": 0,
+    "unreadLikelyFiles": 0
+  }
+}`;
+
+  const base = `You are in RESEARCH MODE. Investigate the issue thoroughly using available tools (read, bash, ls, grep, find, etc.). Do NOT implement, modify, or write any code. Only report findings and a clear decision/recommendation.
+
+Issue: ${task}${mapContext}
+
+Return your findings as a single JSON object matching this schema (no markdown fences, no extra prose):
+${jsonSchema}
+
+Efficiency rules:
+- Batch reads: use \`bash\`, \`cat\`, \`grep\`, \`find\`, \`ls\`, or globs instead of many individual \`read\` calls.
+- Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
+- Read a file individually only when you need the full content of a specific, named file.
+
+Rules:
+- "summary" is required and must be one sentence.
+- "findings" is required. Each finding must have "observation" and "confidence".
+- "decision" is required. State the recommended next step or resolution clearly.
+- "file" and "evidence" are optional but strongly preferred when applicable.
+- "deadEnds", "assumptions", "openQuestions" are optional.
+- "coverage" is required. Provide honest counts.
+- Do NOT write structured sections like "Result", "Output", "Evidence", or "Learnings" outside the JSON.`;
+
+  if (customPrompt) {
+    return `${customPrompt}\n\n${base}`;
+  }
+  return base;
+}
+
 export function buildReviewPrompt(customPrompt?: string): string {
   if (customPrompt) return customPrompt + STAGE_AUDIT_GUARD;
   return `Review the code changes made in this session. Your job is to find issues the developer may have missed.

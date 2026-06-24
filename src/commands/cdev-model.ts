@@ -13,6 +13,7 @@ export async function registerCdevModelCommand(handler: (args: string, ctx: Exte
       theme: { fg: (_t, text) => text, bg: (_t, text) => text },
       notify: () => {},
       select: async () => undefined,
+      input: async () => undefined,
       setStatus: () => {},
       setWidget: () => {},
     },
@@ -30,6 +31,7 @@ export function createCdevModelHandler(): (args: string, ctx: ExtensionContext) 
     try {
       const config = loadConfig(ctx.cwd);
       const reviewProfile = config.review ?? config.stage2;
+      const researchProfile = config.research ?? config.stage1;
       const stagePick = await ctx.ui.select("Pick model:", [
         `Scout A (explore)  [${config.stage1.provider || "?"}/${config.stage1.id || "?"} • ${config.stage1.thinking || "?"}]`,
         `Scout B (verify)   [${config.stage1b?.provider || config.stage1.provider || "?"}/${config.stage1b?.id || config.stage1.id || "?"} • ${config.stage1b?.thinking || config.stage1.thinking || "?"}]`,
@@ -37,6 +39,7 @@ export function createCdevModelHandler(): (args: string, ctx: ExtensionContext) 
         `Backup (parallel)  [${config.stage1Backup?.provider || config.stage1.provider || "?"}/${config.stage1Backup?.id || config.stage1.id || "?"} • ${config.stage1Backup?.thinking || config.stage1.thinking || "?"}]`,
         `Forge (synthesize)  [${config.stage2.provider || "?"}/${config.stage2.id || "?"} • ${config.stage2.thinking || "?"}]`,
         `Review  [${reviewProfile.provider || "?"}/${reviewProfile.id || "?"} • ${reviewProfile.thinking || config.stage2.thinking || "?"}]`,
+        `Research [${researchProfile.provider || "?"}/${researchProfile.id || "?"} • ${researchProfile.thinking || config.stage1.thinking || "?"}]`,
       ]);
       if (!stagePick) return;
       const stage = stagePick.startsWith("Scout A") ? "stage1"
@@ -44,6 +47,7 @@ export function createCdevModelHandler(): (args: string, ctx: ExtensionContext) 
         : stagePick.startsWith("Scout C") ? "stage1c"
         : stagePick.startsWith("Backup") ? "stage1Backup"
         : stagePick.startsWith("Forge") ? "stage2"
+        : stagePick.startsWith("Research") ? "research"
         : "review";
 
       const allModels = typeof (ctx.modelRegistry as unknown as { getAll?: () => ReturnType<typeof ctx.modelRegistry.getAvailable> }).getAll === "function"

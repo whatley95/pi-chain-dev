@@ -12,6 +12,7 @@ interface RunReviewOptions {
   task: string;
   stageProfile: StageProfile;
   forkSessionJsonl?: string;
+  stageTimeoutMs?: number;
   onProgress?: (stage: "scout" | "forge", model: string) => void;
   onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
   extensions?: string[] | null;
@@ -25,6 +26,7 @@ async function runReviewStage(
   errorContext: string,
 ): Promise<{ result: ForkResult; details: AutoForkDetails }> {
   const { cwd, task, stageProfile, forkSessionJsonl = JSON.stringify({}) + "\n",
+          stageTimeoutMs = 180_000,
           extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate } = opts;
 
   onProgress?.("forge", stageProfile.thinking ? `${stageProfile.provider}:${stageProfile.id} • ${stageProfile.thinking}` : `${stageProfile.provider}:${stageProfile.id}`);
@@ -43,7 +45,7 @@ async function runReviewStage(
       signal,
       noTools: true,
       toolMode: "forge",
-      stageTimeoutMs: 180_000,
+      stageTimeoutMs,
       retries: 1,
       onUpdate,
     });
@@ -59,6 +61,7 @@ export async function runCdevReview(opts: {
   cwd: string;
   forkSessionSnapshotJsonl: string;
   stageProfile: StageProfile;
+  stageTimeoutMs?: number;
   customReviewPrompt?: string;
   onProgress?: (stage: "scout" | "forge", model: string) => void;
   onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
@@ -68,6 +71,7 @@ export async function runCdevReview(opts: {
   signal?: AbortSignal;
 }): Promise<{ result: ForkResult; details: AutoForkDetails }> {
   const { cwd, forkSessionSnapshotJsonl, stageProfile,
+          stageTimeoutMs,
           customReviewPrompt,
           extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate } = opts;
 
@@ -77,6 +81,7 @@ export async function runCdevReview(opts: {
     task: reviewTask,
     stageProfile,
     forkSessionJsonl: forkSessionSnapshotJsonl,
+    stageTimeoutMs,
     onProgress,
     onUpdate,
     extensions,
@@ -91,6 +96,7 @@ export async function runFileReview(opts: {
   filePath: string;
   fileContent: string;
   stageProfile: StageProfile;
+  stageTimeoutMs?: number;
   onProgress?: (stage: "scout" | "forge", model: string) => void;
   onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
   extensions?: string[] | null;
@@ -99,6 +105,7 @@ export async function runFileReview(opts: {
   signal?: AbortSignal;
 }): Promise<{ result: ForkResult; details: AutoForkDetails }> {
   const { cwd, filePath, fileContent, stageProfile,
+          stageTimeoutMs,
           extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate } = opts;
 
   const filePaths = extractFilePaths(fileContent, cwd);
@@ -134,6 +141,7 @@ export async function runFileReview(opts: {
     cwd,
     task: reviewTask,
     stageProfile,
+    stageTimeoutMs,
     onProgress,
     onUpdate,
     extensions,
@@ -148,6 +156,7 @@ export async function runDiffReview(opts: {
   diffSpec: string;
   diffContent: string;
   stageProfile: StageProfile;
+  stageTimeoutMs?: number;
   onProgress?: (stage: "scout" | "forge", model: string) => void;
   onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
   extensions?: string[] | null;
@@ -156,6 +165,7 @@ export async function runDiffReview(opts: {
   signal?: AbortSignal;
 }): Promise<{ result: ForkResult; details: AutoForkDetails }> {
   const { cwd, diffSpec, diffContent, stageProfile,
+          stageTimeoutMs,
           extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate } = opts;
 
   const reviewTask = buildDiffReviewPrompt(diffSpec, diffContent);
@@ -163,6 +173,7 @@ export async function runDiffReview(opts: {
     cwd,
     task: reviewTask,
     stageProfile,
+    stageTimeoutMs,
     onProgress,
     onUpdate,
     extensions,

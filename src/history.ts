@@ -73,6 +73,15 @@ export interface SessionRecord {
     cost: number;
     errorDetails: string;
   } | null;
+  /** Research findings details (research mode). */
+  research?: {
+    model: string;
+    exitCode: number;
+    inputTokens: number;
+    outputTokens: number;
+    cost: number;
+    errorDetails: string;
+  } | null;
   /** Overall status. */
   status: "success" | "failed";
   /** First 200 chars of final output. */
@@ -167,6 +176,18 @@ export function saveSession(
           outputTokens: details.stage2.usage?.output ?? 0,
           cost: details.stage2.usage?.cost ?? 0,
           errorDetails: (details.stage2.errorMessage || details.stage2.stderr || "").slice(0, 200),
+        }
+      : null,
+    research: details.research
+      ? {
+          model: (result.provider && result.model)
+            ? `${result.provider}:${result.model}`
+            : result.model ?? "unknown",
+          exitCode: result.exitCode ?? -1,
+          inputTokens: result.usage?.input ?? 0,
+          outputTokens: result.usage?.output ?? 0,
+          cost: result.usage?.cost ?? 0,
+          errorDetails: (result.errorMessage || result.stderr || "").slice(0, 200),
         }
       : null,
     status: result.exitCode === 0 ? "success" : "failed",
@@ -278,10 +299,16 @@ export function formatHistory(sessions: SessionRecord[]): string {
     const s1Model = s.stage1 ? s.stage1.model.split(":").pop()?.slice(0, 12) ?? "?" : "—";
     const s1bModel = s.stage1b ? s.stage1b.model.split(":").pop()?.slice(0, 12) ?? "" : "";
     const s1cModel = s.stage1c ? s.stage1c.model.split(":").pop()?.slice(0, 12) ?? "" : "";
+    const s1BackupModel = s.stage1Backup ? s.stage1Backup.model.split(":").pop()?.slice(0, 12) ?? "" : "";
     const s2Model = s.stage2 ? s.stage2.model.split(":").pop()?.slice(0, 12) ?? "?" : "—";
-    const scoutParts = [s1Model, s1bModel, s1cModel].filter(Boolean);
+    const researchModel = s.research ? s.research.model.split(":").pop()?.slice(0, 12) ?? "" : "";
+    const scoutParts = [s1Model, s1bModel, s1cModel, s1BackupModel].filter(Boolean);
     const scoutPart = scoutParts.length > 1 ? scoutParts.join("+") : s1Model;
-    const models = s.stage1 && s.stage2 ? `${scoutPart}→${s2Model}` : (s.stage1 || s.stage2 ? scoutPart !== "—" ? scoutPart : s2Model : "?");
+    const models = s.research
+      ? `${researchModel} (research)`
+      : s.stage1 && s.stage2
+        ? `${scoutPart}→${s2Model}`
+        : (s.stage1 || s.stage2 ? (scoutPart !== "—" ? scoutPart : s2Model) : "?");
     const task = s.task.length > 40 ? s.task.slice(0, 40) + "…" : s.task;
 
     lines.push(
@@ -306,10 +333,26 @@ export function formatSessionRecord(s: SessionRecord): string {
     `  Task:       ${s.task}`,
     `  Started:    ${new Date(s.startedAt).toLocaleString()}`,
     `  Duration:   ${(s.durationMs / 1000).toFixed(1)}s`,
-    `  Mode:       ${s.isReview ? "review only" : "full (stage 1 → stage 2)"}`,
+    `  Mode:       ${s.isReview ? "review only" : s.research ? "research" : "full (stage 1 → stage 2)"}`,
     `  Status:     ${s.status === "success" ? "✅ success" : "❌ failed"}`,
     "",
   ];
+
+  if (s.research) {
+    lines.push(`  Research:`);
+    lines.push(`    Model:      ${s.research.model}`);
+    lines.push(`    Exit code:  ${s.research.exitCode}`);
+    if (s.research.inputTokens || s.research.outputTokens) {
+      lines.push(`    Tokens:     ${s.research.inputTokens} in / ${s.research.outputTokens} out`);
+    }
+    if (s.research.cost > 0) {
+      lines.push(`    Cost:       ${formatCost(s.research.cost)}`);
+    }
+    if (s.research.errorDetails) lines.push(`    Error:      ${s.research.errorDetails}`);
+    lines.push("");
+  }
+
+  lines.push("─────────────────────────────────────────────────────");
 
   if (s.stage1) {
     lines.push(`  Stage 1 (explore):`, ``);

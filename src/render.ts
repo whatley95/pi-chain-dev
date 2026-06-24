@@ -197,7 +197,10 @@ export function renderResult(
       lines.push(fg("muted", trunc(textOut.split("\n")[0], MAX_PREVIEW_CHARS - 2)));
     }
     const hasMore = textOut && textOut.split("\n").length > 1;
-    if (hasMore) lines.push(`(${keyHint("expand") || "expand"})`);
+    if (hasMore) {
+      const hint = keyHint("expand");
+      lines.push(`(${hint && hint !== "undefined" && hint.trim() ? hint : "expand"})`);
+    }
   }
 
   return new SimpleText(lines.join("\n")) as unknown as Component;

@@ -110,7 +110,8 @@ export interface ParallelSubTask {
 }
 
 export function splitTaskByMap(task: string, map: ProjectMap | null, parallel: number): ParallelSubTask[] {
-  if (parallel <= 1 || !map) return [{ label: "full", focus: task, scope: [] }];
+  const n = Math.max(1, Math.min(3, Number.isFinite(parallel) ? parallel : 1));
+  if (n <= 1 || !map) return [{ label: "full", focus: task, scope: [] }];
 
   const units: { name: string; path: string; globs: string[] }[] = [];
 
@@ -130,9 +131,9 @@ export function splitTaskByMap(task: string, map: ProjectMap | null, parallel: n
 
   if (units.length === 0) return [{ label: "full", focus: task, scope: [] }];
 
-  const chunks: typeof units[] = Array.from({ length: parallel }, () => []);
+  const chunks: typeof units[] = Array.from({ length: n }, () => []);
   for (let i = 0; i < units.length; i++) {
-    chunks[i % parallel].push(units[i]);
+    chunks[i % n].push(units[i]);
   }
 
   return chunks.map((chunk, idx) => {

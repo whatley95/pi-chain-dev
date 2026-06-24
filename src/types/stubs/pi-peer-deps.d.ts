@@ -49,6 +49,7 @@ declare module "@earendil-works/pi-coding-agent" {
       };
       notify(message: string, level?: "info" | "warn" | "error"): void;
       select(title: string, items: string[]): Promise<string | undefined>;
+      input(prompt: string): Promise<string | undefined>;
       setStatus(key: string, value: string | undefined): void;
       setWidget(key: string, value: unknown): void;
     };

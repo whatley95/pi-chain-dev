@@ -51,7 +51,7 @@ export function registerCdevCommand(
   updateAutoStatus: (ctx: ExtensionContext) => void,
 ): void {
   pi.registerCommand("cdev", {
-    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, verify <task>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off",
+    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, verify <task>, research <issue>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
 
@@ -259,8 +259,20 @@ export function registerCdevCommand(
         return;
       }
 
+      // ── Subcommand: research ──
+      if (trimmed.startsWith("research ")) {
+        const researchTask = trimmed.slice(9).trim();
+        if (!researchTask) {
+          ctx.ui.notify("Usage: /cdev research <issue or question>", "warn");
+          return;
+        }
+        ctx.ui.notify(`Queuing research investigation (agent-driven, no edits)...`, "info");
+        pi.sendUserMessage(`Use cdev with research=true to: ${researchTask}`, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
+
       // ── Subcommand: multi n [no-backup] task ──
-      const multiMatch = trimmed.match(/^multi\s+(\d)(?:\s+(no-backup))?\s+(.+)$/i);
+      const multiMatch = trimmed.match(/^multi\s+(\d{1,2})(?:\s+(no-backup))?\s+(.+)$/i);
       if (multiMatch) {
         const n = parseInt(multiMatch[1], 10);
         const noBackup = Boolean(multiMatch[2]);
@@ -389,7 +401,9 @@ export function registerCdevCommand(
         lines.push(`  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`);
         lines.push(`  Project memory:   ${config.memory ? "ON" : "OFF"}`);
         lines.push(`  Auto-verify:      ${config.autoVerify ? "✓ ON (scout ×2)" : "OFF (scout ×1)"}`);
-        lines.push(`  Multi scouts:     ${config.parallel && config.parallel > 1 ? `${config.parallel} (backup ${config.parallelBackup !== false ? "on" : "off"})` : "OFF"}`);
+        lines.push(`  Multi scouts:     ${config.parallel && config.parallel > 1 ? `${config.parallel} (backup ${config.parallelBackup ? "on" : "off"})` : "OFF"}`);
+        lines.push(`  Scout timeout:    ${((config.scoutTimeoutMs ?? 600_000) / 1000).toFixed(0)}s`);
+        lines.push(`  Forge timeout:    ${((config.forgeTimeoutMs ?? 180_000) / 1000).toFixed(0)}s`);
         const yolo = normalizeYoloConfig(config.yolo);
         lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, ${yolo.autoApply === "auto" ? "auto-edit" : yolo.autoApply === "propose" ? "propose fixes" : "main agent fixes"})` : "OFF"}`);
         const hasMap = !!loadProjectMap(ctx.cwd);
@@ -426,6 +440,9 @@ export function registerCdevCommand(
           "/cdev <task>           Scout + Forge explore",
           "/cdev quick <task>     Scout only (fast)",
           "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
+          "/cdev research <issue> Agent-driven investigation, no edits",
+          "/cdev multi <n> <task>      Split scout into N scouts (requires map)",
+          "/cdev multi <n> no-backup <task>  Multi scouts without backup takeover",
           "/cdev plan <task>      Scout + planner (implementation plan only)",
           "/cdev yolo <task>            Scout + forge, then review loops",
           "/cdev yolo manual|propose|auto  Who applies fixes (auto = cdev edits files)",
@@ -457,6 +474,8 @@ export function registerCdevCommand(
           "Review uncommitted changes",
           "Quick explore",
           "Deep verify",
+          "Research issue",
+          "Multi explore",
           "Plan implementation",
           "Review current session",
           "Review file or diff",
@@ -488,9 +507,33 @@ export function registerCdevCommand(
           ctx.ui.notify("Use /cdev-help for all subcommands, or /cdev-model to pick scout and forge models.", "info");
           return;
         }
+        if (choice === "Multi explore") {
+          const nStr = await ctx.ui.input("Number of parallel scouts (1-3):");
+          const n = nStr ? parseInt(nStr.trim(), 10) : NaN;
+          if (Number.isNaN(n) || n < 1 || n > 3) {
+            ctx.ui.notify("Cancelled or invalid scout count.", "warn");
+            return;
+          }
+          const backupStr = await ctx.ui.select("Use backup scout on failure?", ["Yes", "No"]);
+          const noBackup = backupStr === "No";
+          if (!loadProjectMap(ctx.cwd)) {
+            ctx.ui.notify("Project map missing. Run /cdev map first to enable multi scouting.", "warn");
+            return;
+          }
+          const task = await ctx.ui.input("Task for the parallel scouts:");
+          if (!task || !task.trim()) {
+            ctx.ui.notify("Cancelled — no task provided.", "warn");
+            return;
+          }
+          ctx.ui.notify(`Queuing multi exploration (${n} scout${n > 1 ? "s" : ""}${noBackup ? ", no backup" : ""})...`, "info");
+          pi.sendUserMessage(`Use cdev with parallel=${n}, parallelBackup=${!noBackup} to: ${task.trim()}`, { triggerTurn: true, deliverAs: "steer" });
+          return;
+        }
         const usage: Record<string, string> = {
           "Quick explore": "/cdev quick <task>",
           "Deep verify": "/cdev verify <task>",
+          "Research issue": "/cdev research <issue or question>",
+          "Multi explore": "/cdev multi <1-3> [no-backup] <task>",
           "Plan implementation": "/cdev plan <task>",
           "Review file or diff": "/cdev review <path-or-diff>",
         };
@@ -499,7 +542,7 @@ export function registerCdevCommand(
       }
 
       // ── Fuzzy match ──
-      const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "help", "clear", "yolo", "verify", "plan"];
+      const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "help", "clear", "yolo", "verify", "plan", "multi", "research"];
       const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
       const isSingleWord = !trimmed.includes(" ");
       const fuzzy = subcommands

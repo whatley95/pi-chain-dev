@@ -47,6 +47,11 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   memory: true,
   themed: false,
   autoVerify: false,
+  parallel: 1,
+  parallelBackup: false,
+  maxConcurrentStages: 3,
+  scoutTimeoutMs: 600_000,
+  forgeTimeoutMs: 180_000,
   signature: undefined,
   maxForkCost: 0,
   maxSessionCost: 0,
@@ -124,6 +129,8 @@ export function loadConfig(cwd: string): AutoForkConfig {
     stage1c: projectConfig.stage1c || globalConfig.stage1c,
     stage1Backup: projectConfig.stage1Backup || globalConfig.stage1Backup,
     stage2: projectConfig.stage2 || globalConfig.stage2 || DEFAULT_CONFIG.stage2,
+    review: projectConfig.review || globalConfig.review,
+    research: projectConfig.research || globalConfig.research,
     // Deep-merge prompts so project can override individual keys without losing global
     prompts: {
       ...DEFAULT_CONFIG.prompts,
@@ -147,6 +154,11 @@ export function loadConfig(cwd: string): AutoForkConfig {
     memory: projectConfig.memory ?? globalConfig.memory ?? DEFAULT_CONFIG.memory,
     themed: projectConfig.themed ?? globalConfig.themed ?? DEFAULT_CONFIG.themed,
     autoVerify: projectConfig.autoVerify ?? globalConfig.autoVerify ?? DEFAULT_CONFIG.autoVerify,
+    parallel: projectConfig.parallel ?? globalConfig.parallel ?? DEFAULT_CONFIG.parallel,
+    parallelBackup: projectConfig.parallelBackup ?? globalConfig.parallelBackup ?? DEFAULT_CONFIG.parallelBackup,
+    maxConcurrentStages: projectConfig.maxConcurrentStages ?? globalConfig.maxConcurrentStages ?? DEFAULT_CONFIG.maxConcurrentStages,
+    scoutTimeoutMs: projectConfig.scoutTimeoutMs ?? globalConfig.scoutTimeoutMs ?? DEFAULT_CONFIG.scoutTimeoutMs,
+    forgeTimeoutMs: projectConfig.forgeTimeoutMs ?? globalConfig.forgeTimeoutMs ?? DEFAULT_CONFIG.forgeTimeoutMs,
     signature: projectConfig.signature ?? globalConfig.signature,
   };
 
@@ -199,6 +211,9 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (stage1Backup) parsed.stage1Backup = stage1Backup;
     if (stage2) parsed.stage2 = stage2;
     if (review) parsed.review = review;
+
+  const research = parseStageProfile(config.research);
+  if (research) parsed.research = research;
     if (typeof config.offline === "boolean") parsed.offline = config.offline;
     if (typeof config.costFooter === "boolean") parsed.costFooter = config.costFooter;
     if (typeof config.auto === "boolean") parsed.auto = config.auto;
@@ -209,6 +224,9 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (typeof config.signature === "string") parsed.signature = config.signature;
     if (typeof config.parallel === "number") parsed.parallel = Math.max(1, Math.min(3, Number.isFinite(config.parallel) ? config.parallel : 1));
     if (typeof config.parallelBackup === "boolean") parsed.parallelBackup = config.parallelBackup;
+    if (typeof config.maxConcurrentStages === "number") parsed.maxConcurrentStages = Math.max(1, Math.min(10, Number.isFinite(config.maxConcurrentStages) ? config.maxConcurrentStages : 3));
+    if (typeof config.scoutTimeoutMs === "number") parsed.scoutTimeoutMs = Math.max(30_000, Math.min(3_600_000, Number.isFinite(config.scoutTimeoutMs) ? config.scoutTimeoutMs : 600_000));
+    if (typeof config.forgeTimeoutMs === "number") parsed.forgeTimeoutMs = Math.max(30_000, Math.min(3_600_000, Number.isFinite(config.forgeTimeoutMs) ? config.forgeTimeoutMs : 180_000));
     if (typeof config.maxForkCost === "number") parsed.maxForkCost = Math.max(0, Number.isFinite(config.maxForkCost) ? config.maxForkCost : 0);
     if (typeof config.maxSessionCost === "number") parsed.maxSessionCost = Math.max(0, Number.isFinite(config.maxSessionCost) ? config.maxSessionCost : 0);
 
@@ -243,11 +261,11 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (config.prompts && typeof config.prompts === "object") {
       const prompts = config.prompts as Record<string, unknown>;
       const parsedPrompts: Record<string, string> = {};
-      for (const key of ["explore", "synthesize", "plan", "review"]) {
-        if (typeof prompts[key] === "string" && (prompts[key] as string).trim()) {
-          parsedPrompts[key] = (prompts[key] as string).trim();
-        }
+    for (const key of ["explore", "synthesize", "plan", "review", "research"]) {
+      if (typeof prompts[key] === "string" && (prompts[key] as string).trim()) {
+        parsedPrompts[key] = (prompts[key] as string).trim();
       }
+    }
       if (Object.keys(parsedPrompts).length > 0) {
         parsed.prompts = parsedPrompts as PromptsConfig;
       }

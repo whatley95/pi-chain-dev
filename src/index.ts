@@ -97,6 +97,7 @@ export default function (pi: ExtensionAPI) {
       "Use /cdev scan for quick template-based stack detection, or /cdev scan deep for LLM-powered custom prompts.",
       "Use cdev with quick:true for follow-up file tracing, grep-style lookups, or when raw findings suffice.",
       "Use cdev with verify:true for high-stakes exploration where accuracy matters more than speed or cost. verify runs scout twice and merges findings before forge.",
+      "Use cdev with research:true to delegate issue investigation to a selected model. The model reports findings and a decision, but never edits code. The main agent owns any changes.",
       "Prefer cdev over bash/grep when you need to understand file relationships, not just find text matches.",
       "Tell cdev to surface ambiguities back to you — don't resolve them in the fork.",
       "cdev stages do not modify code unless yolo autoApply is set to 'auto'.",
@@ -144,6 +145,10 @@ export default function (pi: ExtensionAPI) {
         description:
           "If true, run scout plus a planner-style forge response that returns an implementation plan only. Use before editing when you want risks, files, steps, and verification commands.",
       })),
+      research: Type.Optional(Type.Boolean({
+        description:
+          "If true, run research-only mode: a selected model investigates the issue, reports findings and a decision, but never edits code. Use for issue triage, root-cause analysis, or when you want the main agent to own any changes.",
+      })),
       yolo: Type.Optional(Type.Boolean({
         description:
           "If true, run scout+forge once, then automatically run review loops up to the configured maxRounds. Stops early when review passes. Configure with /cdev yolo on|off and /cdev yolo manual|propose|auto. Default is manual: the main agent applies fixes between reviews.",
@@ -175,6 +180,7 @@ export default function (pi: ExtensionAPI) {
         "/cdev <task>           Scout + Forge explore",
         "/cdev quick <task>     Scout only (fast)",
         "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
+        "/cdev research <issue> Agent-driven investigation, no edits",
         "/cdev multi <n> <task>      Split scout into N scouts (requires map)",
         "/cdev multi <n> no-backup <task>  Multi scouts without backup takeover",
         "/cdev plan <task>      Scout + planner (implementation plan only)",

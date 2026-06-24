@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { join, isAbsolute } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config.js";
-import { runAutoFork, runCdevReview, runFileReview, runDiffReview, runYoloLoop } from "./runner.js";
+import { runAutoFork, runCdevReview, runFileReview, runDiffReview, runYoloLoop, runCdevResearch } from "./runner.js";
+import { setStageSemaphoreMaxConcurrency } from "./fork-stage.js";
 import { computeReportDiff, formatReportDiff, parsePlanReport, parseStage2Report } from "./json-extract.js";
 import { writeReportFile } from "./report.js";
 import { isPathUnderCwd } from "./path-guards.js";
@@ -33,6 +34,7 @@ export interface AutoForkParamsType {
   verify?: boolean;
   plan?: boolean;
   yolo?: boolean;
+  research?: boolean;
   parallel?: number;
   parallelBackup?: boolean;
   recall?: string;
@@ -82,7 +84,7 @@ function validateAutoForkParams(params: Record<string, unknown>): { valid: true;
     if (typeof params.task !== "string") errors.push("task must be a string");
     else out.task = params.task;
   }
-  for (const key of ["review", "quick", "verify", "plan", "yolo"] as const) {
+  for (const key of ["review", "quick", "verify", "plan", "yolo", "research"] as const) {
     if (params[key] !== undefined) {
       if (typeof params[key] !== "boolean") errors.push(`${key} must be a boolean`);
       else out[key] = params[key];
@@ -115,6 +117,7 @@ export async function executeCdevTool(
   const p = validation.value;
   try {
     const config = loadConfig(ctx.cwd);
+    setStageSemaphoreMaxConcurrency(config.maxConcurrentStages ?? 3);
     const themedBg = makeThemedBg(ctx, config.themed);
 
     // ── Recall mode ──
@@ -208,6 +211,7 @@ export async function executeCdevTool(
           filePath: p.reviewFile,
           fileContent,
           stageProfile: reviewProfile,
+          stageTimeoutMs: config.forgeTimeoutMs,
           onProgress,
           onUpdate: (update) => {
             ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing ${p.reviewFile}…  ${update.activity ?? ""}`)]);
@@ -337,6 +341,7 @@ export async function executeCdevTool(
           diffSpec,
           diffContent,
           stageProfile: reviewProfile,
+          stageTimeoutMs: config.forgeTimeoutMs,
           onProgress,
           onUpdate: (update) => {
             ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing diff ${diffSpec}…  ${update.activity ?? ""}`)]);
@@ -414,6 +419,7 @@ export async function executeCdevTool(
         cwd: ctx.cwd,
         forkSessionSnapshotJsonl: snapshot,
         stageProfile: reviewProfile,
+        stageTimeoutMs: config.forgeTimeoutMs,
         customReviewPrompt: config.promptsEnabled ? config.prompts?.review : undefined,
         onProgress,
         onUpdate: (update) => {
@@ -502,6 +508,105 @@ export async function executeCdevTool(
     const quick = p.quick ?? false;
     const verify = p.verify ?? (config.autoVerify && !p.quick);
 
+    // ── Research mode ──
+    if (p.research) {
+      if (!p.task) {
+        return {
+          content: [{ type: "text" as const, text: "cdev error: task is required for research mode." }],
+          details: { stage1: null, stage2: null },
+          isError: true,
+        };
+      }
+      const researchProfile = config.research ?? profiles.stage1;
+      if (!researchProfile.provider || !researchProfile.id) {
+        return {
+          content: [{ type: "text" as const, text: "cdev research error: Research model not configured. Use /cdev-model." }],
+          details: { stage1: null, stage2: null },
+          isError: true,
+        };
+      }
+
+      const estimate = estimateForkCost({
+        task: withAuditGuard(p.task),
+        stage1Profile: researchProfile,
+        stage2Profile: researchProfile,
+        quick: true,
+        forkSessionSnapshotJsonl: snapshot ?? undefined,
+      });
+      const budgetCheck = checkCostBudget(config, ctx.cwd, estimate.cost);
+      if (!budgetCheck.allowed) {
+        return {
+          content: [{ type: "text" as const, text: `cdev budget error: ${budgetCheck.reason}\nEstimated: ~${formatCost(estimate.cost)} (${estimate.inputTokens} input / ${estimate.outputTokens} output tokens)` }],
+          details: { stage1: null, stage2: null },
+          isError: true,
+        };
+      }
+
+      const onProgress = (stage: string, model: string) => {
+        if (stage === "research") {
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔬 Researching…  (${model})`)]);
+        }
+      };
+      onProgress("research", researchProfile.thinking ? `${researchProfile.provider}:${researchProfile.id} • ${researchProfile.thinking}` : `${researchProfile.provider}:${researchProfile.id}`);
+      const startTime = Date.now();
+      const { result, details } = await runCdevResearch({
+        cwd: ctx.cwd,
+        task: withAuditGuard(p.task),
+        forkSessionSnapshotJsonl: snapshot,
+        stageProfile: researchProfile,
+        stageTimeoutMs: config.scoutTimeoutMs,
+        customPrompt: config.promptsEnabled ? config.prompts?.research : undefined,
+        onProgress,
+        onUpdate: (update) => {
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔬 Researching…  ${update.activity ?? ""}`)]);
+        },
+        extensions: config.extensions,
+        environment: config.environment,
+        offline: config.offline,
+        signal,
+      });
+      ctx.ui.setWidget("cdev-progress", undefined);
+
+      const current = saveSession(ctx.cwd, p.task, false, startTime, details, result);
+
+      if (result.errorMessage) logError(ctx.cwd, "research", new Error(result.errorMessage));
+      const researchCost = result.usage?.cost ?? 0;
+      recordForkCost(ctx.cwd, researchCost);
+      maybeNotifyCostAlert(ctx, config);
+      maybeWarnSessionSize(ctx);
+      if (config.memory) {
+        indexFindingsAsync({
+          task: p.task,
+          resultText: getFinalAssistantText(result.messages) || "",
+          stage1Model: researchProfile.id,
+          isReview: false,
+          quick: false,
+          cost: researchCost,
+          cwd: ctx.cwd,
+        });
+      }
+
+      const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);
+      let resultText = formatForkResultOutput(result, details);
+
+      const previous = findPreviousSession(ctx.cwd, p.task);
+      if (previous?.resultText && previous.id !== current.id) {
+        const diff = computeReportDiff(previous.resultText, getFinalAssistantText(result.messages) || "");
+        if (diff.added.length > 0 || diff.removed.length > 0) {
+          resultText += "\n\n---\n📊 Changes vs previous research\n\n" + formatReportDiff(diff);
+        }
+      }
+
+      return {
+        content: [{ type: "text" as const, text: resultText }],
+        details: withUiDetails(details, buildReportUiDetails(getFinalAssistantText(result.messages), {
+          mode: "research",
+          task: p.task,
+        })),
+        isError,
+      };
+    }
+
     // ── YOLO review-fix loop mode ──
     if (p.yolo) {
       if (!p.task) {
@@ -565,6 +670,8 @@ export async function executeCdevTool(
         customExplorePrompt: config.promptsEnabled ? config.prompts?.explore : undefined,
         customSynthesizePrompt: config.promptsEnabled ? config.prompts?.synthesize : undefined,
         customReviewPrompt: config.promptsEnabled ? config.prompts?.review : undefined,
+        scoutTimeoutMs: config.scoutTimeoutMs,
+        forgeTimeoutMs: config.forgeTimeoutMs,
         onProgress: onYoloProgress,
         onUpdate: (update) => {
           ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", update.activity ?? "working…")]);
@@ -629,7 +736,7 @@ export async function executeCdevTool(
 
     const isPlan = p.plan === true;
     const parallel = Math.max(1, Math.min(3, Number.isFinite(p.parallel) ? (p.parallel as number) : (config.parallel ?? 1)));
-    const parallelBackup = typeof p.parallelBackup === "boolean" ? p.parallelBackup : (config.parallelBackup ?? true);
+    const parallelBackup = typeof p.parallelBackup === "boolean" ? p.parallelBackup : (config.parallelBackup ?? false);
     const useParallel = parallel > 1 && !quick && !verify;
 
     const onProgress = (stage: string, model: string) => {
@@ -660,6 +767,8 @@ export async function executeCdevTool(
       plan: isPlan,
       parallel,
       parallelBackup,
+      scoutTimeoutMs: config.scoutTimeoutMs,
+      forgeTimeoutMs: config.forgeTimeoutMs,
       confidenceGates: config.confidenceGates,
       onProgress,
       onUpdate: (update) => {
@@ -737,7 +846,7 @@ export async function executeCdevTool(
     return {
       content: [{ type: "text" as const, text: resultText + reportNote }],
       details: withUiDetails(details, buildReportUiDetails(getFinalAssistantText(result.messages), {
-        mode: isPlan ? "plan" : quick ? "quick" : verify ? "verify" : "fork",
+        mode: isPlan ? "plan" : quick ? "quick" : verify ? "verify" : useParallel ? "parallel" : "fork",
         task: p.task,
         reportPath: reportRelPath || undefined,
       })),
