@@ -16,6 +16,7 @@ import {
   withAuditGuard,
   makeThemedBg,
   buildSessionSnapshotJsonl,
+  estimateTokens,
   resolveStageProfiles,
   logError,
   checkCostBudget,
@@ -41,6 +42,45 @@ export interface AutoForkParamsType {
   reviewFile?: string;
   diffSpec?: string;
 }
+
+interface SnapshotOk {
+  snapshot: string;
+  snapshotTokens: number;
+}
+interface CompactTrigger {
+  autoCompact: { tokens: number; limit: number };
+}
+
+type SnapshotResult = SnapshotOk | CompactTrigger | null;
+
+function checkSessionSnapshot(
+  ctx: ExtensionContext,
+  config: Awaited<ReturnType<typeof loadConfig>>,
+): SnapshotResult {
+  const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, config.modelContextLimit);
+  if (!snapshot) return null;
+  const snapshotTokens = estimateTokens(snapshot);
+  const limit = config.modelContextLimit ?? 262_144;
+  if (snapshotTokens > limit * 0.95) {
+    if (config.autoCompactOnLimit) {
+      ctx.ui.notify(`Session snapshot is ~${snapshotTokens.toLocaleString()} tokens — auto-compacting parent session. Retry after /compact completes.`, "warn");
+      return { autoCompact: { tokens: snapshotTokens, limit } };
+    }
+    ctx.ui.notify(`Session snapshot is ~${snapshotTokens.toLocaleString()} tokens. Consider running /compact to avoid model limit errors.`, "warn");
+  }
+  return { snapshot, snapshotTokens };
+}
+
+function isCompactTrigger(result: SnapshotResult): result is CompactTrigger {
+  return result !== null && "autoCompact" in result;
+}
+
+function formatCompactMessage(result: CompactTrigger): string {
+  const { tokens, limit } = result.autoCompact;
+  return `cdev: Session snapshot is ~${tokens.toLocaleString()} tokens, nearing the model context limit (${limit.toLocaleString()}). Auto-compacting parent session; retry this task after /compact completes.`;
+}
+
+export type { SnapshotOk, CompactTrigger };
 
 function buildReportUiDetails(text: string | undefined, base: AutoForkUiDetails): AutoForkUiDetails {
   if (!text) return base;
@@ -400,14 +440,21 @@ export async function executeCdevTool(
       }
 
       // Session review
-      const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager);
-      if (!snapshot) {
+      const snapshotResult = checkSessionSnapshot(ctx, config);
+      if (snapshotResult === null) {
         return {
           content: [{ type: "text" as const, text: "cdev review error: Cannot snapshot session." }],
           details: { stage1: null, stage2: null },
           isError: true,
         };
       }
+      if (isCompactTrigger(snapshotResult)) {
+        return {
+          content: [{ type: "text" as const, text: formatCompactMessage(snapshotResult) }],
+          details: { stage1: null, stage2: null, autoCompact: snapshotResult.autoCompact },
+        };
+      }
+      const { snapshot } = snapshotResult;
       const onProgress = (stage: string, model: string) => {
         const icon = stage === "scout" ? "🔍" : "⚒️";
         const label = stage === "scout" ? "Scout" : "Forge";
@@ -492,8 +539,8 @@ export async function executeCdevTool(
       };
     }
 
-    const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager);
-    if (!snapshot) {
+    const snapshotResult = checkSessionSnapshot(ctx, config);
+    if (snapshotResult === null) {
       const result = emptyFailedResult(
         p.task,
         "Cannot cdev: failed to snapshot current session context.",
@@ -504,6 +551,13 @@ export async function executeCdevTool(
         isError: true,
       };
     }
+    if (isCompactTrigger(snapshotResult)) {
+      return {
+        content: [{ type: "text" as const, text: formatCompactMessage(snapshotResult) }],
+        details: { stage1: null, stage2: null, autoCompact: snapshotResult.autoCompact },
+      };
+    }
+    const { snapshot } = snapshotResult;
 
     const quick = p.quick ?? false;
     const verify = p.verify ?? (config.autoVerify && !p.quick);

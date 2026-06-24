@@ -47,7 +47,7 @@ export async function handleScan(args: string, ctx: ExtensionContext, config: Au
     }
     ctx.ui.notify("Deep scanning project (stage 1 → stage 2)...", "info");
     try {
-      const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager);
+      const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, config.modelContextLimit);
       if (!snapshot) { ctx.ui.notify("Cannot snapshot session.", "error"); return true; }
 
       const scanTask = withAuditGuard(DEEP_SCAN_TASK);

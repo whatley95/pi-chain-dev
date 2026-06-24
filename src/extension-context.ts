@@ -282,19 +282,69 @@ export interface SessionSnapshotSource {
   getBranch: () => unknown[];
 }
 
-export function buildSessionSnapshotJsonl(sessionManager: SessionSnapshotSource): string | null {
+const AVG_CHARS_PER_TOKEN = 4;
+const DEFAULT_CONTEXT_LIMIT = 262_144;
+const SNAPSHOT_RESERVE_TOKENS = 8_000;
+
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / AVG_CHARS_PER_TOKEN);
+}
+
+export function buildSessionSnapshotJsonl(sessionManager: SessionSnapshotSource, maxTokens?: number): string | null {
   try {
     const header = sessionManager.getHeader();
     if (!header || typeof header !== "object") return null;
     const branchEntries = sessionManager.getBranch();
     if (!Array.isArray(branchEntries)) return null;
-    const lines: string[] = [];
-    lines.push(JSON.stringify(header));
+
+    const headerLine = JSON.stringify(header);
+    const lines: string[] = [headerLine];
     for (const entry of branchEntries) lines.push(JSON.stringify(entry));
-    return `${lines.join("\n")}\n`;
+
+    const fullJsonl = `${lines.join("\n")}\n`;
+    const limit = (maxTokens ?? DEFAULT_CONTEXT_LIMIT) - SNAPSHOT_RESERVE_TOKENS;
+    if (limit <= 0) return fullJsonl;
+
+    const truncated = truncateSessionJsonl(fullJsonl, limit);
+    return truncated.jsonl;
   } catch {
     return null;
   }
+}
+
+export function truncateSessionJsonl(sessionJsonl: string, maxTokens: number): { jsonl: string; dropped: number } {
+  if (!sessionJsonl || !sessionJsonl.trim()) return { jsonl: sessionJsonl, dropped: 0 };
+
+  const maxChars = maxTokens * AVG_CHARS_PER_TOKEN;
+  if (sessionJsonl.length <= maxChars) return { jsonl: sessionJsonl, dropped: 0 };
+
+  const rawLines = sessionJsonl.trim().split("\n");
+  if (rawLines.length <= 2) return { jsonl: sessionJsonl, dropped: 0 };
+
+  // Always keep the header (first line) and the most recent tail.
+  const headerLine = rawLines[0];
+  const bodyLines = rawLines.slice(1);
+  const headerLen = headerLine.length + 1;
+  const availableChars = Math.max(0, maxChars - headerLen - 200);
+
+  const keptTail: string[] = [];
+  let usedChars = 0;
+  for (let i = bodyLines.length - 1; i >= 0; i--) {
+    const line = bodyLines[i];
+    if (usedChars + line.length + 1 > availableChars) break;
+    keptTail.unshift(line);
+    usedChars += line.length + 1;
+  }
+
+  const dropped = bodyLines.length - keptTail.length;
+  const note = dropped > 0
+    ? JSON.stringify({ type: "message", role: "system", name: "cdev-context-truncation", content: [{ type: "text", text: `[cdev] Session context truncated: ${dropped} older message(s) omitted to fit model context window.` }] })
+    : null;
+
+  const outLines: string[] = [headerLine];
+  if (note) outLines.push(note);
+  outLines.push(...keptTail);
+  return { jsonl: outLines.join("\n") + "\n", dropped };
 }
 
 /** Estimate the number of messages in the current Pi session. Read-only. */

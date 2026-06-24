@@ -52,6 +52,8 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   maxConcurrentStages: 3,
   scoutTimeoutMs: 600_000,
   forgeTimeoutMs: 180_000,
+  modelContextLimit: 262_144,
+  autoCompactOnLimit: true,
   signature: undefined,
   maxForkCost: 0,
   maxSessionCost: 0,
@@ -159,6 +161,8 @@ export function loadConfig(cwd: string): AutoForkConfig {
     maxConcurrentStages: projectConfig.maxConcurrentStages ?? globalConfig.maxConcurrentStages ?? DEFAULT_CONFIG.maxConcurrentStages,
     scoutTimeoutMs: projectConfig.scoutTimeoutMs ?? globalConfig.scoutTimeoutMs ?? DEFAULT_CONFIG.scoutTimeoutMs,
     forgeTimeoutMs: projectConfig.forgeTimeoutMs ?? globalConfig.forgeTimeoutMs ?? DEFAULT_CONFIG.forgeTimeoutMs,
+    modelContextLimit: projectConfig.modelContextLimit ?? globalConfig.modelContextLimit ?? DEFAULT_CONFIG.modelContextLimit,
+    autoCompactOnLimit: projectConfig.autoCompactOnLimit ?? globalConfig.autoCompactOnLimit ?? DEFAULT_CONFIG.autoCompactOnLimit,
     signature: projectConfig.signature ?? globalConfig.signature,
   };
 
@@ -227,6 +231,8 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (typeof config.maxConcurrentStages === "number") parsed.maxConcurrentStages = Math.max(1, Math.min(10, Number.isFinite(config.maxConcurrentStages) ? config.maxConcurrentStages : 3));
     if (typeof config.scoutTimeoutMs === "number") parsed.scoutTimeoutMs = Math.max(30_000, Math.min(3_600_000, Number.isFinite(config.scoutTimeoutMs) ? config.scoutTimeoutMs : 600_000));
     if (typeof config.forgeTimeoutMs === "number") parsed.forgeTimeoutMs = Math.max(30_000, Math.min(3_600_000, Number.isFinite(config.forgeTimeoutMs) ? config.forgeTimeoutMs : 180_000));
+    if (typeof config.modelContextLimit === "number") parsed.modelContextLimit = Math.max(8_192, Math.min(2_000_000, Number.isFinite(config.modelContextLimit) ? config.modelContextLimit : 262_144));
+    if (typeof config.autoCompactOnLimit === "boolean") parsed.autoCompactOnLimit = config.autoCompactOnLimit;
     if (typeof config.maxForkCost === "number") parsed.maxForkCost = Math.max(0, Number.isFinite(config.maxForkCost) ? config.maxForkCost : 0);
     if (typeof config.maxSessionCost === "number") parsed.maxSessionCost = Math.max(0, Number.isFinite(config.maxSessionCost) ? config.maxSessionCost : 0);
 

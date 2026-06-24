@@ -85,6 +85,10 @@ export interface AutoForkConfig {
   scoutTimeoutMs?: number;
   /** Forge/plan/review stage timeout in milliseconds. Default 180000 (3 minutes). */
   forgeTimeoutMs?: number;
+  /** Model context-window limit in tokens. Default 262144. */
+  modelContextLimit?: number;
+  /** If true, automatically steer /compact when session snapshot exceeds model limit. Default false. */
+  autoCompactOnLimit?: boolean;
   /** Custom signature shown in /cdev status (e.g. name, handle). */
   signature?: string;
   /** Maximum cost (USD) for a single fork. 0 = unlimited. */
@@ -225,6 +229,8 @@ export interface AutoForkDetails {
   stage2: ForkResult | null;
   /** Research output expected from /cdev research. */
   research?: Stage1Findings | null;
+  /** Set when autoCompactOnLimit triggered and the tool refused to run. */
+  autoCompact?: { tokens: number; limit: number } | null;
   ui?: AutoForkUiDetails;
 }
 

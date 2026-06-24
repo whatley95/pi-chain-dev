@@ -81,6 +81,14 @@ export function registerCdevCommand(
         return;
       }
 
+      // ── Subcommand: auto-compact on/off ──
+      if (trimmed === "auto-compact on" || trimmed === "auto-compact off") {
+        const enable = trimmed === "auto-compact on";
+        writeAgentSetting("autoCompactOnLimit", enable);
+        ctx.ui.notify(`cdev auto-compact ${enable ? "ON" : "OFF"} — ${enable ? "will steer /compact when session snapshot nears model limit" : "will only warn near model limit"}`, "info");
+        return;
+      }
+
       const config = loadConfig(ctx.cwd);
 
       // ── Subcommands: scan, scan deep ──
@@ -404,6 +412,7 @@ export function registerCdevCommand(
         lines.push(`  Multi scouts:     ${config.parallel && config.parallel > 1 ? `${config.parallel} (backup ${config.parallelBackup ? "on" : "off"})` : "OFF"}`);
         lines.push(`  Scout timeout:    ${((config.scoutTimeoutMs ?? 600_000) / 1000).toFixed(0)}s`);
         lines.push(`  Forge timeout:    ${((config.forgeTimeoutMs ?? 180_000) / 1000).toFixed(0)}s`);
+        lines.push(`  Context limit:    ${(config.modelContextLimit ?? 262_144).toLocaleString()} tokens  (auto-compact ${config.autoCompactOnLimit ? "ON" : "OFF"})`);
         const yolo = normalizeYoloConfig(config.yolo);
         lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, ${yolo.autoApply === "auto" ? "auto-edit" : yolo.autoApply === "propose" ? "propose fixes" : "main agent fixes"})` : "OFF"}`);
         const hasMap = !!loadProjectMap(ctx.cwd);
@@ -462,6 +471,7 @@ export function registerCdevCommand(
           "/cdev themed on|off    Toggle themed TUI",
           "/cdev auto on|off      Toggle auto-trigger",
           "/cdev auto-verify on/off  Toggle automatic scout ×2",
+        "/cdev auto-compact on/off Toggle auto /compact near model limit",
           "/cdev yolo on|off              Toggle YOLO review loops",
           "/cdev yolo manual|propose|auto  Who applies fixes (auto = cdev edits files)",
         ]);
@@ -542,7 +552,7 @@ export function registerCdevCommand(
       }
 
       // ── Fuzzy match ──
-      const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "help", "clear", "yolo", "verify", "plan", "multi", "research"];
+      const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "auto-compact", "help", "clear", "yolo", "verify", "plan", "multi", "research"];
       const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
       const isSingleWord = !trimmed.includes(" ");
       const fuzzy = subcommands

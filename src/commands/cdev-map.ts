@@ -284,7 +284,7 @@ export async function handleMap(args: string, ctx: ExtensionContext, config: Aut
     ctx.ui.notify(isRefresh ? "Refreshing project map via scout+forge..." : "Generating project map via scout+forge...", "info");
 
     try {
-      const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager);
+      const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, config.modelContextLimit);
       if (!snapshot) {
         ctx.ui.notify("Cannot snapshot session.", "error");
         return true;

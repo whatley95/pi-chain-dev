@@ -103,7 +103,7 @@ export async function handleMemory(args: string, ctx: ExtensionContext, config: 
 
     ctx.ui.notify(`Refreshing memory topic "${topic}" (stage 1 → stage 2)...`, "info");
     try {
-      const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager);
+      const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, config.modelContextLimit);
       if (!snapshot) { ctx.ui.notify("Cannot snapshot session.", "error"); return true; }
 
       const filesList = entry.files.slice(0, 15).join(", ");

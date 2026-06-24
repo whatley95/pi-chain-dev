@@ -420,7 +420,13 @@ ${stage1Output}
 function loadMapContext(cwd: string): string {
   try {
     const map = loadProjectMap(cwd);
-    if (map) return `\n\n${summarizeMapForPrompt(map)}`;
+    if (map) {
+      const summary = summarizeMapForPrompt(map);
+      const maxChars = 12_000;
+      return summary.length > maxChars
+        ? `\n\n${summary.slice(0, maxChars)}\n... (project map truncated)`
+        : `\n\n${summary}`;
+    }
   } catch { /* ignore */ }
   return "";
 }
