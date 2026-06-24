@@ -19,6 +19,7 @@ import {
   summarizeMapForPrompt,
   getMapPath,
 } from "../project-map.js";
+import type { MapDir, MapModule, MapBoundary } from "../project-map.js";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 const MAP_GENERATION_TASK = `You are generating a structured project map for this codebase.
@@ -54,6 +55,20 @@ structure:
   testRoots: ["test"]
   configFiles: ["pubspec.yaml"]
   importantFiles: []
+  generatedDirs: [".dart_tool", "build"]
+  dirs:
+    - path: "lib"
+      depth: 0
+      fileCount: 0
+      dirCount: 0
+  modules: []
+  boundaries:
+    - name: "presentation"
+      globs: ["lib/**/widgets/", "lib/**/screens/"]
+      type: "layer"
+  nestingDepth: 0
+  fileCountsByExtension:
+    ".dart": 0
 conventions:
   folderStructure: "describe folder conventions"
   naming: "describe naming conventions"
@@ -118,6 +133,65 @@ function mergeMaps(base: ReturnType<typeof generateProjectMap>, generated: unkno
     return result;
   }
 
+  function mapDir(value: unknown): MapDir[] {
+    if (!Array.isArray(value)) return [];
+    const result: MapDir[] = [];
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+      const obj = item as Record<string, unknown>;
+      if (typeof obj.path !== "string") continue;
+      result.push({
+        path: obj.path,
+        depth: typeof obj.depth === "number" ? obj.depth : 0,
+        fileCount: typeof obj.fileCount === "number" ? obj.fileCount : 0,
+        dirCount: typeof obj.dirCount === "number" ? obj.dirCount : 0,
+      });
+    }
+    return result;
+  }
+
+  function mapModule(value: unknown): MapModule[] {
+    if (!Array.isArray(value)) return [];
+    const result: MapModule[] = [];
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+      const obj = item as Record<string, unknown>;
+      if (typeof obj.name !== "string" || typeof obj.path !== "string") continue;
+      result.push({
+        name: obj.name,
+        path: obj.path,
+        layer: typeof obj.layer === "string" ? obj.layer : undefined,
+      });
+    }
+    return result;
+  }
+
+  function mapBoundary(value: unknown): MapBoundary[] {
+    if (!Array.isArray(value)) return [];
+    const result: MapBoundary[] = [];
+    for (const item of value) {
+      if (!item || typeof item !== "object") continue;
+      const obj = item as Record<string, unknown>;
+      if (typeof obj.name !== "string" || !Array.isArray(obj.globs)) continue;
+      const type = obj.type === "layer" || obj.type === "feature" || obj.type === "domain" ? obj.type : "layer";
+      result.push({ name: obj.name, globs: obj.globs.filter((g): g is string => typeof g === "string"), type });
+    }
+    return result;
+  }
+
+  function fileCounts(value: unknown): Record<string, number> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const result: Record<string, number> = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (typeof v === "number") result[k] = v;
+    }
+    return result;
+  }
+
+  function num(value: unknown, fallback: number): number {
+    return typeof value === "number" ? value : fallback;
+  }
+
   const gProject = pick(g, "project") as Record<string, unknown> | undefined;
   const gStack = pick(g, "stack") as Record<string, unknown> | undefined;
   const gStructure = pick(g, "structure") as Record<string, unknown> | undefined;
@@ -166,6 +240,14 @@ function mergeMaps(base: ReturnType<typeof generateProjectMap>, generated: unkno
       testRoots: arr(gStructure?.testRoots, base.structure.testRoots),
       configFiles: arr(gStructure?.configFiles, base.structure.configFiles),
       importantFiles: arr(gStructure?.importantFiles, base.structure.importantFiles),
+      generatedDirs: arr(gStructure?.generatedDirs, base.structure.generatedDirs),
+      dirs: mapDir(gStructure?.dirs).length ? mapDir(gStructure?.dirs) : base.structure.dirs,
+      modules: mapModule(gStructure?.modules).length ? mapModule(gStructure?.modules) : base.structure.modules,
+      boundaries: mapBoundary(gStructure?.boundaries).length ? mapBoundary(gStructure?.boundaries) : base.structure.boundaries,
+      nestingDepth: num(gStructure?.nestingDepth, base.structure.nestingDepth),
+      fileCountsByExtension: Object.keys(fileCounts(gStructure?.fileCountsByExtension)).length
+        ? { ...base.structure.fileCountsByExtension, ...fileCounts(gStructure?.fileCountsByExtension) }
+        : base.structure.fileCountsByExtension,
     },
     conventions: mergedConventions,
     config: {

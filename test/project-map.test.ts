@@ -24,7 +24,10 @@ describe("project-map", () => {
     const cwd = makeTempDir("cdev-flutter-");
     writeFileSync(join(cwd, "pubspec.yaml"), "name: flutter_app\ndependencies:\n  flutter:\n    sdk: flutter\n", "utf-8");
     mkdirSync(join(cwd, "lib"));
+    mkdirSync(join(cwd, "lib", "features"));
+    mkdirSync(join(cwd, "lib", "features", "auth"));
     writeFileSync(join(cwd, "lib", "main.dart"), "void main() {}\n", "utf-8");
+    writeFileSync(join(cwd, "lib", "features", "auth", "auth.dart"), "class Auth {}\n", "utf-8");
 
     const map = generateProjectMap(cwd);
     assert.strictEqual(map.project.type, "flutter-mobile");
@@ -33,6 +36,8 @@ describe("project-map", () => {
     assert.ok(map.project.entryPoints.includes("lib/main.dart"));
     assert.ok(map.structure.sourceRoots.includes("lib"));
     assert.ok(map.config.runCommands.includes("flutter run"));
+    assert.ok(map.structure.dirs.some((d) => d.path === "lib/features"));
+    assert.ok(map.structure.boundaries.some((b) => b.name === "features"));
   });
 
   it("detects a Spring Boot project", () => {
@@ -43,7 +48,9 @@ describe("project-map", () => {
       "utf-8"
     );
     mkdirSync(join(cwd, "src", "main", "java", "com", "example"), { recursive: true });
+    mkdirSync(join(cwd, "src", "main", "java", "com", "example", "user"), { recursive: true });
     writeFileSync(join(cwd, "src", "main", "java", "com", "example", "Application.java"), "package com.example;\n", "utf-8");
+    writeFileSync(join(cwd, "src", "main", "java", "com", "example", "user", "UserController.java"), "package com.example.user;\n", "utf-8");
 
     const map = generateProjectMap(cwd);
     assert.strictEqual(map.project.type, "spring-boot-backend");
@@ -52,6 +59,8 @@ describe("project-map", () => {
     assert.ok(map.config.runCommands.includes("./gradlew bootRun"));
     assert.ok(map.dependencies.springBoot?.some((d) => d.includes("web")));
     assert.ok(map.routes?.spring?.length);
+    assert.ok(map.structure.boundaries.some((b) => b.name === "controller"));
+    assert.ok(map.structure.dirs.some((d) => d.path === "src/main/java/com/example"));
   });
 
   it("detects JS/TS dependencies and file tree", () => {
@@ -76,6 +85,8 @@ describe("project-map", () => {
     assert.ok(map.files.tree.some((l) => l.includes("components/")));
     assert.ok(map.files.keyFiles.includes("package.json"));
     assert.ok(map.stack.build.includes("Vite"));
+    assert.ok(map.structure.dirs.some((d) => d.path === "src/components"));
+    assert.ok(Object.keys(map.structure.fileCountsByExtension).length > 0);
   });
 
   it("detects Python dependencies", () => {
@@ -113,5 +124,6 @@ describe("project-map", () => {
     assert.ok(summary.includes("Dart"));
     assert.ok(summary.includes("flutter-mobile") || summary.includes("Flutter"));
     assert.ok(summary.includes("</project_map>"));
+    assert.ok(summary.includes("Boundaries:") || summary.includes("Source roots:"));
   });
 });

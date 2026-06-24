@@ -42,6 +42,12 @@ export interface ProjectMap {
     testRoots: string[];
     configFiles: string[];
     importantFiles: string[];
+    generatedDirs: string[];
+    dirs: MapDir[];
+    modules: MapModule[];
+    boundaries: MapBoundary[];
+    nestingDepth: number;
+    fileCountsByExtension: Record<string, number>;
   };
   conventions: {
     folderStructure?: string;
@@ -76,6 +82,25 @@ export interface ProjectMap {
   notes: string[];
   generatedAt: string;
   generatedBy: string;
+}
+
+export interface MapDir {
+  path: string;
+  depth: number;
+  fileCount: number;
+  dirCount: number;
+}
+
+export interface MapModule {
+  name: string;
+  path: string;
+  layer?: string;
+}
+
+export interface MapBoundary {
+  name: string;
+  globs: string[];
+  type: "layer" | "feature" | "domain";
 }
 
 export const MAP_PATH = [".pi", "cdev", "map.yaml"];
@@ -546,6 +571,124 @@ function extractTopDependencies(cwd: string, languages: string[]): Record<string
   return deps;
 }
 
+interface TreeScanResult {
+  tree: string[];
+  dirs: MapDir[];
+  generatedDirs: string[];
+  fileCountsByExtension: Record<string, number>;
+  nestingDepth: number;
+}
+
+function scanSourceTree(cwd: string, sourceRoots: string[], options?: {
+  maxTreeEntries?: number;
+  maxDirEntries?: number;
+  maxDepth?: number;
+  generatedDirNames?: string[];
+}): TreeScanResult {
+  const {
+    maxTreeEntries = 40,
+    maxDirEntries = 60,
+    maxDepth = 3,
+    generatedDirNames = ["node_modules", ".git", ".pi", "dist", "build", ".next", ".turbo", "coverage", "target", ".dart_tool", ".gradle"],
+  } = options ?? {};
+
+  const skipDirs = new Set(generatedDirNames);
+  const tree: string[] = [];
+  const dirs: MapDir[] = [];
+  const generatedDirs: string[] = [];
+  const fileCountsByExtension: Record<string, number> = {};
+  let treeEntriesLeft = maxTreeEntries;
+  let dirEntriesLeft = maxDirEntries;
+  let nestingDepth = 0;
+
+  function walk(dirPath: string, displayPath: string, prefix: string, depth: number): void {
+    if (treeEntriesLeft <= 0 || depth > maxDepth) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(dirPath);
+    } catch {
+      return;
+    }
+    const childDirs: string[] = [];
+    const files: string[] = [];
+    for (const e of entries) {
+      if (e.startsWith(".") && e !== ".env") continue;
+      if (skipDirs.has(e)) {
+        const genPath = join(displayPath, e).replace(/\\/g, "/");
+        if (!generatedDirs.includes(genPath)) generatedDirs.push(genPath);
+        continue;
+      }
+      const full = join(dirPath, e);
+      try {
+        if (statSync(full).isDirectory()) childDirs.push(e);
+        else files.push(e);
+      } catch { /* ignore */ }
+    }
+    childDirs.sort((a, b) => a.localeCompare(b));
+    files.sort((a, b) => a.localeCompare(b));
+
+    if (dirEntriesLeft > 0 && depth >= 0) {
+      dirs.push({
+        path: displayPath.replace(/\\/g, "/"),
+        depth,
+        fileCount: files.length,
+        dirCount: childDirs.length,
+      });
+      dirEntriesLeft--;
+    }
+
+    for (const f of files) {
+      const ext = f.includes(".") ? f.slice(f.lastIndexOf(".")) : "(no ext)";
+      fileCountsByExtension[ext] = (fileCountsByExtension[ext] || 0) + 1;
+    }
+
+    if (depth > 0) {
+      for (const d of childDirs) {
+        if (treeEntriesLeft <= 0) return;
+        tree.push(`${prefix}${d}/`);
+        treeEntriesLeft--;
+      }
+      for (const f of files.slice(0, Math.max(0, treeEntriesLeft))) {
+        tree.push(`${prefix}${f}`);
+        treeEntriesLeft--;
+      }
+    }
+
+    for (const d of childDirs) {
+      nestingDepth = Math.max(nestingDepth, depth + 1);
+      const childDisplay = join(displayPath, d).replace(/\\/g, "/");
+      walk(join(dirPath, d), childDisplay, `${prefix}  ${d}/`, depth + 1);
+    }
+  }
+
+  const roots = sourceRoots.length ? sourceRoots : ["."];
+  for (const root of roots) {
+    if (treeEntriesLeft <= 0 && dirEntriesLeft <= 0) break;
+    const fullRoot = join(cwd, root);
+    if (!existsSync(fullRoot)) continue;
+    const displayRoot = root.replace(/\\/g, "/");
+    if (dirEntriesLeft > 0) {
+      dirs.push({ path: displayRoot, depth: 0, fileCount: 0, dirCount: 0 });
+      dirEntriesLeft--;
+    }
+    walk(fullRoot, displayRoot, `  ${displayRoot}/`, 1);
+  }
+
+  const sortedExtensions = Object.entries(fileCountsByExtension)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15);
+  const topFileCounts: Record<string, number> = {};
+  for (const [ext, count] of sortedExtensions) topFileCounts[ext] = count;
+
+  return {
+    tree,
+    dirs,
+    generatedDirs,
+    fileCountsByExtension: topFileCounts,
+    nestingDepth,
+  };
+}
+
 function buildBoundedTree(cwd: string, sourceRoots: string[], maxEntries = 40): string[] {
   const tree: string[] = [];
   const skipDirs = new Set(["node_modules", ".git", ".pi", "dist", "build", ".next", ".turbo", "coverage", "target"]);
@@ -595,6 +738,130 @@ function buildBoundedTree(cwd: string, sourceRoots: string[], maxEntries = 40): 
   }
 
   return tree;
+}
+
+function inferModulesAndBoundaries(
+  cwd: string,
+  sourceRoots: string[],
+  framework: string[],
+  languages: string[],
+  maxModules = 30,
+): { modules: MapModule[]; boundaries: MapBoundary[] } {
+  const modules: MapModule[] = [];
+  const boundaries: MapBoundary[] = [];
+
+  function scanForLayer(layerName: string, globs: string[]): MapModule[] {
+    const found: MapModule[] = [];
+    for (const root of sourceRoots) {
+      const rootPath = join(cwd, root);
+      if (!existsSync(rootPath)) continue;
+      for (const glob of globs) {
+        const pattern = glob.replace(/\*\*/g, "").replace(/\*/g, "").replace(/\/$/, "");
+        if (!pattern) continue;
+        const layerDir = join(rootPath, pattern);
+        if (!existsSync(layerDir)) continue;
+        try {
+          for (const entry of readdirSync(layerDir)) {
+            const full = join(layerDir, entry);
+            if (statSync(full).isDirectory()) {
+              const rel = join(root, pattern, entry).replace(/\\/g, "/");
+              found.push({ name: entry, path: rel, layer: layerName });
+            }
+          }
+        } catch { /* ignore */ }
+      }
+    }
+    return found;
+  }
+
+  if (framework.includes("Flutter")) {
+    boundaries.push(
+      { name: "presentation", globs: ["lib/**/widgets/", "lib/**/screens/", "lib/**/pages/"], type: "layer" },
+      { name: "domain", globs: ["lib/**/models/", "lib/**/entities/", "lib/**/domain/"], type: "layer" },
+      { name: "data", globs: ["lib/**/repositories/", "lib/**/services/", "lib/**/data/"], type: "layer" },
+      { name: "features", globs: ["lib/features/*/", "lib/modules/*/"], type: "feature" },
+    );
+    modules.push(...scanForLayer("feature", ["features", "modules"]).slice(0, maxModules));
+  } else if (framework.includes("Spring Boot")) {
+    boundaries.push(
+      { name: "controller", globs: ["src/main/java/**/controller/", "src/main/java/**/api/", "src/main/java/**/web/"], type: "layer" },
+      { name: "service", globs: ["src/main/java/**/service/", "src/main/java/**/business/"], type: "layer" },
+      { name: "repository", globs: ["src/main/java/**/repository/", "src/main/java/**/dao/"], type: "layer" },
+      { name: "model", globs: ["src/main/java/**/entity/", "src/main/java/**/dto/", "src/main/java/**/model/"], type: "layer" },
+      { name: "config", globs: ["src/main/java/**/config/"], type: "layer" },
+    );
+    modules.push(...scanForLayer("feature", ["src/main/java/com"]).slice(0, maxModules));
+  } else if (framework.includes("NestJS")) {
+    boundaries.push(
+      { name: "controllers", globs: ["src/**/*.controller.ts"], type: "layer" },
+      { name: "services", globs: ["src/**/*.service.ts"], type: "layer" },
+      { name: "modules", globs: ["src/**/*.module.ts"], type: "layer" },
+      { name: "features", globs: ["src/modules/*", "src/features/*"], type: "feature" },
+    );
+    modules.push(...scanForLayer("feature", ["src/modules", "src/features"]).slice(0, maxModules));
+  } else if (framework.includes("Next.js")) {
+    boundaries.push(
+      { name: "app-router", globs: ["app/**"], type: "layer" },
+      { name: "pages-router", globs: ["pages/**"], type: "layer" },
+      { name: "api", globs: ["app/api/**", "pages/api/**"], type: "layer" },
+      { name: "components", globs: ["components/**", "src/components/**"], type: "layer" },
+    );
+  } else if (languages.includes("Go")) {
+    boundaries.push(
+      { name: "cmd", globs: ["cmd/**"], type: "layer" },
+      { name: "internal", globs: ["internal/**"], type: "layer" },
+      { name: "pkg", globs: ["pkg/**"], type: "layer" },
+    );
+  } else if (languages.includes("Python")) {
+    boundaries.push(
+      { name: "routes", globs: ["*/routes/", "*/views/", "*/blueprints/"], type: "layer" },
+      { name: "models", globs: ["*/models/"], type: "layer" },
+      { name: "services", globs: ["*/services/", "*/business/"], type: "layer" },
+    );
+  }
+
+  if (modules.length === 0) {
+    for (const root of sourceRoots.slice(0, 3)) {
+      const rootPath = join(cwd, root);
+      if (!existsSync(rootPath)) continue;
+      try {
+        for (const entry of readdirSync(rootPath)) {
+          const full = join(rootPath, entry);
+          if (statSync(full).isDirectory() && !entry.startsWith(".")) {
+            const rel = join(root, entry).replace(/\\/g, "/");
+            modules.push({ name: entry, path: rel });
+            if (modules.length >= maxModules) break;
+          }
+        }
+      } catch { /* ignore */ }
+      if (modules.length >= maxModules) break;
+    }
+  }
+
+  return {
+    modules: modules.slice(0, maxModules),
+    boundaries,
+  };
+}
+
+function detectGeneratedDirs(cwd: string, sourceRoots: string[]): string[] {
+  const generatedDirNames = ["node_modules", ".git", ".pi", "dist", "build", ".next", ".turbo", "coverage", "target", ".dart_tool", ".gradle"];
+  const found: string[] = [];
+  const roots = sourceRoots.length ? sourceRoots : ["."];
+  for (const root of roots) {
+    const rootPath = join(cwd, root);
+    if (!existsSync(rootPath)) continue;
+    try {
+      for (const entry of readdirSync(rootPath)) {
+        if (generatedDirNames.includes(entry) && statSync(join(rootPath, entry)).isDirectory()) {
+          const rel = join(root, entry).replace(/\\/g, "/");
+          if (!found.includes(rel)) found.push(rel);
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  if (existsSync(join(cwd, "node_modules")) && !found.includes("node_modules")) found.push("node_modules");
+  return found;
 }
 
 function detectKeyFiles(cwd: string, entryPoints: string[], configFiles: string[]): string[] {
@@ -835,6 +1102,9 @@ export function generateProjectMap(cwd: string): ProjectMap {
   const commands = detectCommands(cwd, packageManager, languages);
   const conventions = inferConventions(cwd, languages, framework);
   const architecture = inferArchitecture(framework, languages);
+  const scan = scanSourceTree(cwd, sourceRoots, { maxTreeEntries: 40, maxDirEntries: 80, maxDepth: 5 });
+  const { modules, boundaries } = inferModulesAndBoundaries(cwd, sourceRoots, framework, languages);
+  const generatedDirs = detectGeneratedDirs(cwd, sourceRoots);
   const tree = buildBoundedTree(cwd, sourceRoots, 40);
   const keyFiles = detectKeyFiles(cwd, entryPoints, configFiles);
   const routes = detectRoutes(cwd, framework);
@@ -890,6 +1160,12 @@ export function generateProjectMap(cwd: string): ProjectMap {
       testRoots,
       configFiles,
       importantFiles: entryPoints.slice(0, 5),
+      generatedDirs,
+      dirs: scan.dirs,
+      modules,
+      boundaries,
+      nestingDepth: scan.nestingDepth,
+      fileCountsByExtension: scan.fileCountsByExtension,
     },
     conventions,
     config: {
@@ -964,6 +1240,9 @@ export function formatMapReport(map: ProjectMap): string {
   if (map.stack.testing.length) lines.push(`  Testing:   ${map.stack.testing.join(", ")}`);
   lines.push(`  Source:    ${map.structure.sourceRoots.join(", ") || "unknown"}`);
   lines.push(`  Entry:     ${map.project.entryPoints.join(", ") || "unknown"}`);
+  if (map.structure.modules.length) lines.push(`  Modules:   ${map.structure.modules.slice(0, 8).map((m) => m.name).join(", ")}${map.structure.modules.length > 8 ? "…" : ""}`);
+  if (map.structure.boundaries.length) lines.push(`  Layers:    ${map.structure.boundaries.map((b) => b.name).join(", ")}`);
+  if (map.structure.nestingDepth > 0) lines.push(`  Depth:     ${map.structure.nestingDepth}`);
   lines.push("");
   lines.push(`  Saved to:  ${MAP_PATH.join("/")}`);
   lines.push("  Tip: `/cdev map refresh` to regenerate via scout+forge.");
@@ -986,6 +1265,19 @@ export function summarizeMapForPrompt(map: ProjectMap): string {
   if (map.stack.stateManagement.length) lines.push(`State: ${map.stack.stateManagement.join(", ")}`);
   if (map.structure.sourceRoots.length) lines.push(`Source roots: ${map.structure.sourceRoots.join(", ")}`);
   if (map.project.entryPoints.length) lines.push(`Entry points: ${map.project.entryPoints.join(", ")}`);
+  if (map.structure.modules.length) {
+    lines.push(`Modules: ${map.structure.modules.slice(0, 10).map((m) => `${m.name} (${m.path})`).join(", ")}`);
+  }
+  if (map.structure.boundaries.length) {
+    lines.push("Boundaries:");
+    for (const b of map.structure.boundaries) {
+      lines.push(`  - ${b.name}: ${b.globs.join(", ")}`);
+    }
+  }
+  if (map.structure.nestingDepth > 0) lines.push(`Nesting depth: ${map.structure.nestingDepth}`);
+  if (Object.keys(map.structure.fileCountsByExtension).length) {
+    lines.push(`File types: ${Object.entries(map.structure.fileCountsByExtension).map(([ext, count]) => `${ext}:${count}`).join(", ")}`);
+  }
   if (map.config.buildCommands.length) lines.push(`Build: ${map.config.buildCommands.join(", ")}`);
   if (map.config.testCommands.length) lines.push(`Test: ${map.config.testCommands.join(", ")}`);
   if (Object.keys(map.conventions).length) {
