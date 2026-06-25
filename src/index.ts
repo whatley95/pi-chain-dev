@@ -104,6 +104,7 @@ export default function (pi: ExtensionAPI) {
       "cdev stages do not modify code unless yolo autoApply is set to 'auto'.",
       "Check /cdev status to see budget, model profiles, and session size before expensive forks.",
       "When a cdev report has a low groundingScore or ungroundedClaims, ask the user for clarification instead of acting on unverified claims.",
+      "If a saved cdev report file appears corrupted or contains internal reasoning/thinking text, do not re-read it repeatedly. Read the actual source files directly and, if needed, run a fresh cdev task with reviewFile or the original task.",
     ],
     parameters: Type.Object({
       task: Type.Optional(Type.String({

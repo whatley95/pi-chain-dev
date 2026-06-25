@@ -11,6 +11,26 @@ export function sanitizeReportFileName(fileName: string): string {
   return safe.replace(/^\.+/, "-");
 }
 
+export function sanitizeReportBody(body: string): string {
+  // Strip common reasoning/thinking markers that some models emit as regular text.
+  // This prevents internal chain-of-thought from corrupting saved reports.
+  const patterns = [
+    /<think>[\s\S]*?<\/think>/gi,
+    /<thinking>[\s\S]*?<\/thinking>/gi,
+    /<reasoning>[\s\S]*?<\/reasoning>/gi,
+    /<analysis>[\s\S]*?<\/analysis>/gi,
+    /--- BEGIN REASONING ---[\s\S]*?--- END REASONING ---/gi,
+    /--- BEGIN THINKING ---[\s\S]*?--- END THINKING ---/gi,
+    /\[thinking\][\s\S]*?\[\/thinking\]/gi,
+    /\[reasoning\][\s\S]*?\[\/reasoning\]/gi,
+  ];
+  let cleaned = body;
+  for (const pattern of patterns) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+  return cleaned.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function writeReportFile(opts: {
   cwd: string;
   fileName: string;
@@ -29,7 +49,8 @@ export function writeReportFile(opts: {
     const header = reviewer
       ? `# ${title}\n\n**Date:** ${date}\n**Reviewer:** ${reviewer}\n**Prompt version:** ${PROMPT_VERSION}\n\n`
       : `# ${title}\n\n**Date:** ${date}\n**Prompt version:** ${PROMPT_VERSION}\n\n`;
-    writeFileSync(reportPath, `${header}${body}\n`, "utf-8");
+    const cleanBody = sanitizeReportBody(body);
+    writeFileSync(reportPath, `${header}${cleanBody}\n`, "utf-8");
     return { reportRelPath, written: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);

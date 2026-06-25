@@ -56,4 +56,24 @@ describe("report.ts", () => {
     assert.ok(content.includes("# cdev plan"));
     assert.ok(!content.includes("Reviewer:"));
   });
+
+  it("strips internal reasoning markers from report body", () => {
+    const body = `Before analysis.
+<thinking>
+I need to check the cache key logic step by step.
+</thinking>
+After analysis.`;
+    const { reportRelPath } = writeReportFile({
+      cwd,
+      fileName: "reasoning-test.md",
+      title: "Reasoning Test",
+      body,
+    });
+    const fullPath = join(cwd, reportRelPath);
+    const content = readFileSync(fullPath, "utf-8");
+    assert.ok(content.includes("Before analysis."));
+    assert.ok(content.includes("After analysis."));
+    assert.ok(!content.includes("I need to check the cache key logic"));
+    assert.ok(!content.includes("<thinking>"));
+  });
 });
