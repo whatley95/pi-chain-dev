@@ -91,7 +91,7 @@ export interface AutoForkConfig {
   profileTimeouts?: ProfileTimeoutsConfig;
   /** Model context-window limit in tokens. Default 262144. */
   modelContextLimit?: number;
-  /** If true, automatically steer /compact when session snapshot exceeds model limit. Default false. */
+  /** If true, automatically steer /compact when session snapshot exceeds model limit. Default true. */
   autoCompactOnLimit?: boolean;
   /** Characters per token used to estimate snapshot size. Default 4. Increase if cdev overestimates vs Pi's status bar. */
   tokenEstimationCharsPerToken?: number;

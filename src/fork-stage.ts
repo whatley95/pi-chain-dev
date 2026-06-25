@@ -410,16 +410,12 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
   }
   // Use a shared temp session file when the caller prepared one; otherwise fall back to a per-run temp file.
   const prepared = sanitizedSessionJsonl ? prepareSharedSession(sanitized.jsonl) : null;
-  let ownsPrepared = false;
-  let tmpDirToClean: string | null = null;
-  const sessionFilePath = prepared ? prepared.filePath : (() => {
+  let offloadTmpDir: string | null = null;
+  let sessionFilePath = prepared ? prepared.filePath : (() => {
     const tmp = writeTempSessionJsonl(sanitized.jsonl);
-    tmpDirToClean = tmp.dir;
+    offloadTmpDir = tmp.dir;
     return tmp.filePath;
   })();
-  if (prepared) {
-    ownsPrepared = true;
-  }
   let taskArg = task;
   let exitCode: number;
 
@@ -430,7 +426,15 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
     const testArgs = buildPiArgs(taskArg, sessionFilePath, extensions, stageProfile, effectiveToolMode);
     if (estimateCommandLineLength(command, [...prefixArgs, ...testArgs]) > MAX_COMMAND_LINE_LENGTH) {
       const combinedJsonl = appendTaskToSessionJsonl(sanitized.jsonl, task);
-      fs.writeFileSync(sessionFilePath, combinedJsonl, { encoding: "utf-8", mode: 0o600 });
+      // If we are sharing a prepared session, do not mutate the shared file on disk;
+      // retries or concurrent stages may reuse it. Write the offloaded task to a private temp file.
+      if (prepared) {
+        const tmp = writeTempSessionJsonl(combinedJsonl);
+        offloadTmpDir = tmp.dir;
+        sessionFilePath = tmp.filePath;
+      } else {
+        fs.writeFileSync(sessionFilePath, combinedJsonl, { encoding: "utf-8", mode: 0o600 });
+      }
       taskArg = "respond to the task above";
       result.stderr += `[cdev] task offloaded to session file to avoid command-line length limit\n`;
     }
@@ -542,11 +546,12 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
   if (!result.model) result.model = stageProfile.id;
 
   return result;
-} finally {
-    if (ownsPrepared && prepared) {
+  } finally {
+    if (prepared) {
       releaseSharedSession(prepared);
-    } else if (tmpDirToClean) {
-      cleanupTempDir(cwd, tmpDirToClean);
+    }
+    if (offloadTmpDir) {
+      cleanupTempDir(cwd, offloadTmpDir);
     }
   }
 }
