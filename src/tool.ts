@@ -660,6 +660,24 @@ export async function executeCdevTool(
       });
       ctx.ui.setWidget("cdev-progress", undefined);
 
+      const researchText = getFinalAssistantText(result.messages);
+      let researchReportPath = "";
+      if (researchText && !result.errorMessage) {
+        const researchSlug = p.task
+          .replace(/[^a-zA-Z0-9]+/g, "-")
+          .replace(/^-|-$/g, "")
+          .toLowerCase()
+          .slice(0, 60);
+        const { reportRelPath } = writeReportFile({
+          cwd: ctx.cwd,
+          fileName: `research-${researchSlug}-${Date.now().toString(36)}.md`,
+          title: `Research: ${p.task.slice(0, 80)}`,
+          reviewer: researchProfile.id,
+          body: researchText,
+        });
+        researchReportPath = reportRelPath;
+      }
+
       const current = saveSession(ctx.cwd, p.task, false, startTime, details, result);
 
       if (result.errorMessage) logError(ctx.cwd, "research", new Error(result.errorMessage));
@@ -670,7 +688,7 @@ export async function executeCdevTool(
       if (config.memory) {
         indexFindingsAsync({
           task: p.task,
-          resultText: getFinalAssistantText(result.messages) || "",
+          resultText: researchText || "",
           stage1Model: researchProfile.id,
           isReview: false,
           quick: false,
@@ -679,8 +697,11 @@ export async function executeCdevTool(
         });
       }
 
-      const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);
+      const isError = result.exitCode > 0 && !researchText;
       let resultText = formatForkResultOutput(result, details);
+      if (researchReportPath) {
+        resultText += `\n\n---\n📄 Research report saved: ${researchReportPath}`;
+      }
 
       const previous = findPreviousSession(ctx.cwd, p.task);
       if (previous?.resultText && previous.id !== current.id) {
@@ -692,9 +713,10 @@ export async function executeCdevTool(
 
       return {
         content: [{ type: "text" as const, text: resultText }],
-        details: withUiDetails(details, buildReportUiDetails(getFinalAssistantText(result.messages), {
+        details: withUiDetails(details, buildReportUiDetails(researchText, {
           mode: "research",
           task: p.task,
+          reportPath: researchReportPath || undefined,
         })),
         isError,
       };

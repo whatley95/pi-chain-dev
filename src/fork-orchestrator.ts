@@ -37,7 +37,7 @@ export interface RunAutoForkOptions {
   forgeTimeoutMs?: number;
   editMode?: boolean;
   confidenceGates?: ConfidenceGateConfig;
-  onProgress?: (stage: "scout" | "forge", model: string) => void;
+  onProgress?: (stage: string, model: string) => void;
   onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
   extensions?: string[] | null;
   environment?: Record<string, string>;
@@ -198,11 +198,17 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     const secondProfile = stage1bProfile && stage1bProfile.provider && stage1bProfile.id ? stage1bProfile : stage1Profile;
     const modelA = stage1Profile.thinking ? `${stage1Profile.provider}:${stage1Profile.id} • ${stage1Profile.thinking}` : `${stage1Profile.provider}:${stage1Profile.id}`;
     const modelB = secondProfile.thinking ? `${secondProfile.provider}:${secondProfile.id} • ${secondProfile.thinking}` : `${secondProfile.provider}:${secondProfile.id}`;
-    opts.onProgress?.("scout", `${modelA} + ${modelB}`);
+    opts.onProgress?.("scout", `Scout A ${modelA} + Scout B ${modelB}`);
 
     const [settledA, settledB] = await Promise.allSettled([
-      runStage1Run("exploration A", task, stage1Profile),
-      runStage1Run("exploration B", task, secondProfile),
+      runStage1Run("exploration A", task, stage1Profile).then((r) => {
+        opts.onProgress?.("scout", `Scout A ${modelA} done`);
+        return r;
+      }),
+      runStage1Run("exploration B", task, secondProfile).then((r) => {
+        opts.onProgress?.("scout", `Scout B ${modelB} done`);
+        return r;
+      }),
     ]);
 
     const emptyRun = (label: string, err?: string): ForkResult => ({
@@ -790,7 +796,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
     verify: false,
     scoutTimeoutMs,
     forgeTimeoutMs,
-    onProgress: (stage, model) => onProgress?.(stage, model),
+    onProgress: (stage, model) => onProgress?.(stage as "scout" | "forge" | "review" | "fix", model),
     onUpdate,
     extensions,
     environment,

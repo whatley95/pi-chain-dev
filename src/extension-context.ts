@@ -154,9 +154,15 @@ function lookupModelPrice(modelId: string): { input: number; output: number } | 
   const normalized = modelId.toLowerCase();
   if (MODEL_PRICES[normalized]) return MODEL_PRICES[normalized];
   for (const [key, price] of Object.entries(MODEL_PRICES)) {
-    if (normalized === key) return price;
+    if (normalized.includes(key) || key.includes(normalized)) return price;
   }
   return undefined;
+}
+
+export function formatModelPrice(modelId: string): string {
+  const price = lookupModelPrice(modelId);
+  if (!price) return "unknown";
+  return `$${price.input.toFixed(3)} in / $${price.output.toFixed(3)} out per 1M tokens`;
 }
 
 export interface ForkCostEstimateInput {
