@@ -190,7 +190,6 @@ export async function executeCdevTool(
   params: Record<string, unknown>,
   signal: AbortSignal | undefined,
   ctx: ExtensionContext,
-  parentOnUpdate?: (update: unknown) => void,
 ): Promise<{ content: Array<{ type: string; text: string }>; details: unknown; isError?: boolean }> {
   const validation = validateAutoForkParams(params);
   if (!validation.valid) {
@@ -647,7 +646,6 @@ export async function executeCdevTool(
         if (stage === "research") {
           ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔬 Researching…  (${model})`)]);
         }
-        parentOnUpdate?.({ stage: "progress", message: `${stage}: ${model}` });
       };
       onProgress("research", researchProfile.thinking ? `${researchProfile.provider}:${researchProfile.id} • ${researchProfile.thinking}` : `${researchProfile.provider}:${researchProfile.id}`);
       const startTime = Date.now();
@@ -661,7 +659,6 @@ export async function executeCdevTool(
         onProgress,
         onUpdate: (update) => {
           ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔬 Researching…  ${update.activity ?? ""}`)]);
-          parentOnUpdate?.({ ...update, stage: "activity" });
         },
         extensions: config.extensions,
         environment: config.environment,
@@ -880,7 +877,6 @@ export async function executeCdevTool(
       } else {
         ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${isPlan ? "📋" : "⚒️"} Forge ${isPlan ? "planning" : "synthesizing"}…  (${model})`)]);
       }
-      parentOnUpdate?.({ stage: "progress", message: `${stage}: ${model}` });
     };
     const modelStr = (prof: typeof profiles.stage1) => prof.thinking ? `${prof.provider}:${prof.id} • ${prof.thinking}` : `${prof.provider}:${prof.id}`;
     onProgress("scout", modelStr(profiles.stage1));
@@ -911,7 +907,6 @@ export async function executeCdevTool(
         const label = update.stage.includes("exploration") || update.stage === "scout" ? "Scout" : isPlan ? "Planner" : "Forge";
         const activity = update.activity ? `  ${update.activity}` : "";
         ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${label} ${update.stage}…${activity}`)]);
-        parentOnUpdate?.({ ...update, stage: "activity" });
       },
       extensions: config.extensions,
       environment: config.environment,
