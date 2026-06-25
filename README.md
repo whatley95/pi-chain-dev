@@ -29,8 +29,7 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 | `/cdev fast <task>` | Alias for `/cdev quick` |
 | `/cdev verify <task>` | Scout ×2 + forge — higher accuracy, ~2× stage 1 cost |
 | `/cdev research <issue>` | Agent-driven investigation; reports findings and a decision, never edits code |
-| `/cdev multi <n> <task>` | Split scout into n parallel sub-task scouts (1-3) using the project map; optional backup takes over failures |
-| `/cdev multi <n> no-backup <task>` | Multi scouts without backup takeover (lower cost, risk of missing coverage) |
+| `/cdev multi <n> [backup\|no-backup] <task>` | Split scout into n parallel sub-task scouts (1-3) using the project map; respects `parallelBackup` config; add `backup` to force takeover, `no-backup` to disable |
 | `/cdev plan <task>` | Scout + planner forge — returns implementation roadmap with checklist |
 | `/cdev yolo <task>` | Scout + forge, then auto review loops. Who edits is configurable (default: you) |
 | `/cdev yolo on` | Enable YOLO review loops |
@@ -309,7 +308,7 @@ Configure the research model via `/cdev-model` → "Research". Custom prompt via
 
 If one scout run produces invalid findings, cdev uses the valid run. If both are invalid, cdev falls back to the raw text from the first run. The two runs use the same model configuration unless you set `stage1b`; their independence (different random samples, and optionally different models) gives broader coverage without relying on unsupported CLI flags.
 
-### Multi mode (`/cdev multi <n> <task>`)
+### Multi mode (`/cdev multi <n> [backup|no-backup] <task>`)
 
 Split the exploration into n parallel scouts (1-3). Each scout focuses on a different slice of the project based on the project map (modules, boundaries, or source roots), so large tasks finish faster wall-clock.
 
