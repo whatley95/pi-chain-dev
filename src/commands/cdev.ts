@@ -243,11 +243,11 @@ export function registerCdevCommand(
         return;
       }
 
-      // ── Subcommand: quick ──
-      if (trimmed.startsWith("quick ")) {
+      // ── Subcommand: quick / fast ──
+      if (trimmed.startsWith("quick ") || trimmed.startsWith("fast ")) {
         const quickTask = trimmed.slice(6).trim();
         if (!quickTask) {
-          ctx.ui.notify("Usage: /cdev quick <task>", "warn");
+          ctx.ui.notify("Usage: /cdev quick <task> or /cdev fast <task>", "warn");
           return;
         }
         ctx.ui.notify(`Queuing quick exploration (stage 1 only)...`, "info");
@@ -454,6 +454,7 @@ export function registerCdevCommand(
         await ctx.ui.select("cdev subcommands:", [
           "/cdev <task>           Scout + Forge explore",
           "/cdev quick <task>     Scout only (fast)",
+       "/cdev fast <task>      Alias for quick (scout only)",
           "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
           "/cdev research <issue> Agent-driven investigation, no edits",
           "/cdev multi <n> <task>      Split scout into N scouts (requires map)",

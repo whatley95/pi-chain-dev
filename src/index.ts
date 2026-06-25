@@ -184,6 +184,7 @@ export default function (pi: ExtensionAPI) {
         "──────────────────────────────────────",
         "/cdev <task>           Scout + Forge explore",
         "/cdev quick <task>     Scout only (fast)",
+       "/cdev fast <task>      Alias for quick (scout only)",
         "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
         "/cdev research <issue> Agent-driven investigation, no edits",
         "/cdev multi <n> <task>      Split scout into N scouts (requires map)",

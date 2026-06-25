@@ -199,7 +199,8 @@ export function renderResult(
     const hasMore = textOut && textOut.split("\n").length > 1;
     if (hasMore) {
       const hint = keyHint("expand");
-      lines.push(`(${hint && hint !== "undefined" && hint.trim() ? hint : "expand"})`);
+      const hintText = hint && typeof hint === "string" && hint.trim() && hint.trim() !== "undefined" ? hint.trim() : "expand";
+      lines.push(`(${hintText})`);
     }
   }
 
