@@ -368,7 +368,7 @@ export async function executeCdevTool(
             isError: true,
           };
         }
-        if (/\.\.|^\/|\\/.test(diffSpec)) {
+        if (/^(?:[a-zA-Z]:)?[/\\]|(?:^|[/\\])\.\.(?:[/\\]|$)/.test(diffSpec)) {
           return {
             content: [{ type: "text" as const, text: `cdev review error: diffSpec must not contain path traversal or absolute paths: ${diffSpec}` }],
             details: { stage1: null, stage2: null },

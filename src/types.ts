@@ -244,6 +244,8 @@ export interface AutoForkDetails {
   stage2: ForkResult | null;
   /** Research output expected from /cdev research. */
   research?: Stage1Findings | null;
+  /** Cost of the research stage, when research mode is used. */
+  researchCost?: number;
   /** Set when autoCompactOnLimit triggered and the tool refused to run. */
   autoCompact?: { tokens: number; limit: number } | null;
   ui?: AutoForkUiDetails;

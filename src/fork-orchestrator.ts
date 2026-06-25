@@ -157,10 +157,10 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     for (const w of workerRuns) addUsage(w.result.usage);
 
     const maxDuration = Math.max(0, ...workerRuns.map((w) => w.result.durationMs ?? 0));
-    const totalDuration = useBackup
-      ? (Math.max(0, ...workerRuns.filter((w) => !failedRuns.some((f) => f.index === w.index)).map((w) => w.result.durationMs ?? 0)) +
-         failedRuns.reduce((sum, w) => sum + (w.result.durationMs ?? 0), 0))
-      : maxDuration;
+    const backupMaxDuration = useBackup && backupRuns
+      ? Math.max(0, ...backupRuns.map((b) => b.result.durationMs ?? 0))
+      : 0;
+    const totalDuration = useBackup ? maxDuration + backupMaxDuration : maxDuration;
 
     const stderrLines: string[] = [
       `[cdev] parallel mode: ${successful.length}/${workerRuns.length} scout(s) succeeded${useBackup ? " (backup used)" : ""}`,

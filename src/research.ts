@@ -52,7 +52,7 @@ export async function runCdevResearch(opts: RunCdevResearchOptions): Promise<{ r
 
   const text = getFinalAssistantText(result.messages) || "";
   const findings = parseStage1Findings(text) ?? null;
-  const details: AutoForkDetails = { stage1: null, stage2: null, research: findings };
+  const details: AutoForkDetails = { stage1: null, stage2: null, research: findings, researchCost: result.usage?.cost ?? 0 };
 
   if (!text) {
     result.errorMessage = result.errorMessage || "Research produced no output";

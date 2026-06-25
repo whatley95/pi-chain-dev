@@ -85,30 +85,27 @@ interface PreparedSession {
   tmpDir: string;
 }
 
-let sharedPreparedSession: PreparedSession | null = null;
-let sharedPreparedSessionRefCount = 0;
+const sharedPreparedSessions = new Map<string, { prepared: PreparedSession; refCount: number }>();
 
 export function prepareSharedSession(sanitizedJsonl: string): PreparedSession {
-  if (sharedPreparedSession && sharedPreparedSession.jsonl === sanitizedJsonl) {
-    sharedPreparedSessionRefCount++;
-    return sharedPreparedSession;
-  }
-  // If a different snapshot is being prepared, clean up the old one first.
-  if (sharedPreparedSession) {
-    cleanupTempDir("", sharedPreparedSession.tmpDir);
+  const existing = sharedPreparedSessions.get(sanitizedJsonl);
+  if (existing) {
+    existing.refCount++;
+    return existing.prepared;
   }
   const tmp = writeTempSessionJsonl(sanitizedJsonl);
-  sharedPreparedSession = { jsonl: sanitizedJsonl, filePath: tmp.filePath, tmpDir: tmp.dir };
-  sharedPreparedSessionRefCount = 1;
-  return sharedPreparedSession;
+  const prepared: PreparedSession = { jsonl: sanitizedJsonl, filePath: tmp.filePath, tmpDir: tmp.dir };
+  sharedPreparedSessions.set(sanitizedJsonl, { prepared, refCount: 1 });
+  return prepared;
 }
 
-export function releaseSharedSession(): void {
-  if (!sharedPreparedSession) return;
-  sharedPreparedSessionRefCount--;
-  if (sharedPreparedSessionRefCount <= 0) {
-    cleanupTempDir("", sharedPreparedSession.tmpDir);
-    sharedPreparedSession = null;
+export function releaseSharedSession(prepared: PreparedSession): void {
+  const entry = sharedPreparedSessions.get(prepared.jsonl);
+  if (!entry) return;
+  entry.refCount--;
+  if (entry.refCount <= 0) {
+    cleanupTempDir("", entry.prepared.tmpDir);
+    sharedPreparedSessions.delete(prepared.jsonl);
   }
 }
 
@@ -120,11 +117,10 @@ function writeTempSessionJsonl(sessionJsonl: string): { dir: string; filePath: s
 }
 
 export function clearSharedSession(): void {
-  if (sharedPreparedSession) {
-    cleanupTempDir("", sharedPreparedSession.tmpDir);
-    sharedPreparedSession = null;
-    sharedPreparedSessionRefCount = 0;
+  for (const entry of sharedPreparedSessions.values()) {
+    cleanupTempDir("", entry.prepared.tmpDir);
   }
+  sharedPreparedSessions.clear();
 }
 
 export function appendTaskToSessionJsonl(sessionJsonl: string, task: string): string {
@@ -547,8 +543,8 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
 
   return result;
 } finally {
-    if (ownsPrepared) {
-      releaseSharedSession();
+    if (ownsPrepared && prepared) {
+      releaseSharedSession(prepared);
     } else if (tmpDirToClean) {
       cleanupTempDir(cwd, tmpDirToClean);
     }

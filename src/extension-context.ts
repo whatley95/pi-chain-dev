@@ -492,7 +492,7 @@ export function updateForkCostStatus(ctx: ExtensionContext): void {
             const details = message.details as AutoForkDetails | undefined;
           if (details?.stage1?.usage?.cost) totalCost += details.stage1.usage.cost;
           if (details?.stage2?.usage?.cost) totalCost += details.stage2.usage.cost;
-          if (details?.research && (details.research as { cost?: number }).cost) totalCost += (details.research as { cost?: number }).cost || 0;
+          if (details?.researchCost) totalCost += details.researchCost;
           }
         }
       }
