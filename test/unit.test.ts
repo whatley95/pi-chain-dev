@@ -279,3 +279,37 @@ describe("evaluateConfidenceGates()", () => {
     assert.ok(result.reasons.some((reason) => reason.includes("command evidence")));
   });
 });
+
+// ── commands/cdev-help.ts: CDEV_SUBCOMMAND_HELP ─────────────────
+
+import { CDEV_SUBCOMMAND_HELP } from "../src/commands/cdev-help.js";
+
+describe("CDEV_SUBCOMMAND_HELP", () => {
+  it("is a non-empty array of strings", () => {
+    assert.ok(Array.isArray(CDEV_SUBCOMMAND_HELP));
+    assert.ok(CDEV_SUBCOMMAND_HELP.length > 0);
+    for (const line of CDEV_SUBCOMMAND_HELP) {
+      assert.equal(typeof line, "string");
+    }
+  });
+
+  it("contains no leading or trailing whitespace", () => {
+    for (const line of CDEV_SUBCOMMAND_HELP) {
+      assert.equal(line, line.trimStart(), `line has leading whitespace: ${JSON.stringify(line)}`);
+      assert.equal(line, line.trimEnd(), `line has trailing whitespace: ${JSON.stringify(line)}`);
+    }
+  });
+
+  it("includes core subcommands", () => {
+    const text = CDEV_SUBCOMMAND_HELP.join("\n");
+    assert.ok(text.includes("/cdev <task>"));
+    assert.ok(text.includes("/cdev quick"));
+    assert.ok(text.includes("/cdev verify"));
+    assert.ok(text.includes("/cdev research"));
+    assert.ok(text.includes("/cdev multi"));
+    assert.ok(text.includes("/cdev status"));
+    assert.ok(text.includes("/cdev config"));
+    assert.ok(text.includes("/cdev-help"));
+    assert.ok(text.includes("/cdev-model"));
+  });
+});

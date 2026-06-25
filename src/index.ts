@@ -10,6 +10,7 @@ import { Type } from "@sinclair/typebox";
 import { renderCall, renderResult } from "./render.js";
 import { executeCdevTool } from "./tool.js";
 import { registerCdevCommand, registerLifecycleHandlers } from "./commands/cdev.js";
+import { CDEV_SUBCOMMAND_HELP } from "./commands/cdev-help.js";
 import { createCdevModelHandler } from "./commands/cdev-model.js";
 import {
   updateForkCostStatus,
@@ -180,44 +181,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("cdev-help", {
     description: "Show cdev subcommands",
     handler: async (_args, ctx) => {
-      await ctx.ui.select("cdev subcommands:", [
-        "──────────────────────────────────────",
-        "/cdev <task>           Scout + Forge explore",
-        "/cdev quick <task>     Scout only (fast)",
-       "/cdev fast <task>      Alias for quick (scout only)",
-        "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
-        "/cdev research <issue> Agent-driven investigation, no edits",
-        "/cdev multi <n> [backup|no-backup] <task>  Split scout into N scouts (requires map)",
-        "/cdev plan <task>      Scout + planner (implementation plan only)",
-        "/cdev yolo <task>     Scout + forge, then review loops",
-        "/cdev yolo manual|propose|auto  Who applies fixes (auto = cdev edits files)",
-        "/cdev review [path]    Forge review session/file",
-        "/cdev review changes   Review uncommitted changes",
-        "/cdev review A..B      Review git/svn diff",
-        "/cdev scan [deep]      Generate custom prompts",
-        "/cdev map              Generate project map",
-        "/cdev map refresh      Regenerate project map via scout+forge",
-        "/cdev map show         View project map",
-        "/cdev history [n]      Past session details",
-        "/cdev recall [topic]   Check project memory",
-        "/cdev memory refresh <topic>  Re-explore stale topic",
-        "/cdev status           Config overview",
-        "/cdev config           Show/edit settings",
-        "/cdev retry            Retry last cdev session",
-        "/cdev estimate <task>  Preview cost/tokens",
-        "/cdev memory on|off    Toggle project memory",
-        "/cdev prompts on|off   Toggle custom prompts",
-        "/cdev themed on|off    Toggle themed TUI",
-        "/cdev auto on|off      Toggle auto-trigger",
-        "/cdev yolo on|off      Toggle YOLO review loops",
-        "/cdev auto-verify on|off  Toggle automatic verify",
-        "/cdev clear            Clear memory + reports",
-        "/cdev clear error      Clear error log",
-        "/cdev clear reports    Clear old reports",
-        "──────────────────────────────────────",
-        "/cdev-model            Pick scout/forge models",
-        "/cdev-help             This help",
-      ]);
+      await ctx.ui.select("cdev subcommands:", CDEV_SUBCOMMAND_HELP);
     },
   });
 }

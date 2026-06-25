@@ -40,6 +40,7 @@ import {
 import { handleScan } from "./cdev-scan.js";
 import { handleMemory, memoryTopicCount } from "./cdev-memory.js";
 import { handleMap, loadProjectMap } from "./cdev-map.js";
+import { CDEV_SUBCOMMAND_HELP } from "./cdev-help.js";
 import { readAgentSettings, readProjectSettings, writeAgentSetting, writeProjectSetting } from "../settings-helpers.js";
 import { formatCost } from "../extension-context.js";
 import { normalizeYoloConfig } from "../types.js";
@@ -511,42 +512,7 @@ export function registerCdevCommand(
 
       // ── Help ──
       if (trimmed === "help" || trimmed === "?" || trimmed === "h") {
-        await ctx.ui.select("cdev subcommands:", [
-          "/cdev <task>           Scout + Forge explore",
-          "/cdev quick <task>     Scout only (fast)",
-       "/cdev fast <task>      Alias for quick (scout only)",
-          "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
-          "/cdev research <issue> Agent-driven investigation, no edits",
-          "/cdev multi <n> [backup|no-backup] <task>  Split scout into N scouts (requires map)",
-          "/cdev plan <task>      Scout + planner (implementation plan only)",
-          "/cdev yolo <task>            Scout + forge, then review loops",
-          "/cdev yolo manual|propose|auto  Who applies fixes (auto = cdev edits files)",
-          "/cdev review [path]    Forge review session/file",
-          "/cdev review A..B      Review git/svn diff",
-          "/cdev scan [deep]      Generate custom prompts",
-          "/cdev map              Generate project map",
-          "/cdev map refresh      Regenerate project map via scout+forge",
-          "/cdev map show         View project map",
-          "/cdev history [n]      Past session details",
-          "/cdev recall [topic]   Check project memory",
-          "/cdev memory refresh <topic>  Re-explore stale topic",
-          "/cdev memory auto-refresh on|off  Auto-refresh stale topics on recall",
-          "/cdev replay <n>        Re-run a past session",
-           "/cdev status           Config overview",
-           "/cdev config           Show/edit settings",
-           "/cdev config <key> <value>",
-           "/cdev config project <key> <value>",
-           "/cdev retry            Retry last cdev session",
-           "/cdev estimate <task>  Preview cost/tokens",
-           "/cdev memory on|off    Toggle project memory",
-          "/cdev prompts on|off   Toggle custom prompts",
-          "/cdev themed on|off    Toggle themed TUI",
-          "/cdev auto on|off      Toggle auto-trigger",
-       "/cdev auto-verify on/off  Toggle automatic scout ×2",
-       "/cdev auto-compact on/off Toggle auto-compact near model limit",
-          "/cdev yolo on|off              Toggle YOLO review loops",
-          "/cdev yolo manual|propose|auto  Who applies fixes (auto = cdev edits files)",
-        ]);
+        await ctx.ui.select("cdev subcommands:", CDEV_SUBCOMMAND_HELP);
         return;
       }
 
