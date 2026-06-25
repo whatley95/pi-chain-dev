@@ -198,10 +198,11 @@ export function renderResult(
     }
     const hasMore = textOut && textOut.split("\n").length > 1;
     if (hasMore) {
-      const hint = keyHint("expand");
-      const clean = typeof hint === "string" ? hint.replace(/\s+/g, " ").trim() : "";
-      const hintText = clean && clean.toLowerCase() !== "undefined" ? clean : "expand";
-      lines.push(`(${hintText})`);
+      let hint = keyHint("expand");
+      if (typeof hint !== "string") hint = "";
+      const clean = hint.replace(/\s+/g, " ").trim();
+      const isUseless = !clean || /\bundefined\b/i.test(clean) || /^[()[\]{}]*$/.test(clean);
+      lines.push(`(${isUseless ? "expand" : clean})`);
     }
   }
 

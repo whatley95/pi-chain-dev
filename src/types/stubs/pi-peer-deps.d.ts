@@ -60,7 +60,7 @@ declare module "@earendil-works/pi-coding-agent" {
   }
 
   export function getAgentDir(): string;
-  export function keyHint(text: string): string;
+  export function keyHint(text: string): string | undefined;
 }
 
 declare module "@earendil-works/pi-tui" {
