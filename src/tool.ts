@@ -162,7 +162,7 @@ function validateAutoForkParams(params: Record<string, unknown>): { valid: true;
     if (typeof params.task !== "string") errors.push("task must be a string");
     else out.task = params.task;
   }
-  for (const key of ["review", "quick", "verify", "plan", "yolo", "research"] as const) {
+  for (const key of ["review", "quick", "verify", "plan", "yolo", "research", "parallelBackup"] as const) {
     if (params[key] !== undefined) {
       if (typeof params[key] !== "boolean") errors.push(`${key} must be a boolean`);
       else out[key] = params[key];
@@ -172,6 +172,13 @@ function validateAutoForkParams(params: Record<string, unknown>): { valid: true;
     if (params[key] !== undefined) {
       if (typeof params[key] !== "string") errors.push(`${key} must be a string`);
       else out[key] = params[key];
+    }
+  }
+  if (params.parallel !== undefined) {
+    if (typeof params.parallel !== "number" || !Number.isFinite(params.parallel)) {
+      errors.push("parallel must be a number");
+    } else {
+      out.parallel = params.parallel;
     }
   }
 

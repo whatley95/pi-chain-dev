@@ -3,7 +3,7 @@ import { parseStage1Findings, parseStage2Report } from "./json-extract.js";
 import { runStageWithRetry, sanitizeSessionJsonl } from "./fork-stage.js";
 import { getFinalAssistantText } from "./runner-events.js";
 import { runCdevReview } from "./review.js";
-import { withAuditGuard, formatCost, estimateForkCost, getSessionForkCost, recordForkCost } from "./extension-context.js";
+import { withAuditGuard, formatCost, estimateForkCost, getSessionForkCost } from "./extension-context.js";
 import { saveSession } from "./history.js";
 import { writeReportFile } from "./report.js";
 import { loadProjectMap, splitTaskByMap, type ParallelSubTask } from "./project-map.js";
@@ -748,7 +748,6 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
     acc.cost += usage.cost || 0;
     acc.turns += usage.turns || 0;
     acc.contextTokens = Math.max(acc.contextTokens, usage.contextTokens || 0);
-    recordForkCost(cwd, usage.cost || 0);
   }
 
   const totalUsage: UsageStats = emptyUsage();
