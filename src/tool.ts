@@ -290,7 +290,7 @@ export async function executeCdevTool(
           filePath: p.reviewFile,
           fileContent,
           stageProfile: reviewProfile,
-          stageTimeoutMs: config.forgeTimeoutMs,
+          stageTimeoutMs: config.profileTimeouts?.review ?? config.forgeTimeoutMs,
           onProgress,
           onUpdate: (update) => {
             ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing ${p.reviewFile}…  ${update.activity ?? ""}`)]);
@@ -420,7 +420,7 @@ export async function executeCdevTool(
           diffSpec,
           diffContent,
           stageProfile: reviewProfile,
-          stageTimeoutMs: config.forgeTimeoutMs,
+          stageTimeoutMs: config.profileTimeouts?.review ?? config.forgeTimeoutMs,
           onProgress,
           onUpdate: (update) => {
             ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing diff ${diffSpec}…  ${update.activity ?? ""}`)]);
@@ -505,7 +505,7 @@ export async function executeCdevTool(
         cwd: ctx.cwd,
         forkSessionSnapshotJsonl: snapshot,
         stageProfile: reviewProfile,
-        stageTimeoutMs: config.forgeTimeoutMs,
+        stageTimeoutMs: config.profileTimeouts?.review ?? config.forgeTimeoutMs,
         customReviewPrompt: config.promptsEnabled ? config.prompts?.review : undefined,
         onProgress,
         onUpdate: (update) => {
@@ -647,7 +647,7 @@ export async function executeCdevTool(
         task: withAuditGuard(p.task),
         forkSessionSnapshotJsonl: snapshot,
         stageProfile: researchProfile,
-        stageTimeoutMs: config.scoutTimeoutMs,
+        stageTimeoutMs: config.profileTimeouts?.research ?? config.scoutTimeoutMs,
         customPrompt: config.promptsEnabled ? config.prompts?.research : undefined,
         onProgress,
         onUpdate: (update) => {
@@ -785,8 +785,10 @@ export async function executeCdevTool(
         customExplorePrompt: config.promptsEnabled ? config.prompts?.explore : undefined,
         customSynthesizePrompt: config.promptsEnabled ? config.prompts?.synthesize : undefined,
         customReviewPrompt: config.promptsEnabled ? config.prompts?.review : undefined,
-        scoutTimeoutMs: config.scoutTimeoutMs,
-        forgeTimeoutMs: config.forgeTimeoutMs,
+        scoutTimeoutMs: config.profileTimeouts?.scout ?? config.scoutTimeoutMs,
+        forgeTimeoutMs: config.profileTimeouts?.forge ?? config.forgeTimeoutMs,
+        yoloReviewTimeoutMs: config.profileTimeouts?.yoloReview ?? config.forgeTimeoutMs,
+        yoloFixTimeoutMs: config.profileTimeouts?.yoloFix ?? config.forgeTimeoutMs,
         onProgress: onYoloProgress,
         onUpdate: (update) => {
           ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", update.activity ?? "working…")]);
@@ -889,8 +891,8 @@ export async function executeCdevTool(
       plan: isPlan,
       parallel,
       parallelBackup,
-      scoutTimeoutMs: config.scoutTimeoutMs,
-      forgeTimeoutMs: config.forgeTimeoutMs,
+      scoutTimeoutMs: config.profileTimeouts?.scout ?? config.scoutTimeoutMs,
+      forgeTimeoutMs: config.profileTimeouts?.forge ?? config.forgeTimeoutMs,
       confidenceGates: config.confidenceGates,
       onProgress,
       onUpdate: (update) => {

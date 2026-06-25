@@ -308,6 +308,8 @@ export async function handleMap(args: string, ctx: ExtensionContext, config: Aut
         forkSessionSnapshotJsonl: snapshot,
         stage1Profile: profiles.stage1,
         stage2Profile: profiles.stage2,
+        scoutTimeoutMs: config.profileTimeouts?.scout ?? config.scoutTimeoutMs,
+        forgeTimeoutMs: config.profileTimeouts?.forge ?? config.forgeTimeoutMs,
         onProgress,
         extensions: config.extensions,
         environment: config.environment,

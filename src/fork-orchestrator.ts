@@ -733,6 +733,8 @@ export interface RunYoloLoopOptions extends Omit<RunAutoForkOptions, "onProgress
   reviewProfile: StageProfile;
   fixProfile: StageProfile;
   customReviewPrompt?: string;
+  yoloReviewTimeoutMs?: number;
+  yoloFixTimeoutMs?: number;
   onProgress?: (stage: "scout" | "forge" | "review" | "fix", model: string, round?: number) => void;
   onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
 }
@@ -749,7 +751,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
   const {
     cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage1bProfile, stage2Profile,
     yoloConfig, reviewProfile, fixProfile, customExplorePrompt, customSynthesizePrompt, customReviewPrompt,
-    scoutTimeoutMs, forgeTimeoutMs,
+    scoutTimeoutMs, forgeTimeoutMs, yoloReviewTimeoutMs, yoloFixTimeoutMs,
     extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate,
   } = opts;
 
@@ -859,7 +861,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       cwd,
       forkSessionSnapshotJsonl: reviewSnapshot,
       stageProfile: reviewProfile,
-      stageTimeoutMs: forgeTimeoutMs,
+      stageTimeoutMs: yoloReviewTimeoutMs ?? forgeTimeoutMs,
       customReviewPrompt,
       onProgress: (_stage, model) => onProgress?.("review", model, round),
       onUpdate,
@@ -948,7 +950,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       verify: false,
       editMode: yoloConfig.autoApply === "auto",
       scoutTimeoutMs,
-      forgeTimeoutMs,
+      forgeTimeoutMs: yoloFixTimeoutMs ?? forgeTimeoutMs,
       onProgress: (stage, model) => onProgress?.(stage === "scout" || stage === "forge" ? stage : "fix", model, round),
       onUpdate,
       extensions,

@@ -71,6 +71,8 @@ export interface AutoForkConfig {
   promptsEnabled: boolean;
   /** Whether project-level memory is enabled (cross-session findings). */
   memory: boolean;
+  /** Automatically re-explore stale topics when recalling. Default false. */
+  memoryAutoRefresh?: boolean;
   /** Use theme.bg() for richer TUI rendering (progress, results). Default true. */
   themed: boolean;
   /** Run scout twice automatically for higher accuracy. */
@@ -85,6 +87,8 @@ export interface AutoForkConfig {
   scoutTimeoutMs?: number;
   /** Forge/plan/review stage timeout in milliseconds. Default 180000 (3 minutes). */
   forgeTimeoutMs?: number;
+  /** Per-profile timeout overrides. Keys that are omitted fall back to scoutTimeoutMs/forgeTimeoutMs. */
+  profileTimeouts?: ProfileTimeoutsConfig;
   /** Model context-window limit in tokens. Default 262144. */
   modelContextLimit?: number;
   /** If true, automatically steer /compact when session snapshot exceeds model limit. Default false. */
@@ -101,6 +105,15 @@ export interface AutoForkConfig {
   confidenceGates?: ConfidenceGateConfig;
   /** YOLO mode: auto review → fix loops. */
   yolo?: YoloConfig;
+}
+
+export interface ProfileTimeoutsConfig {
+  scout?: number;
+  forge?: number;
+  research?: number;
+  review?: number;
+  yoloReview?: number;
+  yoloFix?: number;
 }
 
 /** YOLO (auto review-fix) configuration. */

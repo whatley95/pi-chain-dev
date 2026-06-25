@@ -1,3 +1,4 @@
+import type { CdevTopic } from "../types.js";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type AutoForkConfig } from "../config.js";
 import { runAutoFork } from "../fork-orchestrator.js";
@@ -13,6 +14,7 @@ import {
   memoryGetTopic,
   memoryTopicCount,
   mergeSimilarTopics,
+  topicHasStaleFindings,
 } from "../memory.js";
 import {
   withAuditGuard,
@@ -22,6 +24,77 @@ import {
   logError,
 } from "../extension-context.js";
 import { writeAgentSetting } from "../settings-helpers.js";
+
+async function refreshMemoryTopic(
+  ctx: ExtensionContext,
+  config: AutoForkConfig,
+  topic: string,
+  entry: CdevTopic,
+): Promise<CdevTopic | null> {
+  const profiles = resolveStageProfiles(config);
+  if (profiles.warning) {
+    ctx.ui.notify(profiles.warning, "warn");
+    return null;
+  }
+  ctx.ui.notify(`Refreshing memory topic "${topic}" (stage 1 → stage 2)...`, "info");
+  try {
+    const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, config.modelContextLimit);
+    if (!snapshot) { ctx.ui.notify("Cannot snapshot session.", "error"); return null; }
+
+    const filesList = entry.files.slice(0, 15).join(", ");
+    const previousFindings = entry.findings.slice(0, 3).map((f: { text: string }) => `- ${f.text}`).join("\n");
+    const refreshTask = withAuditGuard(
+      `Re-explore the "${topic}" topic in this project. Update our understanding based on the current code state.\n\nPreviously tracked files:\n${filesList}\n\nRecent findings:\n${previousFindings}\n\nFocus on what has changed and what is still accurate. Return updated findings, evidence, and action items.`
+    );
+
+    const themedBg = makeThemedBg(ctx, config.themed);
+    const refreshStartTime = Date.now();
+    const onProgress = (stage: string, model: string) => {
+      const icon = stage === "scout" ? "🔍" : "⚒️";
+      const label = stage === "scout" ? "Scout" : "Forge";
+      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${label} refreshing ${topic}…  (${model})`)]);
+    };
+    onProgress("scout", profiles.stage1.id);
+    const { result, details: refreshDetails } = await runAutoFork({
+      cwd: ctx.cwd,
+      task: refreshTask,
+      forkSessionSnapshotJsonl: snapshot,
+      stage1Profile: profiles.stage1,
+      stage2Profile: profiles.stage2,
+      scoutTimeoutMs: config.profileTimeouts?.scout ?? config.scoutTimeoutMs,
+      forgeTimeoutMs: config.profileTimeouts?.forge ?? config.forgeTimeoutMs,
+      onProgress,
+      extensions: config.extensions,
+      environment: config.environment,
+      offline: config.offline,
+      signal: undefined,
+    });
+    ctx.ui.setWidget("cdev-progress", undefined);
+
+    saveSession(ctx.cwd, refreshTask, false, refreshStartTime, refreshDetails, result);
+    if (result.errorMessage) logError(ctx.cwd, "memory-refresh", new Error(result.errorMessage));
+
+    const finalText = getFinalAssistantText(result.messages);
+    if (finalText) {
+      indexFindingsAsync({
+        task: `refresh ${topic}`,
+        resultText: finalText,
+        stage1Model: refreshDetails.stage1?.model ?? profiles.stage1.id,
+        stage2Model: refreshDetails.stage2?.model ?? profiles.stage2.id,
+        isReview: false,
+        quick: false,
+        cost: result.usage?.cost ?? 0,
+        cwd: ctx.cwd,
+      });
+      return memoryGetTopic(ctx.cwd, topic) ?? entry;
+    }
+    return null;
+  } catch (err) {
+    logError(ctx.cwd, "memory-refresh", err);
+    ctx.ui.notify(`Refresh failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+    return null;
+  }
+}
 
 export async function handleMemory(args: string, ctx: ExtensionContext, config: AutoForkConfig): Promise<boolean> {
   const trimmed = args.trim();
@@ -35,8 +108,15 @@ export async function handleMemory(args: string, ctx: ExtensionContext, config: 
     const topic = recallMatch[1]?.trim();
     if (topic) {
       const entry = memoryGetTopic(ctx.cwd, topic);
-      if (entry) ctx.ui.notify(formatTopicDetail(entry, ctx.cwd), "info");
-      else ctx.ui.notify(`No memory for topic "${topic}". /cdev recall to list all.`, "warn");
+      if (entry) {
+        ctx.ui.notify(formatTopicDetail(entry, ctx.cwd), "info");
+        if (config.memoryAutoRefresh && topicHasStaleFindings(entry, ctx.cwd)) {
+          const updated = await refreshMemoryTopic(ctx, config, topic, entry);
+          if (updated) ctx.ui.notify(formatTopicDetail(updated, ctx.cwd), "info");
+        }
+      } else {
+        ctx.ui.notify(`No memory for topic "${topic}". /cdev recall to list all.`, "warn");
+      }
     } else {
       const memory = loadMemory(ctx.cwd);
       ctx.ui.notify(formatMemoryTopics(memory), "info");
@@ -89,75 +169,25 @@ export async function handleMemory(args: string, ctx: ExtensionContext, config: 
       ctx.ui.notify("Project memory is disabled. /cdev memory on to enable.", "warn");
       return true;
     }
-    const profiles = resolveStageProfiles(config);
-    if (profiles.warning) {
-      ctx.ui.notify(profiles.warning, "warn");
-      return true;
-    }
     const topic = memoryRefreshMatch[1].trim();
     const entry = memoryGetTopic(ctx.cwd, topic);
     if (!entry) {
       ctx.ui.notify(`No memory found for topic "${topic}".`, "warn");
       return true;
     }
-
-    ctx.ui.notify(`Refreshing memory topic "${topic}" (stage 1 → stage 2)...`, "info");
-    try {
-      const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, config.modelContextLimit);
-      if (!snapshot) { ctx.ui.notify("Cannot snapshot session.", "error"); return true; }
-
-      const filesList = entry.files.slice(0, 15).join(", ");
-      const previousFindings = entry.findings.slice(0, 3).map((f: { text: string }) => `- ${f.text}`).join("\n");
-      const refreshTask = withAuditGuard(
-        `Re-explore the "${topic}" topic in this project. Update our understanding based on the current code state.\n\nPreviously tracked files:\n${filesList}\n\nRecent findings:\n${previousFindings}\n\nFocus on what has changed and what is still accurate. Return updated findings, evidence, and action items.`
-      );
-
-      const themedBg = makeThemedBg(ctx, config.themed);
-      const refreshStartTime = Date.now();
-      const onProgress = (stage: string, model: string) => {
-        const icon = stage === "scout" ? "🔍" : "⚒️";
-        const label = stage === "scout" ? "Scout" : "Forge";
-        ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${label} refreshing ${topic}…  (${model})`)]);
-      };
-      onProgress("scout", profiles.stage1.id);
-      const { result, details: refreshDetails } = await runAutoFork({
-        cwd: ctx.cwd,
-        task: refreshTask,
-        forkSessionSnapshotJsonl: snapshot,
-        stage1Profile: profiles.stage1,
-        stage2Profile: profiles.stage2,
-        onProgress,
-        extensions: config.extensions,
-        environment: config.environment,
-        offline: config.offline,
-        signal: undefined,
-      });
-      ctx.ui.setWidget("cdev-progress", undefined);
-
-      saveSession(ctx.cwd, refreshTask, false, refreshStartTime, refreshDetails, result);
-      if (result.errorMessage) logError(ctx.cwd, "memory-refresh", new Error(result.errorMessage));
-
-      const finalText = getFinalAssistantText(result.messages);
-      if (finalText) {
-        indexFindingsAsync({
-          task: `refresh ${topic}`,
-          resultText: finalText,
-          stage1Model: refreshDetails.stage1?.model ?? profiles.stage1.id,
-          stage2Model: refreshDetails.stage2?.model ?? profiles.stage2.id,
-          isReview: false,
-          quick: false,
-          cost: result.usage?.cost ?? 0,
-          cwd: ctx.cwd,
-        });
-        const updated = memoryGetTopic(ctx.cwd, topic);
-        ctx.ui.notify(formatTopicDetail(updated ?? entry, ctx.cwd), "info");
-      } else {
-        ctx.ui.notify(`Refresh completed but produced no output.`, "warn");
-      }
-    } catch (err) {
-      logError(ctx.cwd, "memory-refresh", err);
-      ctx.ui.notify(`Refresh failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+    const updated = await refreshMemoryTopic(ctx, config, topic, entry);
+    if (updated) {
+      ctx.ui.notify(formatTopicDetail(updated, ctx.cwd), "info");
+    } else {
+      ctx.ui.notify(`Refresh completed but produced no output.`, "warn");
     }
+    return true;
+  }
+
+  if (trimmed === "memory auto-refresh on" || trimmed === "memory auto-refresh off") {
+    const enable = trimmed === "memory auto-refresh on";
+    writeAgentSetting("memoryAutoRefresh", enable);
+    ctx.ui.notify(`Memory auto-refresh ${enable ? "ON" : "OFF"}`, "info");
     return true;
   }
 

@@ -615,6 +615,13 @@ export function memoryGetTopics(cwd: string): CdevTopic[] {
   return Object.values(memory.topics).sort((a, b) => b.lastSeen - a.lastSeen);
 }
 
+export function topicHasStaleFindings(topic: CdevTopic, cwd: string): boolean {
+  return topic.findings.some((f) => {
+    const freshness = checkFreshness(f, cwd);
+    return freshness.hasSnapshot && !freshness.allFresh;
+  });
+}
+
 /** In-memory cache for topic count (invalidated on write). */
 let _topicCountCache: { cwd: string; count: number; mtime: number } | null = null;
 

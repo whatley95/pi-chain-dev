@@ -1251,13 +1251,19 @@ function isValidProjectMap(value: unknown): value is ProjectMap {
   return true;
 }
 
+const _mapCache = new Map<string, { mtime: number; map: ProjectMap }>();
+
 export function loadProjectMap(cwd: string): ProjectMap | null {
   const path = getMapPath(cwd);
   if (!existsSync(path)) return null;
   try {
+    const stats = statSync(path);
+    const cached = _mapCache.get(cwd);
+    if (cached && cached.mtime === stats.mtimeMs) return cached.map;
     const parsed = parseYaml(readFileSync(path, "utf-8"));
-    if (isValidProjectMap(parsed)) return parsed;
-    return null;
+    if (!isValidProjectMap(parsed)) return null;
+    _mapCache.set(cwd, { mtime: stats.mtimeMs, map: parsed });
+    return parsed;
   } catch {
     return null;
   }
@@ -1267,6 +1273,7 @@ export function saveProjectMap(cwd: string, map: ProjectMap): void {
   const path = getMapPath(cwd);
   mkdirSync(join(cwd, ".pi", "cdev"), { recursive: true });
   writeFileSync(path, stringifyYaml(map, { indent: 2, lineWidth: 0 }), "utf-8");
+  _mapCache.delete(cwd);
 }
 
 export function formatMapReport(map: ProjectMap): string {

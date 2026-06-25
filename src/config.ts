@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
-import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig, YoloConfig, ConfidenceGateConfig } from "./types.js";
+import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig, YoloConfig, ConfidenceGateConfig, ProfileTimeoutsConfig } from "./types.js";
 import { normalizeYoloConfig, normalizeConfidenceGates } from "./types.js";
 import { logError } from "./logger.js";
 
@@ -45,6 +45,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   auto: false,
   promptsEnabled: true,
   memory: true,
+  memoryAutoRefresh: false,
   themed: false,
   autoVerify: false,
   parallel: 1,
@@ -52,6 +53,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   maxConcurrentStages: 3,
   scoutTimeoutMs: 600_000,
   forgeTimeoutMs: 180_000,
+  profileTimeouts: {},
   modelContextLimit: 262_144,
   autoCompactOnLimit: true,
   tokenEstimationCharsPerToken: 4,
@@ -155,6 +157,7 @@ export function loadConfig(cwd: string): AutoForkConfig {
     // Project-level override wins
     promptsEnabled: projectConfig.promptsEnabled ?? globalConfig.promptsEnabled ?? DEFAULT_CONFIG.promptsEnabled,
     memory: projectConfig.memory ?? globalConfig.memory ?? DEFAULT_CONFIG.memory,
+    memoryAutoRefresh: projectConfig.memoryAutoRefresh ?? globalConfig.memoryAutoRefresh ?? DEFAULT_CONFIG.memoryAutoRefresh,
     themed: projectConfig.themed ?? globalConfig.themed ?? DEFAULT_CONFIG.themed,
     autoVerify: projectConfig.autoVerify ?? globalConfig.autoVerify ?? DEFAULT_CONFIG.autoVerify,
     parallel: projectConfig.parallel ?? globalConfig.parallel ?? DEFAULT_CONFIG.parallel,
@@ -162,6 +165,11 @@ export function loadConfig(cwd: string): AutoForkConfig {
     maxConcurrentStages: projectConfig.maxConcurrentStages ?? globalConfig.maxConcurrentStages ?? DEFAULT_CONFIG.maxConcurrentStages,
     scoutTimeoutMs: projectConfig.scoutTimeoutMs ?? globalConfig.scoutTimeoutMs ?? DEFAULT_CONFIG.scoutTimeoutMs,
     forgeTimeoutMs: projectConfig.forgeTimeoutMs ?? globalConfig.forgeTimeoutMs ?? DEFAULT_CONFIG.forgeTimeoutMs,
+    profileTimeouts: {
+      ...DEFAULT_CONFIG.profileTimeouts,
+      ...globalConfig.profileTimeouts,
+      ...projectConfig.profileTimeouts,
+    },
     modelContextLimit: projectConfig.modelContextLimit ?? globalConfig.modelContextLimit ?? DEFAULT_CONFIG.modelContextLimit,
     autoCompactOnLimit: projectConfig.autoCompactOnLimit ?? globalConfig.autoCompactOnLimit ?? DEFAULT_CONFIG.autoCompactOnLimit,
     tokenEstimationCharsPerToken: projectConfig.tokenEstimationCharsPerToken ?? globalConfig.tokenEstimationCharsPerToken ?? DEFAULT_CONFIG.tokenEstimationCharsPerToken,
@@ -225,6 +233,7 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (typeof config.auto === "boolean") parsed.auto = config.auto;
     if (typeof config.promptsEnabled === "boolean") parsed.promptsEnabled = config.promptsEnabled;
     if (typeof config.memory === "boolean") parsed.memory = config.memory;
+    if (typeof config.memoryAutoRefresh === "boolean") parsed.memoryAutoRefresh = config.memoryAutoRefresh;
     if (typeof config.themed === "boolean") parsed.themed = config.themed;
     if (typeof config.autoVerify === "boolean") parsed.autoVerify = config.autoVerify;
     if (typeof config.signature === "string") parsed.signature = config.signature;
@@ -233,6 +242,21 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (typeof config.maxConcurrentStages === "number") parsed.maxConcurrentStages = Math.max(1, Math.min(10, Number.isFinite(config.maxConcurrentStages) ? config.maxConcurrentStages : 3));
     if (typeof config.scoutTimeoutMs === "number") parsed.scoutTimeoutMs = Math.max(30_000, Math.min(3_600_000, Number.isFinite(config.scoutTimeoutMs) ? config.scoutTimeoutMs : 600_000));
     if (typeof config.forgeTimeoutMs === "number") parsed.forgeTimeoutMs = Math.max(30_000, Math.min(3_600_000, Number.isFinite(config.forgeTimeoutMs) ? config.forgeTimeoutMs : 180_000));
+    if (config.profileTimeouts && typeof config.profileTimeouts === "object" && !Array.isArray(config.profileTimeouts)) {
+      const pt = config.profileTimeouts as Record<string, unknown>;
+      const parsedPt: ProfileTimeoutsConfig = {};
+      const parseMs = (value: unknown): number | undefined => {
+        if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+        return Math.max(30_000, Math.min(3_600_000, value));
+      };
+      if (typeof pt.scout === "number") parsedPt.scout = parseMs(pt.scout);
+      if (typeof pt.forge === "number") parsedPt.forge = parseMs(pt.forge);
+      if (typeof pt.research === "number") parsedPt.research = parseMs(pt.research);
+      if (typeof pt.review === "number") parsedPt.review = parseMs(pt.review);
+      if (typeof pt.yoloReview === "number") parsedPt.yoloReview = parseMs(pt.yoloReview);
+      if (typeof pt.yoloFix === "number") parsedPt.yoloFix = parseMs(pt.yoloFix);
+      parsed.profileTimeouts = parsedPt;
+    }
     if (typeof config.modelContextLimit === "number") parsed.modelContextLimit = Math.max(8_192, Math.min(2_000_000, Number.isFinite(config.modelContextLimit) ? config.modelContextLimit : 262_144));
     if (typeof config.autoCompactOnLimit === "boolean") parsed.autoCompactOnLimit = config.autoCompactOnLimit;
     if (typeof config.tokenEstimationCharsPerToken === "number") parsed.tokenEstimationCharsPerToken = Math.max(1, Math.min(64, Number.isFinite(config.tokenEstimationCharsPerToken) ? config.tokenEstimationCharsPerToken : 4));

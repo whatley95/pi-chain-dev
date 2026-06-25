@@ -467,10 +467,11 @@ export function registerCdevCommand(
         lines.push(`  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`);
         lines.push(`  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`);
         lines.push(`  Project memory:   ${config.memory ? "ON" : "OFF"}`);
+        lines.push(`  Memory auto-refresh: ${config.memoryAutoRefresh ? "ON" : "OFF"}`);
         lines.push(`  Auto-verify:      ${config.autoVerify ? "✓ ON (scout ×2)" : "OFF (scout ×1)"}`);
         lines.push(`  Multi scouts:     ${config.parallel && config.parallel > 1 ? `${config.parallel} (backup ${config.parallelBackup ? "on" : "off"})` : "OFF"}`);
-        lines.push(`  Scout timeout:    ${((config.scoutTimeoutMs ?? 600_000) / 1000).toFixed(0)}s`);
-        lines.push(`  Forge timeout:    ${((config.forgeTimeoutMs ?? 180_000) / 1000).toFixed(0)}s`);
+        lines.push(`  Scout timeout:    ${((config.profileTimeouts?.scout ?? config.scoutTimeoutMs ?? 600_000) / 1000).toFixed(0)}s${config.profileTimeouts?.scout ? " (profile override)" : ""}`);
+        lines.push(`  Forge timeout:    ${((config.profileTimeouts?.forge ?? config.forgeTimeoutMs ?? 180_000) / 1000).toFixed(0)}s${config.profileTimeouts?.forge ? " (profile override)" : ""}`);
         const yolo = normalizeYoloConfig(config.yolo);
         lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, ${yolo.autoApply === "auto" ? "auto-edit" : yolo.autoApply === "propose" ? "propose fixes" : "main agent fixes"})` : "OFF"}`);
         const hasMap = !!loadProjectMap(ctx.cwd);
@@ -529,6 +530,7 @@ export function registerCdevCommand(
           "/cdev history [n]      Past session details",
           "/cdev recall [topic]   Check project memory",
           "/cdev memory refresh <topic>  Re-explore stale topic",
+          "/cdev memory auto-refresh on|off  Auto-refresh stale topics on recall",
           "/cdev replay <n>        Re-run a past session",
            "/cdev status           Config overview",
            "/cdev config           Show/edit settings",
@@ -679,6 +681,7 @@ const CONFIG_KEYS: Record<string, { type: "boolean" | "number" | "seconds"; min?
   autoVerify: { type: "boolean" },
   autoCompactOnLimit: { type: "boolean" },
   memory: { type: "boolean" },
+  memoryAutoRefresh: { type: "boolean" },
   promptsEnabled: { type: "boolean" },
   themed: { type: "boolean" },
   parallelBackup: { type: "boolean" },
