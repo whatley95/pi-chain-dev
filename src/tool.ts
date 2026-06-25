@@ -24,6 +24,7 @@ import {
   recordForkCost,
   estimateForkCost,
   formatCost,
+  getSessionForkCost,
   maybeWarnSessionSize,
   maybeNotifyCostAlert,
   formatForkResultOutput,
@@ -824,6 +825,13 @@ export async function executeCdevTool(
         details: { stage1: null, stage2: null },
         isError: true,
       };
+    }
+
+    if (config.maxSessionCost && config.maxSessionCost > 0) {
+      const remaining = config.maxSessionCost - getSessionForkCost(ctx.cwd);
+      if (remaining > 0 && estimate.cost > remaining * 0.5) {
+        ctx.ui.notify(`This cdev fork is estimated at ${formatCost(estimate.cost)}, which is more than 50% of the remaining session budget (${formatCost(remaining)}).`, "warn");
+      }
     }
 
     const isPlan = p.plan === true;

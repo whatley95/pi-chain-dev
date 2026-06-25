@@ -22,8 +22,8 @@ function levenshtein(a: string, b: string): number {
   return prev[b.length];
 }
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig } from "../config.js";
-import { listSessions, getSession, formatHistory, formatSessionRecord, purgeOldSessions } from "../history.js";
+import { loadConfig, type AutoForkConfig } from "../config.js";
+import { listSessions, getSession, formatHistory, formatSessionRecord, purgeOldSessions, getLastSession } from "../history.js";
 import { memoryClear } from "../memory.js";
 import { getErrorCount, clearErrorLog } from "../logger.js";
 import {
@@ -32,12 +32,14 @@ import {
   resolveStageProfiles,
   estimateSessionSize,
   getSessionForkCost,
+  resetSessionForkCost,
   checkSessionCostAlert,
+  estimateForkCost,
 } from "../extension-context.js";
 import { handleScan } from "./cdev-scan.js";
 import { handleMemory, memoryTopicCount } from "./cdev-memory.js";
 import { handleMap, loadProjectMap } from "./cdev-map.js";
-import { writeAgentSetting, writeProjectSetting } from "../settings-helpers.js";
+import { readAgentSettings, readProjectSettings, writeAgentSetting, writeProjectSetting } from "../settings-helpers.js";
 import { formatCost } from "../extension-context.js";
 import { normalizeYoloConfig } from "../types.js";
 
@@ -138,6 +140,60 @@ export function registerCdevCommand(
         const count = getErrorCount(ctx.cwd);
         clearErrorLog(ctx.cwd);
         ctx.ui.notify(`Cleared ${count} error${count !== 1 ? "s" : ""} from cdev error log.`, "info");
+        return;
+      }
+
+      // ── Subcommand: config ──
+      if (await handleConfig(trimmed, ctx, config)) return;
+
+      // ── Subcommand: retry ──
+      if (trimmed === "retry") {
+        const last = getLastSession(ctx.cwd);
+        if (!last) {
+          ctx.ui.notify("No recent cdev session to retry. Run a cdev task first.", "warn");
+          return;
+        }
+        ctx.ui.notify(`Retrying last session: ${last.task}`, "info");
+        const params = last.isReview
+          ? `Use cdev with review=true to: ${last.task}`
+          : `Use cdev to: ${last.task}`;
+        pi.sendUserMessage(params, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
+
+      // ── Subcommand: estimate <task> ──
+      const estimateMatch = trimmed.match(/^estimate\s+(.+)$/);
+      if (estimateMatch) {
+        const estimateTask = estimateMatch[1].trim();
+        if (!estimateTask) {
+          ctx.ui.notify("Usage: /cdev estimate <task>", "warn");
+          return;
+        }
+        const profiles = resolveStageProfiles(config);
+        if (profiles.warning) {
+          ctx.ui.notify(profiles.warning, "warn");
+          return;
+        }
+        const estimate = estimateForkCost({
+          task: estimateTask,
+          stage1Profile: profiles.stage1,
+          stage2Profile: profiles.stage2,
+          forkSessionSnapshotJsonl: "",
+        });
+        ctx.ui.notify(`Estimated cost: ~${formatCost(estimate.cost)}\nTokens: ~${estimate.inputTokens} in / ~${estimate.outputTokens} out\nModels: ${profiles.stage1.id} → ${profiles.stage2.id}`, "info");
+        return;
+      }
+
+      // ── Subcommand: cost ──
+      if (trimmed === "cost" || trimmed === "cost reset") {
+        if (trimmed === "cost reset") {
+          resetSessionForkCost(ctx.cwd);
+          ctx.ui.notify("cdev session cost reset to $0.00.", "info");
+          return;
+        }
+        const sessionCost = getSessionForkCost(ctx.cwd);
+        const alert = checkSessionCostAlert(config, ctx.cwd);
+        ctx.ui.notify(`cdev session cost: ${formatCost(sessionCost)}${alert ? `  ${alert.level === "critical" ? "🔴" : "🟡"} ${(alert.percent * 100).toFixed(0)}% of budget` : ""}`, "info");
         return;
       }
 
@@ -472,8 +528,13 @@ export function registerCdevCommand(
           "/cdev recall [topic]   Check project memory",
           "/cdev memory refresh <topic>  Re-explore stale topic",
           "/cdev replay <n>        Re-run a past session",
-          "/cdev status           Config overview",
-          "/cdev memory on|off    Toggle project memory",
+           "/cdev status           Config overview",
+           "/cdev config           Show/edit settings",
+           "/cdev config <key> <value>",
+           "/cdev config project <key> <value>",
+           "/cdev retry            Retry last cdev session",
+           "/cdev estimate <task>  Preview cost/tokens",
+           "/cdev memory on|off    Toggle project memory",
           "/cdev prompts on|off   Toggle custom prompts",
           "/cdev themed on|off    Toggle themed TUI",
           "/cdev auto on|off      Toggle auto-trigger",
@@ -559,7 +620,7 @@ export function registerCdevCommand(
       }
 
       // ── Fuzzy match ──
-      const subcommands = ["status", "quick", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "auto-compact", "help", "clear", "yolo", "verify", "plan", "multi", "research"];
+       const subcommands = ["status", "quick", "fast", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "auto-compact", "config", "retry", "estimate", "help", "clear", "yolo", "verify", "plan", "multi", "research"];
       const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
       const isSingleWord = !trimmed.includes(" ");
       const fuzzy = subcommands
@@ -590,6 +651,136 @@ export function registerCdevCommand(
       pi.sendUserMessage(`Use cdev to: ${trimmed}`, { triggerTurn: true, deliverAs: "steer" });
     },
   });
+}
+
+function formatConfigValue(value: unknown): string {
+  if (value === undefined) return "—";
+  if (typeof value === "boolean") return value ? "ON" : "OFF";
+  if (typeof value === "number") return Number.isInteger(value) ? value.toString() : value.toFixed(4);
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    if (obj.provider && obj.id) return `${obj.provider}:${obj.id} • ${obj.thinking ?? "?"}`;
+  }
+  return JSON.stringify(value);
+}
+
+function parseBooleanValue(raw: string): boolean | null {
+  const lower = raw.toLowerCase();
+  if (["on", "true", "yes", "1"].includes(lower)) return true;
+  if (["off", "false", "no", "0"].includes(lower)) return false;
+  return null;
+}
+
+const CONFIG_KEYS: Record<string, { type: "boolean" | "number" | "seconds"; min?: number; max?: number }> = {
+  auto: { type: "boolean" },
+  autoVerify: { type: "boolean" },
+  autoCompactOnLimit: { type: "boolean" },
+  memory: { type: "boolean" },
+  promptsEnabled: { type: "boolean" },
+  themed: { type: "boolean" },
+  parallelBackup: { type: "boolean" },
+  parallel: { type: "number", min: 1, max: 3 },
+  scoutTimeoutMs: { type: "seconds", min: 30, max: 3600 },
+  forgeTimeoutMs: { type: "seconds", min: 30, max: 3600 },
+  modelContextLimit: { type: "number", min: 8192, max: 2000000 },
+  tokenEstimationCharsPerToken: { type: "number", min: 1, max: 64 },
+  maxForkCost: { type: "number", min: 0 },
+  maxSessionCost: { type: "number", min: 0 },
+};
+
+async function handleConfig(trimmed: string, ctx: ExtensionContext, config: AutoForkConfig): Promise<boolean> {
+  if (!trimmed.startsWith("config")) return false;
+  const rest = trimmed.slice(6).trim();
+
+  if (!rest) {
+    const agent = readAgentSettings();
+    const project = readProjectSettings(ctx.cwd);
+    const lines = [
+      "── cdev config ─────────────────────────────────────",
+      "",
+      "Key                          | Value        | Source",
+      "─────────────────────────────────────────────────────",
+    ];
+    for (const key of Object.keys(CONFIG_KEYS)) {
+      const value = (config as unknown as Record<string, unknown>)[key];
+      const source = project[key] !== undefined ? "project" : agent[key] !== undefined ? "agent" : "default";
+      lines.push(`${key.padEnd(28)} | ${formatConfigValue(value).padEnd(12)} | ${source}`);
+    }
+    lines.push("");
+    lines.push("Profiles:");
+    lines.push(`  stage1  ${formatConfigValue(config.stage1)}`);
+    lines.push(`  stage2  ${formatConfigValue(config.stage2)}`);
+    if (config.review) lines.push(`  review  ${formatConfigValue(config.review)}`);
+    if (config.research) lines.push(`  research ${formatConfigValue(config.research)}`);
+    lines.push("");
+    lines.push("Usage: /cdev config <key> <value>");
+    lines.push("       /cdev config project <key> <value>");
+    lines.push("─────────────────────────────────────────────────────");
+    ctx.ui.notify(lines.join("\n"), "info");
+    return true;
+  }
+
+  const parts = rest.split(/\s+/);
+  const isProject = parts[0] === "project";
+  if (isProject) parts.shift();
+
+  if (parts.length === 1) {
+    const key = parts[0];
+    const value = (config as unknown as Record<string, unknown>)[key];
+    if (value === undefined) {
+      ctx.ui.notify(`Unknown config key "${key}". Use /cdev config to list keys.`, "warn");
+      return true;
+    }
+    ctx.ui.notify(`${key}: ${formatConfigValue(value)}`, "info");
+    return true;
+  }
+
+  if (parts.length >= 2) {
+    const key = parts[0];
+    const rawValue = parts.slice(1).join(" ");
+    const schema = CONFIG_KEYS[key];
+    if (!schema) {
+      ctx.ui.notify(`Unknown config key "${key}". Use /cdev config to list keys.`, "warn");
+      return true;
+    }
+
+    let parsed: unknown;
+    if (schema.type === "boolean") {
+      const bool = parseBooleanValue(rawValue);
+      if (bool === null) {
+        ctx.ui.notify(`Invalid boolean value "${rawValue}". Use on/off or true/false.`, "warn");
+        return true;
+      }
+      parsed = bool;
+    } else if (schema.type === "seconds") {
+      const seconds = parseInt(rawValue, 10);
+      if (Number.isNaN(seconds)) {
+        ctx.ui.notify(`Invalid number "${rawValue}".`, "warn");
+        return true;
+      }
+      const clamped = Math.max(schema.min ?? 1, Math.min(schema.max ?? Number.MAX_SAFE_INTEGER, seconds));
+      parsed = clamped * 1000;
+    } else {
+      const num = parseFloat(rawValue);
+      if (Number.isNaN(num)) {
+        ctx.ui.notify(`Invalid number "${rawValue}".`, "warn");
+        return true;
+      }
+      parsed = Math.max(schema.min ?? -Infinity, Math.min(schema.max ?? Infinity, num));
+    }
+
+    if (isProject) {
+      writeProjectSetting(ctx.cwd, key, parsed);
+      ctx.ui.notify(`Set project config ${key} = ${formatConfigValue(parsed)}`, "info");
+    } else {
+      writeAgentSetting(key, parsed);
+      ctx.ui.notify(`Set agent config ${key} = ${formatConfigValue(parsed)}`, "info");
+    }
+    return true;
+  }
+
+  return false;
 }
 
 export function registerLifecycleHandlers(_pi: ExtensionAPI, ctx: ExtensionContext): void {

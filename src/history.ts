@@ -244,6 +244,12 @@ export function findPreviousSession(cwd: string, task: string): SessionRecord | 
   return null;
 }
 
+/** Get the most recent session. */
+export function getLastSession(cwd: string): SessionRecord | null {
+  const sessions = listSessions(cwd);
+  return sessions.length > 0 ? sessions[0] : null;
+}
+
 // ── Purge old sessions ─────────────────────────────────
 
 export function purgeOldSessions(cwd: string, maxAgeDays = 7): number {
