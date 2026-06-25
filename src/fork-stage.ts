@@ -357,8 +357,18 @@ export interface RunStageOptions {
   onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
 }
 
-async function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timeout = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timeout);
+      resolve();
+    }, { once: true });
+  });
 }
 
 export async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResult> {
@@ -366,6 +376,7 @@ export async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResu
   let lastResult: ForkResult | undefined;
   const stageStart = Date.now();
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (opts.signal?.aborted) break;
     const release = await stageSemaphore.acquire();
     try {
       const result = await runStageCore({ ...opts, stageLabel: attempt > 0 ? `${opts.stageLabel} (retry ${attempt})` : opts.stageLabel });
@@ -378,7 +389,7 @@ export async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResu
         result.stderr += `[cdev] retrying ${opts.stageLabel} stage (${attempt + 1}/${retries})\n`;
         const delayMs = Math.min(1000 * 2 ** attempt, 8000);
         if (opts.signal?.aborted) break;
-        await sleep(delayMs);
+        await sleep(delayMs, opts.signal);
       }
     } finally {
       release();

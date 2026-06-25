@@ -284,7 +284,12 @@ export function indexFindings(input: IndexFindingsInput): string | null {
 export function indexFindingsAsync(input: IndexFindingsInput): Promise<string | null> {
   return new Promise((resolve) => {
     setImmediate(() => {
-      resolve(buildFindingAndUpdateMemory(input));
+      try {
+        resolve(buildFindingAndUpdateMemory(input));
+      } catch (err) {
+        logError(input.cwd, "indexFindingsAsync", err);
+        resolve(null);
+      }
     });
   });
 }
