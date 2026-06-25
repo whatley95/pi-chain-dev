@@ -139,7 +139,7 @@ export default function (pi: ExtensionAPI) {
       })),
       parallelBackup: Type.Optional(Type.Boolean({
         description:
-          "If true (default), a backup scout takes over failed parallel sub-tasks. Set to false to save cost at the risk of missing coverage.",
+          "If true, a backup scout takes over failed parallel sub-tasks. Default is false; set to true to trade cost for coverage.",
       })),
       plan: Type.Optional(Type.Boolean({
         description:
