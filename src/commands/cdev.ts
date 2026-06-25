@@ -270,6 +270,15 @@ export function registerCdevCommand(
         }
         if (cleanArg) {
           if (/^(changes|change|uncommitted|uncommitted changes|working tree|worktree)$/i.test(cleanArg)) {
+            const vcs = spawnSync("git", ["rev-parse", "--git-dir"], { cwd: ctx.cwd, encoding: "utf-8" }).status === 0
+              ? "git"
+              : spawnSync("svn", ["info"], { cwd: ctx.cwd, encoding: "utf-8" }).status === 0
+                ? "svn"
+                : null;
+            if (!vcs) {
+              ctx.ui.notify("This directory is not inside a git or svn repository. Review a file with /cdev review <path> instead.", "warn");
+              return;
+            }
             ctx.ui.notify("Reviewing uncommitted changes…", "info");
             pi.sendUserMessage(`Review uncommitted changes using cdev with review=true, diffSpec="HEAD".`, { triggerTurn: true, deliverAs: "steer" });
             return;

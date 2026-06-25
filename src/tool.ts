@@ -45,6 +45,23 @@ export interface AutoForkParamsType {
   diffSpec?: string;
 }
 
+function detectVcs(cwd: string): "git" | "svn" | null {
+  const gitResult = spawnSync("git", ["rev-parse", "--git-dir"], { cwd, encoding: "utf-8" });
+  if (gitResult.status === 0) return "git";
+  const svnResult = spawnSync("svn", ["info"], { cwd, encoding: "utf-8" });
+  if (svnResult.status === 0) return "svn";
+  return null;
+}
+
+function runDiff(cwd: string, diffSpec: string, vcs: "git" | "svn"): { stdout: string; stderr: string; status: number | null } {
+  if (vcs === "git") {
+    const result = spawnSync("git", ["diff", diffSpec], { cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
+    return { stdout: result.stdout || "", stderr: result.stderr || "", status: result.status };
+  }
+  const result = spawnSync("svn", ["diff", "-r", diffSpec], { cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
+  return { stdout: result.stdout || "", stderr: result.stderr || "", status: result.status };
+}
+
 interface SnapshotOk {
   snapshot: string;
   snapshotTokens: number;
@@ -383,23 +400,20 @@ export async function executeCdevTool(
         }
         let diffContent: string;
         try {
-          const gitResult = spawnSync("git", ["diff", diffSpec], { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
-          if (gitResult.error || gitResult.status !== 0) {
-            const gitErrMsg = gitResult.error
-              ? `git not available: ${gitResult.error.message}`
-              : `git exited ${gitResult.status}: ${(gitResult.stderr || "").trim().slice(0, 200)}`;
-            const svnResult = spawnSync("svn", ["diff", "-r", diffSpec], { cwd: ctx.cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
-            if (svnResult.error || svnResult.status !== 0) {
-              const svnErrMsg = svnResult.error
-                ? `svn not available: ${svnResult.error.message}`
-                : `svn exited ${svnResult.status}: ${(svnResult.stderr || "").trim().slice(0, 200)}`;
-              const details = [gitErrMsg, svnErrMsg].filter(Boolean).join("; ");
-              throw new Error(details || "both git and svn failed");
-            }
-            diffContent = svnResult.stdout || "";
-          } else {
-            diffContent = gitResult.stdout || "";
+          const vcs = detectVcs(ctx.cwd);
+          if (!vcs) {
+            return {
+              content: [{ type: "text" as const, text: `cdev review error: '${ctx.cwd}' is not inside a git or svn repository. Use /cdev review <path> to review a file, or run this command from a version-controlled directory.` }],
+              details: { stage1: null, stage2: null },
+              isError: true,
+            };
           }
+          const diffResult = runDiff(ctx.cwd, diffSpec, vcs);
+          if (diffResult.status !== 0) {
+            const errMsg = diffResult.stderr.trim().slice(0, 200) || `diff exited ${diffResult.status}`;
+            throw new Error(errMsg);
+          }
+          diffContent = diffResult.stdout;
           if (!diffContent.trim()) {
             return {
               content: [{ type: "text" as const, text: `cdev review error: Diff '${diffSpec}' produced no output. Check the revision range.` }],
