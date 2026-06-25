@@ -153,10 +153,15 @@ const MODEL_PRICES: Record<string, { input: number; output: number }> = {
 function lookupModelPrice(modelId: string): { input: number; output: number } | undefined {
   const normalized = modelId.toLowerCase();
   if (MODEL_PRICES[normalized]) return MODEL_PRICES[normalized];
+  // Prefer exact matches, then prefix matches, then substring matches to avoid mis-pricing.
+  let prefixMatch: { input: number; output: number } | undefined;
+  let substringMatch: { input: number; output: number } | undefined;
   for (const [key, price] of Object.entries(MODEL_PRICES)) {
-    if (normalized.includes(key) || key.includes(normalized)) return price;
+    if (normalized === key) return price;
+    if (!prefixMatch && key.startsWith(normalized)) prefixMatch = price;
+    if (!substringMatch && normalized.includes(key)) substringMatch = price;
   }
-  return undefined;
+  return prefixMatch ?? substringMatch;
 }
 
 export function formatModelPrice(modelId: string): string {
@@ -183,14 +188,16 @@ export interface ForkCostEstimate {
 export function estimateForkCost(input: ForkCostEstimateInput): ForkCostEstimate {
   const { task, stage1Profile, stage2Profile, quick = false, verify = false, forkSessionSnapshotJsonl = "" } = input;
 
+  const charsPerToken = getTokenEstimationRatio();
+
   // Base input tokens: task + session snapshot + prompt overhead
   const snapshotChars = forkSessionSnapshotJsonl.length;
   const taskChars = task.length;
   const baseInputChars = snapshotChars + taskChars + 2000;
-  const inputTokens = Math.ceil(baseInputChars / 4);
+  const inputTokens = Math.ceil(baseInputChars / charsPerToken);
 
   // Estimated output tokens scales with task complexity
-  const outputTokens = Math.min(4000, Math.max(500, Math.ceil(taskChars / 4) + 500));
+  const outputTokens = Math.min(4000, Math.max(500, Math.ceil(taskChars / charsPerToken) + 500));
 
   const stage1Price = lookupModelPrice(stage1Profile.id);
   const stage2Price = lookupModelPrice(stage2Profile.id);

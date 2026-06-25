@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it, beforeEach, afterEach } from "node:test";
 import { parseInheritedCliArgs } from "../src/runner-cli.js";
 import { processPiEvent, getFinalAssistantText, stableStringify } from "../src/runner-events.js";
-import { buildSessionSnapshotJsonl, resolveStageProfiles, formatResultContent, formatForkResultOutput, estimateSessionSize, checkSessionCostAlert, setTokenEstimationRatio } from "../src/extension-context.js";
+import { buildSessionSnapshotJsonl, resolveStageProfiles, formatResultContent, formatForkResultOutput, estimateSessionSize, checkSessionCostAlert, setTokenEstimationRatio, estimateForkCost, formatModelPrice } from "../src/extension-context.js";
 import { formatStage2Report, parseStage2Report, isStage1Findings, parseStage1Findings } from "../src/json-extract.js";
 import { buildPiArgs, estimateCommandLineLength, appendTaskToSessionJsonl } from "../src/fork-stage.js";
 import { buildFileReviewPrompt } from "../src/prompts.js";
@@ -266,6 +266,60 @@ describe("checkSessionCostAlert (extension-context.ts)", () => {
   });
 });
 
+describe("estimateForkCost (extension-context.ts)", () => {
+  const stage1Profile = { provider: "openai", id: "gpt-5-mini", thinking: "minimal" as const };
+  const stage2Profile = { provider: "openai", id: "gpt-5", thinking: "xhigh" as const };
+
+  it("uses configured token estimation ratio", () => {
+    setTokenEstimationRatio(4);
+    const base = estimateForkCost({ task: "explore auth", stage1Profile, stage2Profile });
+    setTokenEstimationRatio(8);
+    const half = estimateForkCost({ task: "explore auth", stage1Profile, stage2Profile });
+    assert.ok(half.inputTokens < base.inputTokens, "higher chars/token should lower token estimate");
+    assert.ok(half.outputTokens < base.outputTokens, "higher chars/token should lower output estimate");
+    setTokenEstimationRatio(4);
+  });
+
+  it("returns zero when prices are unknown", () => {
+    const result = estimateForkCost({
+      task: "explore",
+      stage1Profile: { provider: "x", id: "unknown-model", thinking: "minimal" as const },
+      stage2Profile: { provider: "x", id: "other-unknown", thinking: "xhigh" as const },
+    });
+    assert.strictEqual(result.cost, 0);
+  });
+
+  it("doubles stage1 cost in verify mode", () => {
+    const normal = estimateForkCost({ task: "explore", stage1Profile, stage2Profile });
+    const verify = estimateForkCost({ task: "explore", stage1Profile, stage2Profile, verify: true });
+    assert.ok(verify.cost > normal.cost);
+  });
+
+  it("skips stage2 cost in quick mode", () => {
+    const quick = estimateForkCost({ task: "explore", stage1Profile, stage2Profile, quick: true });
+    const full = estimateForkCost({ task: "explore", stage1Profile, stage2Profile });
+    assert.ok(quick.cost < full.cost);
+  });
+});
+
+describe("formatModelPrice (extension-context.ts)", () => {
+  it("formats known model prices", () => {
+    const text = formatModelPrice("gpt-5");
+    assert.match(text, /\$[\d.]+ in/);
+    assert.match(text, /\$[\d.]+ out per 1M tokens/);
+  });
+
+  it("returns unknown for unrecognized models", () => {
+    assert.strictEqual(formatModelPrice("zzzz-unknown"), "unknown");
+  });
+
+  it("prefers exact match over substring to avoid mis-pricing", () => {
+    const mini = formatModelPrice("gpt-5-mini");
+    const full = formatModelPrice("gpt-5");
+    assert.notStrictEqual(mini, full);
+  });
+});
+
 describe("formatStage2Report (json-extract.ts)", () => {
   it("includes grounding score and ungrounded claims", () => {
     const report = {
@@ -344,7 +398,7 @@ describe("buildPiArgs (fork-stage.ts)", () => {
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { memoryClear, memoryGetTopic, indexFindings, memoryForget } from "../src/memory.js";
+import { memoryClear, memoryGetTopic, indexFindings, memoryForget, topicHasStaleFindings } from "../src/memory.js";
 
 describe("memory refresh integration", () => {
   let cwd: string;
@@ -401,6 +455,26 @@ describe("memory refresh integration", () => {
     assert.strictEqual(memoryGetTopic(cwd, "payment-gateway"), null);
     memoryClear(cwd);
     try { rmSync(cwd, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it("detects stale findings when files change", () => {
+    memoryClear(cwd);
+    indexFindings({
+      task: "explore types module",
+      resultText: "Core types live in `src/types.ts`.",
+      stage1Model: "flash",
+      stage2Model: "pro",
+      isReview: false,
+      quick: false,
+      cost: 0,
+      cwd,
+    });
+    const entry = memoryGetTopic(cwd, "types-module")!;
+    assert.strictEqual(topicHasStaleFindings(entry, cwd), false);
+
+    writeFileSync(join(cwd, "src", "types.ts"), "export interface Changed {}\n", "utf-8");
+    assert.strictEqual(topicHasStaleFindings(entry, cwd), true);
+    memoryClear(cwd);
   });
 });
 

@@ -3,7 +3,7 @@ import { describe, it, afterEach } from "node:test";
 import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { generateProjectMap, loadProjectMap, saveProjectMap, getMapPath, summarizeMapForPrompt } from "../src/project-map.js";
+import { generateProjectMap, loadProjectMap, saveProjectMap, getMapPath } from "../src/project-map.js";
 
 describe("project-map", () => {
   const tempDirs: string[] = [];
@@ -112,18 +112,23 @@ describe("project-map", () => {
     assert.ok(existsSync(getMapPath(cwd)));
   });
 
-  it("summarizes map for prompt injection", () => {
-    const cwd = makeTempDir("cdev-map-summary-");
-    writeFileSync(join(cwd, "pubspec.yaml"), "name: x\ndependencies:\n  flutter:\n    sdk: flutter\n", "utf-8");
-    mkdirSync(join(cwd, "lib"));
-    writeFileSync(join(cwd, "lib", "main.dart"), "void main() {}\n", "utf-8");
-
+  it("caches loaded project map by mtime", () => {
+    const cwd = makeTempDir("cdev-map-cache-");
+    writeFileSync(join(cwd, "package.json"), JSON.stringify({ name: "cached" }), "utf-8");
     const map = generateProjectMap(cwd);
-    const summary = summarizeMapForPrompt(map);
-    assert.ok(summary.includes("<project_map>"));
-    assert.ok(summary.includes("Dart"));
-    assert.ok(summary.includes("flutter-mobile") || summary.includes("Flutter"));
-    assert.ok(summary.includes("</project_map>"));
-    assert.ok(summary.includes("Boundaries:") || summary.includes("Source roots:"));
+    saveProjectMap(cwd, map);
+
+    const first = loadProjectMap(cwd);
+    const second = loadProjectMap(cwd);
+    assert.strictEqual(first, second);
+
+    // Mutate and save to update mtime, invalidating cache
+    const updated = generateProjectMap(cwd);
+    updated.project.name = "renamed";
+    saveProjectMap(cwd, updated);
+
+    const third = loadProjectMap(cwd);
+    assert.notStrictEqual(third, first);
+    assert.strictEqual(third?.project.name, "renamed");
   });
 });
