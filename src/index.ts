@@ -96,7 +96,7 @@ export default function (pi: ExtensionAPI) {
       "Run /cdev map to generate a project map. Scouts use it for context across any project type (Flutter, Spring Boot, Python, Go, etc.).",
       "Use /cdev scan for quick template-based stack detection, or /cdev scan deep for LLM-powered custom prompts.",
       "Use cdev with quick:true for follow-up file tracing, grep-style lookups, or when raw findings suffice.",
-      "Use cdev with verify:true for high-stakes exploration where accuracy matters more than speed or cost. verify runs scout twice and merges findings before forge.",
+       "Use cdev with verify:true only when the user explicitly asks for verification, cross-checking, or high-confidence exploration. Do not default to verify mode. verify runs scout twice and merges findings before forge.",
       "Use cdev with research:true to delegate issue investigation to a selected model. The model reports findings and a decision, but never edits code. The main agent owns any changes.",
       "Prefer cdev over bash/grep when you need to understand file relationships, not just find text matches.",
       "Tell cdev to surface ambiguities back to you — don't resolve them in the fork.",
