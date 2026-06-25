@@ -527,17 +527,23 @@ function detectFromPackageJson(cwd: string): {
   };
 }
 
+function extractNodeDependencies(pkgJson: Record<string, unknown> | null): { runtime: string[]; dev: string[] } {
+  const runtime = pkgJson?.dependencies;
+  const dev = pkgJson?.devDependencies;
+  return {
+    runtime: isRecordString(runtime) ? Object.keys(runtime) : [],
+    dev: isRecordString(dev) ? Object.keys(dev) : [],
+  };
+}
+
 function extractTopDependencies(cwd: string, languages: string[]): Record<string, string[]> {
   const deps: Record<string, string[]> = {};
 
   const pkgJson = readJsonSafe(join(cwd, "package.json"));
   if (pkgJson) {
-    const runtime = pkgJson.dependencies;
-    const dev = pkgJson.devDependencies;
-    const runtimeKeys = isRecordString(runtime) ? Object.keys(runtime) : [];
-    const devKeys = isRecordString(dev) ? Object.keys(dev) : [];
-    deps.node = runtimeKeys.slice(0, 30);
-    if (devKeys.length) deps.nodeDev = devKeys.slice(0, 20);
+    const node = extractNodeDependencies(pkgJson);
+    deps.node = node.runtime.slice(0, 40);
+    if (node.dev.length > 0) deps.nodeDev = node.dev.slice(0, 40);
   }
 
   const pubspec = tryReadText(join(cwd, "pubspec.yaml"));
@@ -561,20 +567,39 @@ function extractTopDependencies(cwd: string, languages: string[]): Record<string
       starters.push(`Spring Boot Starter: ${name}`);
     }
     if (starters.length) deps.springBoot = Array.from(new Set(starters)).slice(0, 30);
+
+    const gradleDeps: string[] = [];
+    const gradleDepRe = /(?:implementation|api|compileOnly|runtimeOnly|testImplementation|kapt|annotationProcessor)\s*['"]([^'"]+)['"]/g;
+    let gm: RegExpExecArray | null;
+    while ((gm = gradleDepRe.exec(gradle)) !== null) {
+      const coord = gm[1];
+      if (!gradleDeps.includes(coord)) gradleDeps.push(coord);
+    }
+    if (gradleDeps.length) deps.gradle = gradleDeps.slice(0, 60);
+
+    const javaVersion = gradle.match(/sourceCompatibility\s*=\s*['"]?([^\s'"]+)['"]?/)?.[1]
+      ?? gradle.match(/targetCompatibility\s*=\s*['"]?([^\s'"]+)['"]?/)?.[1]
+      ?? gradle.match(/JavaVersion\.VERSION_(\d+)/)?.[1];
+    if (javaVersion) deps.javaVersion = [javaVersion];
   }
 
   const pom = tryReadText(join(cwd, "pom.xml"));
   if (pom && (languages.includes("Java") || languages.includes("Kotlin"))) {
     const starters: string[] = [];
+    const mavenDeps: string[] = [];
     const dependencyBlockRe = /<dependency>([\s\S]*?)<\/dependency>/g;
     let depMatch: RegExpExecArray | null;
     while ((depMatch = dependencyBlockRe.exec(pom)) !== null) {
       const block = depMatch[1];
       const groupId = block.match(/<groupId>([^<]+)<\/groupId>/)?.[1];
-      const artifactId = block.match(/<artifactId>(spring-boot-starter-[\w-]+)<\/artifactId>/)?.[1];
-      if (groupId === "org.springframework.boot" && artifactId) {
+      const artifactId = block.match(/<artifactId>([^<]+)<\/artifactId>/)?.[1];
+      if (!groupId || !artifactId) continue;
+      const coord = `${groupId}:${artifactId}`;
+      if (groupId === "org.springframework.boot" && artifactId.startsWith("spring-boot-starter-")) {
         const name = artifactId.split("-").pop() ?? artifactId;
         starters.push(`Spring Boot Starter: ${name}`);
+      } else if (!mavenDeps.includes(coord)) {
+        mavenDeps.push(coord);
       }
     }
     if (starters.length) {
@@ -582,6 +607,20 @@ function extractTopDependencies(cwd: string, languages: string[]): Record<string
       for (const s of starters) existing.add(s);
       deps.springBoot = Array.from(existing).slice(0, 30);
     }
+    if (mavenDeps.length) deps.maven = mavenDeps.slice(0, 60);
+
+    const javaVersion = pom.match(/<java\.version>([^<]+)<\/java\.version>/)?.[1]
+      ?? pom.match(/<maven\.compiler\.source>([^<]+)<\/maven\.compiler\.source>/)?.[1]
+      ?? pom.match(/<source>([^<]+)<\/source>/)?.[1];
+    if (javaVersion) deps.javaVersion = [javaVersion];
+
+    const springBootParent = pom.match(/<parent>[\s\S]*?<groupId>org\.springframework\.boot<\/groupId>[\s\S]*?<artifactId>spring-boot-starter-parent<\/artifactId>[\s\S]*?<version>([^<]+)<\/version>[\s\S]*?<\/parent>/)?.[1];
+    const springBootPlugin = pom.match(/<groupId>org\.springframework\.boot<\/groupId>[\s\S]*?<artifactId>spring-boot-maven-plugin<\/artifactId>[\s\S]*?<version>([^<]+)<\/version>/)?.[1];
+    const springBootVersion = springBootParent ?? springBootPlugin;
+    if (springBootVersion) deps.springBootVersion = [springBootVersion];
+
+    const lombok = pom.includes("<artifactId>lombok</artifactId>");
+    if (lombok) deps.javaTools = [...(deps.javaTools || []), "Lombok"];
   }
 
   const cargo = tryReadText(join(cwd, "Cargo.toml"));
@@ -592,24 +631,26 @@ function extractTopDependencies(cwd: string, languages: string[]): Record<string
     } catch { /* ignore */ }
   }
 
-  const requirements = tryReadText(join(cwd, "requirements.txt"));
-  if (requirements && languages.includes("Python")) {
-    deps.python = requirements
-      .split("\n")
-      .map((line) => line.trim().split(/[=<>!~]/)[0])
-      .filter(Boolean)
-      .slice(0, 30);
-  }
+  if (languages.includes("Python")) {
+    const requirements = tryReadText(join(cwd, "requirements.txt"));
+    if (requirements) {
+      deps.python = requirements
+        .split("\n")
+        .map((line) => line.trim().split(/[=<>!~]/)[0])
+        .filter(Boolean)
+        .slice(0, 30);
+    }
 
-  const pyproject = tryReadText(join(cwd, "pyproject.toml"));
-  if (pyproject && languages.includes("Python")) {
-    try {
-      const parsed = parseToml(pyproject) as { project?: { dependencies?: string[] }; dependencies?: Record<string, string>; "dev-dependencies"?: Record<string, string> };
-      const pyDeps: string[] = [];
-      if (Array.isArray(parsed.project?.dependencies)) pyDeps.push(...parsed.project.dependencies);
-      if (parsed.dependencies) pyDeps.push(...Object.keys(parsed.dependencies));
-      if (pyDeps.length) deps.python = pyDeps.slice(0, 30);
-    } catch { /* ignore */ }
+    const pyproject = tryReadText(join(cwd, "pyproject.toml"));
+    if (pyproject) {
+      try {
+        const parsed = parseToml(pyproject) as { project?: { dependencies?: string[] }; dependencies?: Record<string, string>; "dev-dependencies"?: Record<string, string> };
+        const pyDeps: string[] = [];
+        if (Array.isArray(parsed.project?.dependencies)) pyDeps.push(...parsed.project.dependencies);
+        if (parsed.dependencies) pyDeps.push(...Object.keys(parsed.dependencies));
+        if (pyDeps.length) deps.python = pyDeps.slice(0, 30);
+      } catch { /* ignore */ }
+    }
   }
 
   return deps;
