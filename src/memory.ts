@@ -323,7 +323,7 @@ function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
   }
 
   const finding: CdevFindingRecord = {
-    text: resultText.slice(0, 500).replace(/\n/g, " "), // one-line-ish
+    text: resultText.slice(0, 2000).replace(/\n/g, " "), // one-line-ish; cap keeps fallback path extraction useful
     timestamp: Date.now(),
     stage,
     models,
@@ -632,7 +632,7 @@ export function memoryTopicCount(cwd: string): number {
     try {
       if (existsSync(memoryPath)) {
         const mtime = statSync(memoryPath).mtimeMs;
-        if (mtime === _topicCountCache.mtime) return _topicCountCache.count;
+        if (Math.floor(mtime) === Math.floor(_topicCountCache.mtime)) return _topicCountCache.count;
       } else if (_topicCountCache.count === 0) {
         return 0;
       }
@@ -643,7 +643,7 @@ export function memoryTopicCount(cwd: string): number {
   const memory = loadMemory(cwd);
   const count = Object.keys(memory.topics).length;
   try {
-    const mtime = existsSync(memoryPath) ? statSync(memoryPath).mtimeMs : 0;
+    const mtime = existsSync(memoryPath) ? Math.floor(statSync(memoryPath).mtimeMs) : 0;
     _topicCountCache = { cwd, count, mtime };
   } catch (err) {
     logWarn(cwd, "memoryTopicCount", "failed to update topic count cache", { error: String(err) });

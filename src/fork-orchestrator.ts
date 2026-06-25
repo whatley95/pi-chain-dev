@@ -16,6 +16,18 @@ function fmtDuration(ms: number | undefined): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function addUsage(into: UsageStats, usage: UsageStats | undefined | null): UsageStats {
+  if (!usage) return into;
+  into.input += usage.input || 0;
+  into.output += usage.output || 0;
+  into.cacheRead += usage.cacheRead || 0;
+  into.cacheWrite += usage.cacheWrite || 0;
+  into.cost += usage.cost || 0;
+  into.turns += usage.turns || 0;
+  into.contextTokens = Math.max(into.contextTokens, usage.contextTokens || 0);
+  return into;
+}
+
 export interface RunAutoForkOptions {
   cwd: string;
   task: string;
@@ -143,18 +155,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     }
 
     const combinedUsage: UsageStats = emptyUsage();
-    const addUsage = (usage: UsageStats | undefined | null) => {
-      if (!usage) return;
-      combinedUsage.input += usage.input || 0;
-      combinedUsage.output += usage.output || 0;
-      combinedUsage.cacheRead += usage.cacheRead || 0;
-      combinedUsage.cacheWrite += usage.cacheWrite || 0;
-      combinedUsage.cost += usage.cost || 0;
-      combinedUsage.turns += usage.turns || 0;
-      combinedUsage.contextTokens = Math.max(combinedUsage.contextTokens, usage.contextTokens || 0);
-    };
 
-    for (const w of workerRuns) addUsage(w.result.usage);
+    for (const w of workerRuns) addUsage(combinedUsage, w.result.usage);
 
     const maxDuration = Math.max(0, ...workerRuns.map((w) => w.result.durationMs ?? 0));
     const backupMaxDuration = useBackup && backupRuns
@@ -236,18 +238,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     }
 
     const combinedUsage: UsageStats = emptyUsage();
-    const addUsage = (usage: UsageStats | undefined | null) => {
-      if (!usage) return;
-      combinedUsage.input += usage.input || 0;
-      combinedUsage.output += usage.output || 0;
-      combinedUsage.cacheRead += usage.cacheRead || 0;
-      combinedUsage.cacheWrite += usage.cacheWrite || 0;
-      combinedUsage.cost += usage.cost || 0;
-      combinedUsage.turns += usage.turns || 0;
-      combinedUsage.contextTokens = Math.max(combinedUsage.contextTokens, usage.contextTokens || 0);
-    };
-    addUsage(runA.usage);
-    addUsage(runB.usage);
+    addUsage(combinedUsage, runA.usage);
+    addUsage(combinedUsage, runB.usage);
 
     const aDuration = fmtDuration(runA.durationMs);
     const bDuration = fmtDuration(runB.durationMs);
@@ -298,6 +290,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     const stage1Text = getFinalAssistantText(stage1Result.messages) || "";
     stage1Findings = parseStage1Findings(stage1Text);
     const validation = stage1Findings ? validateStage1Findings(stage1Findings, "exploration") : { valid: false, reason: "output was not valid JSON findings" };
+    const stage1Usage: UsageStats = stage1Result.usage ? { ...stage1Result.usage } : emptyUsage();
 
     const reExploreCheck = shouldReExplore(stage1Findings, verify);
     const gateCheck = stage1Findings ? evaluateConfidenceGates(stage1Findings, confidenceGates) : { passed: false, reasons: ["no valid findings"] };
@@ -339,6 +332,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     }
 
     if (retryResult) {
+      addUsage(stage1Usage, retryResult.usage);
       details.stage1 = retryResult;
       const retryText = getFinalAssistantText(retryResult.messages) || "";
       const retryFindings = parseStage1Findings(retryText);
@@ -348,32 +342,37 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
         stage1Findings = retryFindings;
         stage1Result = {
           ...retryResult,
+          usage: stage1Usage,
           stderr: [stage1Result.stderr, retryResult.stderr].filter(Boolean).join("\n"),
         };
       } else {
-        stage1Result.stderr += `\n[cdev] ${retryValidation.reason}; proceeding with raw text\n`;
+        stage1Result.stderr += `\n[cdev] ${retryValidation.reason}; proceeding with raw text`;
         stage1Findings = null;
+        stage1Result.usage = stage1Usage;
       }
     }
 
     if (secondRun && stage1Findings) {
+      addUsage(stage1Usage, secondRun.usage);
       const secondText = getFinalAssistantText(secondRun.messages) || "";
       const secondFindings = parseStage1Findings(secondText);
       const secondValidation = secondFindings ? validateStage1Findings(secondFindings, "coverage pass") : { valid: false, reason: "coverage pass output was not valid JSON findings" };
       if (secondValidation.valid && secondFindings) {
         stage1Findings = mergeStage1Findings(stage1Findings, secondFindings);
-        stage1Result.stderr += `\n[cdev] merged second pass: ${stage1Findings.findings.length} total findings\n`;
+        stage1Result = {
+          ...secondRun,
+          usage: stage1Usage,
+          stderr: [stage1Result.stderr, secondRun.stderr].filter(Boolean).join("\n"),
+        };
+        stage1Result.stderr += `\n[cdev] merged second pass: ${stage1Findings.findings.length} total findings`;
         const finalGate = evaluateConfidenceGates(stage1Findings, confidenceGates);
         if (!finalGate.passed) {
-          stage1Result.stderr += `\n[cdev] confidence gates still not met after second pass: ${finalGate.reasons.join("; ")}\n`;
+          stage1Result.stderr += `\n[cdev] confidence gates still not met after second pass: ${finalGate.reasons.join("; ")}`;
         }
       } else {
-        stage1Result.stderr += `\n[cdev] coverage pass invalid (${secondValidation.reason}); using first pass\n`;
+        stage1Result.stderr += `\n[cdev] coverage pass invalid (${secondValidation.reason}); using first pass`;
+        stage1Result.usage = stage1Usage;
       }
-      stage1Result = {
-        ...secondRun,
-        stderr: [stage1Result.stderr, secondRun.stderr].filter(Boolean).join("\n"),
-      };
     }
   }
 
@@ -432,18 +431,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     details.stage2 = planResult;
 
     const combinedUsage: UsageStats = emptyUsage();
-    const addUsage = (usage: UsageStats | undefined | null) => {
-      if (!usage) return;
-      combinedUsage.input += usage.input || 0;
-      combinedUsage.output += usage.output || 0;
-      combinedUsage.cacheRead += usage.cacheRead || 0;
-      combinedUsage.cacheWrite += usage.cacheWrite || 0;
-      combinedUsage.cost += usage.cost || 0;
-      combinedUsage.turns += usage.turns || 0;
-      combinedUsage.contextTokens = Math.max(combinedUsage.contextTokens, usage.contextTokens || 0);
-    };
-    addUsage(stage1Result.usage);
-    addUsage(planResult.usage);
+    addUsage(combinedUsage, stage1Result.usage);
+    addUsage(combinedUsage, planResult.usage);
 
     const finalResult: ForkResult = {
       task,
@@ -489,19 +478,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   details.stage2 = stage2Result;
 
   const combinedUsage: UsageStats = emptyUsage();
-  const addUsage = (usage: UsageStats | undefined | null) => {
-    if (!usage) return;
-    combinedUsage.input += usage.input || 0;
-    combinedUsage.output += usage.output || 0;
-    combinedUsage.cacheRead += usage.cacheRead || 0;
-    combinedUsage.cacheWrite += usage.cacheWrite || 0;
-    combinedUsage.cost += usage.cost || 0;
-    combinedUsage.turns += usage.turns || 0;
-    combinedUsage.contextTokens = Math.max(combinedUsage.contextTokens, usage.contextTokens || 0);
-  };
-
-  addUsage(stage1Result.usage);
-  addUsage(stage2Result.usage);
+  addUsage(combinedUsage, stage1Result.usage);
+  addUsage(combinedUsage, stage2Result.usage);
 
   const finalResult: ForkResult = {
     task,
