@@ -790,8 +790,6 @@ export async function executeCdevTool(
         customReviewPrompt: config.promptsEnabled ? config.prompts?.review : undefined,
         scoutTimeoutMs: config.profileTimeouts?.scout ?? config.scoutTimeoutMs,
         forgeTimeoutMs: config.profileTimeouts?.forge ?? config.forgeTimeoutMs,
-        defaultScoutTimeoutMs: config.scoutTimeoutMs,
-        defaultForgeTimeoutMs: config.forgeTimeoutMs,
         yoloReviewTimeoutMs: config.profileTimeouts?.yoloReview ?? config.forgeTimeoutMs,
         yoloFixTimeoutMs: config.profileTimeouts?.yoloFix ?? config.forgeTimeoutMs,
         onProgress: onYoloProgress,
@@ -899,8 +897,6 @@ export async function executeCdevTool(
       parallelBackup,
       scoutTimeoutMs: config.profileTimeouts?.scout ?? config.scoutTimeoutMs,
       forgeTimeoutMs: config.profileTimeouts?.forge ?? config.forgeTimeoutMs,
-      defaultScoutTimeoutMs: config.scoutTimeoutMs,
-      defaultForgeTimeoutMs: config.forgeTimeoutMs,
       confidenceGates: config.confidenceGates,
       onProgress,
       onUpdate: (update) => {

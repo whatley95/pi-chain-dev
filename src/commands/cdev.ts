@@ -337,21 +337,22 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: multi n [no-backup] task ──
-      const multiMatch = trimmed.match(/^multi\s+(\d{1,2})(?:\s+(no-backup))?\s+(.+)$/i);
+      const multiMatch = trimmed.match(/^multi\s+(\d{1,2})(?:\s+(backup|no-backup))?\s+(.+)$/i);
       if (multiMatch) {
         const n = parseInt(multiMatch[1], 10);
-        const noBackup = Boolean(multiMatch[2]);
+        const backupFlag = multiMatch[2]?.toLowerCase();
+        const useBackup = backupFlag === "backup" || (backupFlag === undefined && (config.parallelBackup ?? false));
         const multiTask = multiMatch[3].trim();
         if (n < 1 || n > 3 || !multiTask) {
-          ctx.ui.notify("Usage: /cdev multi <1-3> [no-backup] <task>", "warn");
+          ctx.ui.notify("Usage: /cdev multi <1-3> [backup|no-backup] <task>", "warn");
           return;
         }
         if (!loadProjectMap(ctx.cwd)) {
           ctx.ui.notify("Project map missing. Run /cdev map first to enable multi scouting.", "warn");
           return;
         }
-        ctx.ui.notify(`Queuing multi exploration (${n} scout${n > 1 ? "s" : ""}${noBackup ? ", no backup" : ""})...`, "info");
-        pi.sendUserMessage(`Use cdev with parallel=${n}, parallelBackup=${!noBackup} to: ${multiTask}`, { triggerTurn: true, deliverAs: "steer" });
+        ctx.ui.notify(`Queuing multi exploration (${n} scout${n > 1 ? "s" : ""}${useBackup ? ", backup on" : ", backup off"})...`, "info");
+        pi.sendUserMessage(`Use cdev with parallel=${n}, parallelBackup=${useBackup} to: ${multiTask}`, { triggerTurn: true, deliverAs: "steer" });
         return;
       }
 
@@ -597,7 +598,7 @@ export function registerCdevCommand(
             return;
           }
           const backupStr = await ctx.ui.select("Use backup scout on failure?", ["Yes", "No"]);
-          const noBackup = backupStr === "No";
+          const useBackup = backupStr === "Yes";
           if (!loadProjectMap(ctx.cwd)) {
             ctx.ui.notify("Project map missing. Run /cdev map first to enable multi scouting.", "warn");
             return;
@@ -607,15 +608,15 @@ export function registerCdevCommand(
             ctx.ui.notify("Cancelled — no task provided.", "warn");
             return;
           }
-          ctx.ui.notify(`Queuing multi exploration (${n} scout${n > 1 ? "s" : ""}${noBackup ? ", no backup" : ""})...`, "info");
-          pi.sendUserMessage(`Use cdev with parallel=${n}, parallelBackup=${!noBackup} to: ${task.trim()}`, { triggerTurn: true, deliverAs: "steer" });
+          ctx.ui.notify(`Queuing multi exploration (${n} scout${n > 1 ? "s" : ""}${useBackup ? ", backup on" : ", backup off"})...`, "info");
+          pi.sendUserMessage(`Use cdev with parallel=${n}, parallelBackup=${useBackup} to: ${task.trim()}`, { triggerTurn: true, deliverAs: "steer" });
           return;
         }
         const usage: Record<string, string> = {
           "Quick explore": "/cdev quick <task>",
           "Deep verify": "/cdev verify <task>",
           "Research issue": "/cdev research <issue or question>",
-          "Multi explore": "/cdev multi <1-3> [no-backup] <task>",
+          "Multi explore": "/cdev multi <1-3> [backup|no-backup] <task>",
           "Plan implementation": "/cdev plan <task>",
           "Review file or diff": "/cdev review <path-or-diff>",
         };
