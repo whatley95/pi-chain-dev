@@ -35,6 +35,8 @@ export interface RunAutoForkOptions {
   parallelBackup?: boolean;
   scoutTimeoutMs?: number;
   forgeTimeoutMs?: number;
+  defaultScoutTimeoutMs?: number;
+  defaultForgeTimeoutMs?: number;
   editMode?: boolean;
   confidenceGates?: ConfidenceGateConfig;
   onProgress?: (stage: string, model: string) => void;
@@ -56,8 +58,12 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
           confidenceGates,
           extensions = null, environment = {}, offline = true, signal } = opts;
 
-  const scoutTimeoutMs = Number.isFinite(opts.scoutTimeoutMs) && (opts.scoutTimeoutMs as number) > 0 ? (opts.scoutTimeoutMs as number) : 600_000;
-  const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeoutMs as number) > 0 ? (opts.forgeTimeoutMs as number) : 180_000;
+  const scoutTimeoutMs = Number.isFinite(opts.scoutTimeoutMs) && (opts.scoutTimeoutMs as number) > 0
+    ? (opts.scoutTimeoutMs as number)
+    : (Number.isFinite(opts.defaultScoutTimeoutMs) && (opts.defaultScoutTimeoutMs as number) > 0 ? (opts.defaultScoutTimeoutMs as number) : 600_000);
+  const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeoutMs as number) > 0
+    ? (opts.forgeTimeoutMs as number)
+    : (Number.isFinite(opts.defaultForgeTimeoutMs) && (opts.defaultForgeTimeoutMs as number) > 0 ? (opts.defaultForgeTimeoutMs as number) : 180_000);
 
   const details: AutoForkDetails = { stage1: null, stage2: null };
 

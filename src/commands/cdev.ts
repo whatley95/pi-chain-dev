@@ -676,7 +676,7 @@ function parseBooleanValue(raw: string): boolean | null {
   return null;
 }
 
-const CONFIG_KEYS: Record<string, { type: "boolean" | "number" | "seconds"; min?: number; max?: number }> = {
+const CONFIG_KEYS: Record<string, { type: "boolean" | "number" | "seconds" | "profileTimeouts"; min?: number; max?: number }> = {
   auto: { type: "boolean" },
   autoVerify: { type: "boolean" },
   autoCompactOnLimit: { type: "boolean" },
@@ -688,6 +688,7 @@ const CONFIG_KEYS: Record<string, { type: "boolean" | "number" | "seconds"; min?
   parallel: { type: "number", min: 1, max: 3 },
   scoutTimeoutMs: { type: "seconds", min: 30, max: 3600 },
   forgeTimeoutMs: { type: "seconds", min: 30, max: 3600 },
+  profileTimeouts: { type: "profileTimeouts" },
   modelContextLimit: { type: "number", min: 8192, max: 2000000 },
   tokenEstimationCharsPerToken: { type: "number", min: 1, max: 64 },
   maxForkCost: { type: "number", min: 0 },
@@ -730,6 +731,38 @@ async function handleConfig(trimmed: string, ctx: ExtensionContext, config: Auto
   const isProject = parts[0] === "project";
   if (isProject) parts.shift();
 
+  // Handle nested profileTimeouts keys: profileTimeouts.scout, profileTimeouts.forge, etc.
+  if (parts.length >= 1 && parts[0].startsWith("profileTimeouts.")) {
+    const nestedKey = parts[0].slice("profileTimeouts.".length);
+    const validFields = ["scout", "forge", "research", "review", "yoloReview", "yoloFix"];
+    if (!validFields.includes(nestedKey)) {
+      ctx.ui.notify(`Unknown profileTimeouts field "${nestedKey}". Use one of: ${validFields.join(", ")}`, "warn");
+      return true;
+    }
+    if (parts.length === 1) {
+      const value = (config.profileTimeouts as Record<string, unknown> | undefined)?.[nestedKey];
+      ctx.ui.notify(`profileTimeouts.${nestedKey}: ${formatConfigValue(value)}`, "info");
+      return true;
+    }
+    const rawValue = parts.slice(1).join(" ");
+    const seconds = parseInt(rawValue, 10);
+    if (Number.isNaN(seconds)) {
+      ctx.ui.notify(`Invalid number "${rawValue}".`, "warn");
+      return true;
+    }
+    const clamped = Math.max(30, Math.min(3600, seconds));
+    const merged: Record<string, number> = { ...(config.profileTimeouts ?? {}) };
+    merged[nestedKey] = clamped * 1000;
+    if (isProject) {
+      writeProjectSetting(ctx.cwd, "profileTimeouts", merged);
+      ctx.ui.notify(`Set project config profileTimeouts.${nestedKey} = ${clamped}s`, "info");
+    } else {
+      writeAgentSetting("profileTimeouts", merged);
+      ctx.ui.notify(`Set agent config profileTimeouts.${nestedKey} = ${clamped}s`, "info");
+    }
+    return true;
+  }
+
   if (parts.length === 1) {
     const key = parts[0];
     const value = (config as unknown as Record<string, unknown>)[key];
@@ -766,6 +799,9 @@ async function handleConfig(trimmed: string, ctx: ExtensionContext, config: Auto
       }
       const clamped = Math.max(schema.min ?? 1, Math.min(schema.max ?? Number.MAX_SAFE_INTEGER, seconds));
       parsed = clamped * 1000;
+    } else if (schema.type === "profileTimeouts") {
+      ctx.ui.notify(`Use /cdev config profileTimeouts.<field> <seconds> where field is one of: scout, forge, research, review, yoloReview, yoloFix`, "warn");
+      return true;
     } else {
       const num = parseFloat(rawValue);
       if (Number.isNaN(num)) {
