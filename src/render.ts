@@ -199,7 +199,8 @@ export function renderResult(
     const hasMore = textOut && textOut.split("\n").length > 1;
     if (hasMore) {
       const hint = keyHint("expand");
-      const hintText = hint && typeof hint === "string" && hint.trim() && hint.trim() !== "undefined" ? hint.trim() : "expand";
+      const clean = typeof hint === "string" ? hint.replace(/\s+/g, " ").trim() : "";
+      const hintText = clean && clean.toLowerCase() !== "undefined" ? clean : "expand";
       lines.push(`(${hintText})`);
     }
   }
