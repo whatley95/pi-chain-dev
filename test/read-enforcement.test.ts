@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { shouldBlockRead, shouldBlockGrep, getPreferCdevReadRule } from "../src/read-enforcement.js";
+import { shouldBlockRead, shouldBlockGrep, shouldBlockGlob, shouldBlockBash, getPreferCdevReadRule } from "../src/read-enforcement.js";
 
 describe("read-enforcement", () => {
   describe("shouldBlockRead", () => {
@@ -69,6 +69,67 @@ describe("read-enforcement", () => {
       const result = shouldBlockGrep("TODO", "src");
       assert.ok(result);
       assert.ok(result!.reason.includes("search for 'TODO' in src"));
+      assert.ok(result!.reason.includes("cdev({ quick:true"));
+    });
+  });
+
+  describe("shouldBlockGlob", () => {
+    it("blocks source-like glob patterns", () => {
+      assert.ok(shouldBlockGlob("src/**/*.ts"));
+      assert.ok(shouldBlockGlob("**/*.json"));
+      assert.ok(shouldBlockGlob("config/*.yaml"));
+    });
+
+    it("does not block binary glob patterns", () => {
+      assert.equal(shouldBlockGlob("**/*.png"), undefined);
+      assert.equal(shouldBlockGlob("**/*.zip"), undefined);
+    });
+
+    it("does not block glob outside the project", () => {
+      assert.equal(shouldBlockGlob("/etc/**/*.conf"), undefined);
+    });
+
+    it("includes an actionable reason", () => {
+      const result = shouldBlockGlob("src/**/*.ts");
+      assert.ok(result);
+      assert.ok(result!.reason.includes("list files matching 'src/**/*.ts'"));
+      assert.ok(result!.reason.includes("cdev({ quick:true"));
+    });
+  });
+
+  describe("shouldBlockBash", () => {
+    it("blocks file read commands", () => {
+      assert.ok(shouldBlockBash("cat src/index.ts"));
+      assert.ok(shouldBlockBash("head -n 20 config.yaml"));
+      assert.ok(shouldBlockBash("tail -f lib/foo.py"));
+    });
+
+    it("blocks search and discovery commands", () => {
+      assert.ok(shouldBlockBash("grep -r 'TODO' src"));
+      assert.ok(shouldBlockBash("rg 'function' src"));
+      assert.ok(shouldBlockBash("find src -name '*.ts'"));
+      assert.ok(shouldBlockBash("git ls-files"));
+      assert.ok(shouldBlockBash("git diff HEAD~1"));
+      assert.ok(shouldBlockBash("ls -R src"));
+    });
+
+    it("does not block build or run commands", () => {
+      assert.equal(shouldBlockBash("npm test"), undefined);
+      assert.equal(shouldBlockBash("npm run build"), undefined);
+      assert.equal(shouldBlockBash("node dist/index.js"), undefined);
+      assert.equal(shouldBlockBash("git status"), undefined);
+      assert.equal(shouldBlockBash("cd src && pwd"), undefined);
+    });
+
+    it("does not block bash reading external files", () => {
+      assert.equal(shouldBlockBash("cat /etc/hosts"), undefined);
+      assert.equal(shouldBlockBash("cat ~/.bashrc"), undefined);
+    });
+
+    it("includes an actionable reason", () => {
+      const result = shouldBlockBash("cat src/index.ts");
+      assert.ok(result);
+      assert.ok(result!.reason.includes("Direct bash 'cat src/index.ts' is disabled"));
       assert.ok(result!.reason.includes("cdev({ quick:true"));
     });
   });
