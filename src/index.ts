@@ -28,6 +28,7 @@ import {
 } from "./memory.js";
 import { getErrorCount, clearErrorLog } from "./logger.js";
 import { listSessions } from "./history.js";
+import { detectLoop, extractToolCallsFromEntries } from "./loop-detector.js";
 
 export default function (pi: ExtensionAPI) {
   let autoTurnCounter = 0;
@@ -75,6 +76,24 @@ export default function (pi: ExtensionAPI) {
         );
       }
     }
+
+    // Loop detection: if the parent session is re-reading the same report or
+    // repeating the same tool call, inject a steer to break out.
+    try {
+      const entries = ctx.sessionManager?.getEntries?.();
+      if (Array.isArray(entries) && entries.length > 0) {
+        const calls = extractToolCallsFromEntries(entries);
+        const loop = detectLoop(calls, { threshold: 3, windowSize: 12 });
+        if (loop.looping) {
+          pi.sendUserMessage(
+            `Loop detected: ${loop.reason}. ${loop.suggestion}`,
+            { deliverAs: "steer" },
+          );
+        }
+      }
+    } catch {
+      // best-effort loop detection
+    }
   });
 
   // ── Register cdev tool ──────────────────────────────────
@@ -106,6 +125,7 @@ export default function (pi: ExtensionAPI) {
       "Check /cdev status to see budget, model profiles, and session size before expensive forks.",
       "When a cdev report has a low groundingScore or ungroundedClaims, ask the user for clarification instead of acting on unverified claims.",
       "If a saved cdev report file appears corrupted or contains internal reasoning/thinking text, do not re-read it repeatedly. Read the actual source files directly and, if needed, run a fresh cdev task with reviewFile or the original task.",
+      "Never read the same cdev report more than once. After the first read, switch to reading the source files it references and apply edits directly.",
     ],
     parameters: Type.Object({
       task: Type.Optional(Type.String({

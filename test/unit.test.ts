@@ -280,9 +280,96 @@ describe("evaluateConfidenceGates()", () => {
   });
 });
 
+// ── loop-detector.ts: detectLoop ─────────────────────────
+
+import { detectLoop, extractToolCallsFromEntries } from "../src/loop-detector.js";
+
 // ── commands/cdev-help.ts: CDEV_SUBCOMMAND_HELP ─────────────────
 
 import { CDEV_SUBCOMMAND_HELP } from "../src/commands/cdev-help.js";
+
+describe("detectLoop", () => {
+  it("returns no loop for diverse calls", () => {
+    const calls = [
+      { toolName: "read", args: { path: "src/a.ts" } },
+      { toolName: "read", args: { path: "src/b.ts" } },
+      { toolName: "edit", args: { path: "src/a.ts" } },
+    ];
+    const result = detectLoop(calls, { threshold: 3 });
+    assert.equal(result.looping, false);
+  });
+
+  it("detects repeated reads of the same file", () => {
+    const calls = [
+      { toolName: "read", args: { path: ".pi/cdev/reports/fix.md" } },
+      { toolName: "read", args: { path: ".pi/cdev/reports/fix.md" } },
+      { toolName: "read", args: { path: ".pi/cdev/reports/fix.md" } },
+    ];
+    const result = detectLoop(calls, { threshold: 3 });
+    assert.equal(result.looping, true);
+    assert.ok(result.reason.includes("read"));
+    assert.ok(result.suggestion.includes("source files"));
+  });
+
+  it("detects report-only bouncing", () => {
+    const calls = [
+      { toolName: "read", args: { path: ".pi/cdev/reports/a.md" } },
+      { toolName: "read", args: { path: ".pi/cdev/reports/b.md" } },
+      { toolName: "read", args: { path: ".pi/cdev/reports/a.md" } },
+    ];
+    const result = detectLoop(calls, { threshold: 3 });
+    assert.equal(result.looping, true);
+    assert.ok(result.reason.includes("re-reading report"));
+  });
+
+  it("requires threshold repetitions", () => {
+    const calls = [
+      { toolName: "read", args: { path: "src/a.ts" } },
+      { toolName: "read", args: { path: "src/a.ts" } },
+    ];
+    const result = detectLoop(calls, { threshold: 3 });
+    assert.equal(result.looping, false);
+  });
+});
+
+describe("extractToolCallsFromEntries", () => {
+  it("extracts tool execution events", () => {
+    const entries = [
+      { type: "tool_execution_start", toolName: "read", args: { path: "src/a.ts" } },
+      { type: "tool_execution_end", toolName: "read", args: { path: "src/a.ts" } },
+    ];
+    const calls = extractToolCallsFromEntries(entries);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].toolName, "read");
+  });
+
+  it("extracts assistant tool_calls", () => {
+    const entries = [
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          tool_calls: [{ name: "read", arguments: { path: "src/b.ts" } }],
+        },
+      },
+    ];
+    const calls = extractToolCallsFromEntries(entries);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].args.path, "src/b.ts");
+  });
+
+  it("extracts toolResult messages", () => {
+    const entries = [
+      {
+        type: "message",
+        message: { role: "toolResult", toolName: "read", args: { path: "src/c.ts" } },
+      },
+    ];
+    const calls = extractToolCallsFromEntries(entries);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].toolName, "read");
+  });
+});
 
 describe("CDEV_SUBCOMMAND_HELP", () => {
   it("is a non-empty array of strings", () => {
