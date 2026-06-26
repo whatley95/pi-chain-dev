@@ -54,8 +54,8 @@ export function checkAndSendLoopSteer(
   }
 
   const message = loop.repeatedFile
-    ? `LOOP DETECTED: you are re-reading the same cdev report. STOP. Read the source files it references and apply edits directly. Do not read ${loop.repeatedFile} again.`
-    : `LOOP DETECTED: ${loop.reason}. STOP. ${loop.suggestion}`;
+    ? `LOOP DETECTED: you are re-reading the same cdev report. STOP. Read the source files it references and apply edits directly. Do not read ${loop.repeatedFile} again. If you are stuck, use cdev({ advisor:true, task:"how to proceed" }).`
+    : `LOOP DETECTED: ${loop.reason}. STOP. ${loop.suggestion} If you are stuck, use cdev({ advisor:true, task:"how to proceed" }).`;
   sendUserMessage(message, { deliverAs: "steer" });
   state.lastLoopSignature = signature;
   state.lastLoopSteerAt = now;
