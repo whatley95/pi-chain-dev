@@ -56,5 +56,10 @@ All three must pass. Tests are in `test/**/*.test.ts` and run with Node's built-
 - `src/extension-context.ts` — snapshots, cost tracking, status helpers.
 - `src/prompts.ts` — stage prompts.
 - `src/types.ts` — config and result types.
+- `src/read-enforcement.ts` — global system-prompt injection and `tool_call` blocking for `preferCdevRead`.
 
 When making changes, look for existing patterns in nearby files and mimic them.
+
+### How read-enforcement works
+
+The `preferCdevRead` config (default `true`) injects a system-prompt rule via the `before_agent_start` event and blocks direct `read` tool calls for source/config files via the `tool_call` event. To add similar global tool-choice rules, follow the same two-event pattern in a dedicated module and gate it behind a config key in `src/types.ts` and `src/config.ts`.

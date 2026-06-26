@@ -47,6 +47,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   memory: true,
   memoryAutoRefresh: false,
   themed: false,
+  preferCdevRead: true,
   autoVerify: false,
   parallel: 1,
   parallelBackup: false,
@@ -160,6 +161,7 @@ export function loadConfig(cwd: string): AutoForkConfig {
     memory: projectConfig.memory ?? globalConfig.memory ?? DEFAULT_CONFIG.memory,
     memoryAutoRefresh: projectConfig.memoryAutoRefresh ?? globalConfig.memoryAutoRefresh ?? DEFAULT_CONFIG.memoryAutoRefresh,
     themed: projectConfig.themed ?? globalConfig.themed ?? DEFAULT_CONFIG.themed,
+    preferCdevRead: projectConfig.preferCdevRead ?? globalConfig.preferCdevRead ?? DEFAULT_CONFIG.preferCdevRead,
     autoVerify: projectConfig.autoVerify ?? globalConfig.autoVerify ?? DEFAULT_CONFIG.autoVerify,
     parallel: projectConfig.parallel ?? globalConfig.parallel ?? DEFAULT_CONFIG.parallel,
     parallelBackup: projectConfig.parallelBackup ?? globalConfig.parallelBackup ?? DEFAULT_CONFIG.parallelBackup,
@@ -238,6 +240,7 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (typeof config.memory === "boolean") parsed.memory = config.memory;
     if (typeof config.memoryAutoRefresh === "boolean") parsed.memoryAutoRefresh = config.memoryAutoRefresh;
     if (typeof config.themed === "boolean") parsed.themed = config.themed;
+    if (typeof config.preferCdevRead === "boolean") parsed.preferCdevRead = config.preferCdevRead;
     if (typeof config.autoVerify === "boolean") parsed.autoVerify = config.autoVerify;
     if (typeof config.signature === "string") parsed.signature = config.signature;
     if (typeof config.parallel === "number") parsed.parallel = Math.max(1, Math.min(3, Number.isFinite(config.parallel) ? config.parallel : 1));

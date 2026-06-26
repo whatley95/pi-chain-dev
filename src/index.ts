@@ -33,10 +33,14 @@ import {
   refreshFromSessionEntries,
   checkAndSendLoopSteer,
 } from "./loop-detector-runtime.js";
+import { registerReadEnforcement } from "./read-enforcement.js";
 
 export default function (pi: ExtensionAPI) {
   let autoTurnCounter = 0;
   const loopState = registerRealtimeLoopDetection(pi);
+
+  // Enforce /cdev read for source files unless explicitly disabled.
+  registerReadEnforcement(pi);
 
   function resetAutoTurnCounter(): void {
     autoTurnCounter = 0;
@@ -116,6 +120,7 @@ export default function (pi: ExtensionAPI) {
       "Use cdev with yolo:true to run scout+forge followed by automatic review loops. By default the main agent applies fixes; set pi-chain-dev.yolo.autoApply to 'propose' for cdev-generated fix plans or 'auto' to let cdev edit files directly. Stop early and escalate to the user if reviews keep failing.",
       "After implementing findings from a cdev report, update the report file to check off Action Items and add implementation notes. Then suggest the user run /cdev review <reportPath> to verify the changes.",
       "Use cdev with plan:true for implementation roadmaps: risks, files, steps, checklist, and verification commands.",
+      "For complex or large tasks (multi-file changes, ambiguous requirements, or unfamiliar code), first use cdev with plan:true, then create a todo with /cdev todo <name> to track the checklist before editing files.",
       "Run /cdev map to generate a project map. Scouts use it for context across any project type (Flutter, Spring Boot, Python, Go, etc.).",
       "Use /cdev scan for quick template-based stack detection, or /cdev scan deep for LLM-powered custom prompts.",
       "Use cdev with quick:true for follow-up file tracing, grep-style lookups, reading files, tracing symbols, or explaining code when raw findings suffice.",

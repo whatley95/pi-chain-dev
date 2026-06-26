@@ -2,6 +2,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
 
+function sanitizeFileName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_").replace(/(^_+|_+$)/g, "");
+}
+
 function levenshtein(a: string, b: string): number {
   if (a.length < b.length) return levenshtein(b, a);
   if (b.length === 0) return a.length;
@@ -55,7 +59,7 @@ export function registerCdevCommand(
   updateAutoStatus: (ctx: ExtensionContext) => void,
 ): void {
   pi.registerCommand("cdev", {
-    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, read <paths>, verify <task>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off",
+    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, read <paths>, grep <pattern>, trace <symbol>, explain <path|symbol>, verify <task>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off, read-enforcement on|off, todo <name>",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
 
@@ -90,6 +94,39 @@ export function registerCdevCommand(
         const enable = trimmed === "auto-compact on";
         writeAgentSetting("autoCompactOnLimit", enable);
         ctx.ui.notify(`cdev auto-compact ${enable ? "ON" : "OFF"} — ${enable ? "will compact parent session when snapshot nears model limit" : "will only warn near model limit"}`, "info");
+        return;
+      }
+
+      // ── Subcommand: read-enforcement on/off ──
+      const readEnforcementMatch = trimmed.match(/^read-enforcement\s+(on|off)$/);
+      if (readEnforcementMatch) {
+        const enable = readEnforcementMatch[1] === "on";
+        writeAgentSetting("preferCdevRead", enable);
+        ctx.ui.notify(`cdev read-enforcement ${enable ? "ON" : "OFF"} — ${enable ? "direct read tool calls for source files will be blocked; use /cdev read instead" : "direct read tool calls are allowed"}`, "info");
+        return;
+      }
+
+      // ── Subcommand: todo <name> ──
+      const todoMatch = trimmed.match(/^todo\s+(.+)$/);
+      if (todoMatch) {
+        const rawName = todoMatch[1].trim();
+        if (!rawName) {
+          ctx.ui.notify("Usage: /cdev todo <name>", "warn");
+          return;
+        }
+        const sessionId = ctx.sessionManager?.getHeader?.()
+          ? ((ctx.sessionManager.getHeader() as Record<string, unknown>)?.id as string | undefined) ?? "unknown"
+          : "unknown";
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const safeName = sanitizeFileName(rawName);
+        const fileName = `${sessionId}_${timestamp}_${safeName}.md`;
+        const todosDir = join(ctx.cwd, ".pi", "cdev", "todos");
+        const filePath = join(todosDir, fileName);
+        mkdirSync(todosDir, { recursive: true });
+        const template = `# TODO: ${rawName}\n\nCreated: ${new Date().toISOString()}\nSession: ${sessionId}\n\n## Goal\n\n\n## Checklist\n\n- [ ] \n\n## Notes\n\n`;
+        writeFileSync(filePath, template, "utf-8");
+        const relativePath = `.pi/cdev/todos/${fileName}`;
+        ctx.ui.notify(`Created todo: ${relativePath}`, "info");
         return;
       }
 
