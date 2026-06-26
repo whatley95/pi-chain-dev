@@ -126,6 +126,7 @@ export default function (pi: ExtensionAPI) {
       "Check /cdev status to see budget, model profiles, and session size before expensive forks.",
       "When a cdev report has a low groundingScore or ungroundedClaims, ask the user for clarification instead of acting on unverified claims.",
       "If a saved cdev report file appears corrupted or contains internal reasoning/thinking text, do not re-read it repeatedly. Read the actual source files directly and, if needed, run a fresh cdev task with reviewFile or the original task.",
+      "RULE: Do not read the same file under .pi/cdev/reports/ more than once per turn. If you catch yourself about to re-read a cdev report, stop and read the source files it references instead.",
       "Never read the same cdev report more than once. After the first read, switch to reading the source files it references and apply edits directly.",
     ],
     parameters: Type.Object({

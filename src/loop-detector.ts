@@ -52,6 +52,18 @@ function isReportPath(path: string): boolean {
   return path.includes(".pi/cdev/reports/");
 }
 
+function hasReadRecentSourceFile(calls: ToolCallRecord[]): boolean {
+  let foundSourceRead = false;
+  for (let i = calls.length - 1; i >= 0; i--) {
+    const c = calls[i];
+    const target = toolTarget(c);
+    if (c.toolName === "read" && target && !isReportPath(target)) {
+      foundSourceRead = true;
+    }
+  }
+  return foundSourceRead;
+}
+
 export function detectLoop(
   recentCalls: ToolCallRecord[],
   options: LoopDetectorOptions = {},
@@ -79,6 +91,16 @@ export function detectLoop(
     }
     if (consecutive >= threshold && target) {
       const isReport = isReportPath(target);
+      const sourceFileReadAfterReport = isReport && hasReadRecentSourceFile(calls);
+      if (isReport && consecutive >= 2 && !sourceFileReadAfterReport) {
+        return {
+          looping: true,
+          reason: `${current.toolName} called ${consecutive} times on the same cdev report`,
+          suggestion: "Stop repeating read on this report. Read the source files the report references and apply edits directly.",
+          repeatedFile: target,
+          repeatedTool: current.toolName,
+        };
+      }
       return {
         looping: true,
         reason: `${current.toolName} called ${consecutive} times on the same target`,
