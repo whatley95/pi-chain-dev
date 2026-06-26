@@ -465,7 +465,10 @@ export function formatForkResultOutput(result: ForkResult, details: AutoForkDeta
   if (plan) {
     return formatPlanReport(plan);
   }
-  return formatResultContent(result, details);
+  // If stage 2 produced text but it didn't parse as structured JSON, still
+  // return the raw text so the LLM can see the actual output rather than
+  // a generic stage header.
+  return stage2Text;
 }
 
 export function updateForkCostStatus(ctx: ExtensionContext): void {
