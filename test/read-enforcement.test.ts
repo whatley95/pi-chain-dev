@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { shouldBlockRead, shouldBlockGrep, shouldBlockGlob, shouldBlockBash, getPreferCdevReadRule } from "../src/read-enforcement.js";
+import { shouldBlockRead, shouldBlockGrep, shouldBlockGlob, shouldBlockBash, shouldBlockDiff, shouldBlockRepeatedRead, shouldBlockIntrospection, getPreferCdevReadRule } from "../src/read-enforcement.js";
 
 describe("read-enforcement", () => {
   describe("shouldBlockRead", () => {
@@ -130,6 +130,68 @@ describe("read-enforcement", () => {
       const result = shouldBlockBash("cat src/index.ts");
       assert.ok(result);
       assert.ok(result!.reason.includes("Direct bash 'cat src/index.ts' is disabled"));
+      assert.ok(result!.reason.includes("cdev({ quick:true"));
+    });
+  });
+
+  describe("shouldBlockDiff", () => {
+    it("blocks direct diff tool calls", () => {
+      assert.ok(shouldBlockDiff("HEAD~1"));
+      assert.ok(shouldBlockDiff("main..feature"));
+    });
+
+    it("does not block empty diff specs", () => {
+      assert.equal(shouldBlockDiff(""), undefined);
+    });
+
+    it("includes an actionable reason", () => {
+      const result = shouldBlockDiff("HEAD~1");
+      assert.ok(result);
+      assert.ok(result!.reason.includes("/cdev review HEAD~1"));
+      assert.ok(result!.reason.includes("cdev({ review:true, diffSpec:\"HEAD~1\""));
+    });
+  });
+
+  describe("shouldBlockRepeatedRead", () => {
+    it("blocks repeated reads within the same turn", () => {
+      const seen = new Set<string>();
+      seen.add("src/foo.ts");
+      const result = shouldBlockRepeatedRead("src/foo.ts", seen);
+      assert.ok(result);
+      assert.ok(result!.reason.includes("already used this turn"));
+    });
+
+    it("does not block first read", () => {
+      const seen = new Set<string>();
+      assert.equal(shouldBlockRepeatedRead("src/foo.ts", seen), undefined);
+    });
+  });
+
+  describe("shouldBlockIntrospection", () => {
+    it("blocks known introspection tools on project paths", () => {
+      assert.ok(shouldBlockIntrospection("typescript", { path: "src/index.ts" }));
+      assert.ok(shouldBlockIntrospection("symbols", { file: "lib/foo.py" }));
+      assert.ok(shouldBlockIntrospection("trace", { pattern: "src/**/*.ts" }));
+    });
+
+    it("does not block unknown tools", () => {
+      assert.equal(shouldBlockIntrospection("npm", { path: "package.json" }), undefined);
+      assert.equal(shouldBlockIntrospection("docker", {}), undefined);
+    });
+
+    it("does not block introspection tools targeting external files", () => {
+      assert.equal(shouldBlockIntrospection("typescript", { path: "/etc/foo.ts" }), undefined);
+      assert.equal(shouldBlockIntrospection("python_ast", { path: "~/.config/bar.py" }), undefined);
+    });
+
+    it("blocks introspection tools with no project path", () => {
+      assert.ok(shouldBlockIntrospection("analyze", {}));
+    });
+
+    it("includes an actionable reason", () => {
+      const result = shouldBlockIntrospection("typescript", { path: "src/index.ts" });
+      assert.ok(result);
+      assert.ok(result!.reason.includes("Direct 'typescript' is disabled"));
       assert.ok(result!.reason.includes("cdev({ quick:true"));
     });
   });

@@ -14,9 +14,9 @@ const INJECTION_MARKER = "<!-- pi-chain-dev:enforce-cdev-tools -->";
 
 const PREFER_CDEV_READ_RULE = `
 ${INJECTION_MARKER}
-RULE — prefer cdev for source-file reads, search, and discovery:
-- For reading source code, verifying current code state, tracing symbols, searching, or listing files, use /cdev read <path>[:start-end] or cdev({ quick:true, task: "<describe what you need>" }).
-- Do NOT use the direct read, grep, glob, or bash tools for source files, config files, project documents, codebase searches, or file discovery.
+RULE — prefer cdev for source-file reads, search, discovery, and code analysis:
+- For reading source code, verifying current code state, tracing symbols, searching, listing files, or analyzing code structure, use /cdev read <path>[:start-end] or cdev({ quick:true, task: "<describe what you need>" }).
+- Do NOT use the direct read, grep, glob, bash, diff, or code-analysis tools for source files, config files, project documents, codebase searches, file discovery, diff reviews, or symbol/AST introspection.
 - Only use direct read for tiny snippets (under ~30 lines) when cdev is unavailable, or for binary/image files, external documentation, or files outside the project.
 ${INJECTION_MARKER}
 `.trim();
@@ -63,6 +63,28 @@ interface BashToolCallEventLike {
   input: { command?: string };
 }
 
+interface DiffToolCallEventLike {
+  toolName: "diff";
+  input: { spec?: string; path?: string; file_path?: string };
+}
+
+const INTROSPECTION_TOOLS = new Set([
+  "typescript",
+  "python_ast",
+  "python_ast_parse",
+  "parse_ast",
+  "symbols",
+  "trace",
+  "analyze",
+  "introspect",
+  "ast",
+  "lsp",
+  "tsc",
+  "pyright",
+  "mypy",
+  "eslint",
+]);
+
 export function getPreferCdevReadRule(): string {
   return PREFER_CDEV_READ_RULE;
 }
@@ -94,12 +116,41 @@ function formatBashBlockReason(command: string): string {
   return `Direct bash '${command}' is disabled for file reads and discovery. Use cdev({ quick:true, task: "${command}" }) instead.`;
 }
 
+function formatDiffBlockReason(spec: string): string {
+  return `Direct diff is disabled for code reviews. Use /cdev review ${spec} or cdev({ review:true, diffSpec:"${spec}" }) instead.`;
+}
+
+function formatIntrospectionBlockReason(toolName: string): string {
+  return `Direct '${toolName}' is disabled for code analysis. Use cdev({ quick:true, task: "analyze code with ${toolName}" }) instead.`;
+}
+
+function formatRepeatedReadReason(filePath: string): string {
+  return `Direct read of ${filePath} was already used this turn. Stop re-reading the same file; use the content you already have or run cdev({ quick:true, task: "summarize/reconcile ${filePath}" }) if needed.`;
+}
+
 function isProjectPath(filePath: string): boolean {
   const normalized = filePath.replace(/\\/g, "/").toLowerCase();
   if (normalized.startsWith("/") || normalized.startsWith("~") || /^[a-z]:/.test(normalized)) {
     return false;
   }
   return true;
+}
+
+function extractProjectPathFromArgs(args: Record<string, unknown>): string | undefined {
+  for (const key of ["path", "file_path", "file", "paths", "pattern"]) {
+    const value = args[key];
+    if (typeof value === "string" && value) {
+      return value;
+    }
+    if (Array.isArray(value) && value.length > 0 && typeof value[0] === "string") {
+      return value[0];
+    }
+  }
+  return undefined;
+}
+
+function isIntrospectionTool(toolName: string): boolean {
+  return INTROSPECTION_TOOLS.has(toolName.toLowerCase());
 }
 
 function looksLikeSourcePattern(filePath: string): boolean {
@@ -154,7 +205,26 @@ function looksLikeSourceBashCommand(command: string): boolean {
   return true;
 }
 
+interface GenericToolCallEventLike {
+  toolName: string;
+  input: Record<string, unknown>;
+}
+
+type ToolCallEventLike =
+  | ReadToolCallEventLike
+  | GrepToolCallEventLike
+  | GlobToolCallEventLike
+  | BashToolCallEventLike
+  | DiffToolCallEventLike
+  | GenericToolCallEventLike;
+
 export function registerReadEnforcement(pi: ExtensionAPI): void {
+  const readPathsThisTurn = new Set<string>();
+
+  pi.on("turn_start", async () => {
+    readPathsThisTurn.clear();
+  });
+
   pi.on("before_agent_start", (event, ctx: ExtensionContext) => {
     const config = loadConfig(ctx.cwd);
     if (!config.enforceCdevTools) return undefined;
@@ -168,17 +238,21 @@ export function registerReadEnforcement(pi: ExtensionAPI): void {
   pi.on("tool_call", (event, ctx: ExtensionContext) => {
     const config = loadConfig(ctx.cwd);
     if (!config.enforceCdevTools) return undefined;
-    const toolEvent = event as ReadToolCallEventLike | GrepToolCallEventLike | GlobToolCallEventLike | BashToolCallEventLike;
+    const toolEvent = event as ToolCallEventLike;
     if (toolEvent.toolName === "read") {
-      const rawPath = toolEvent.input.path ?? toolEvent.input.file_path;
+      const rawPath = (toolEvent.input.path ?? toolEvent.input.file_path) as string | undefined;
       if (!rawPath) return undefined;
+      if (readPathsThisTurn.has(rawPath)) {
+        return { block: true, reason: formatRepeatedReadReason(rawPath) };
+      }
       if (!looksLikeSourceFile(rawPath)) return undefined;
+      readPathsThisTurn.add(rawPath);
       return { block: true, reason: formatBlockReason(rawPath) };
     }
     if (toolEvent.toolName === "grep") {
-      const pattern = toolEvent.input.pattern ?? "";
-      const searchPath = toolEvent.input.path ?? "";
-      const include = toolEvent.input.include ?? "";
+      const pattern = (toolEvent.input.pattern ?? "") as string;
+      const searchPath = (toolEvent.input.path ?? "") as string;
+      const include = (toolEvent.input.include ?? "") as string;
       if (!pattern) return undefined;
       const effectivePath = searchPath || include;
       if (effectivePath && !looksLikeSourcePattern(effectivePath)) return undefined;
@@ -186,17 +260,28 @@ export function registerReadEnforcement(pi: ExtensionAPI): void {
       return { block: true, reason: formatGrepBlockReason(pattern, scope) };
     }
     if (toolEvent.toolName === "glob") {
-      const pattern = toolEvent.input.pattern ?? "";
+      const pattern = (toolEvent.input.pattern ?? "") as string;
       if (!pattern) return undefined;
       if (!looksLikeSourcePattern(pattern)) return undefined;
       return { block: true, reason: formatGlobBlockReason(pattern) };
     }
     if (toolEvent.toolName === "bash") {
-      const command = toolEvent.input.command ?? "";
+      const command = (toolEvent.input.command ?? "") as string;
       if (!command) return undefined;
       if (!isReadLikeBashCommand(command)) return undefined;
       if (!looksLikeSourceBashCommand(command)) return undefined;
       return { block: true, reason: formatBashBlockReason(command.trim()) };
+    }
+    if (toolEvent.toolName === "diff") {
+      const spec = ((toolEvent.input.spec ?? toolEvent.input.path ?? toolEvent.input.file_path) ?? "") as string;
+      if (!spec) return undefined;
+      return { block: true, reason: formatDiffBlockReason(spec) };
+    }
+    if (isIntrospectionTool(String(toolEvent.toolName))) {
+      const args = toolEvent.input as Record<string, unknown>;
+      const targetPath = extractProjectPathFromArgs(args);
+      if (targetPath && !looksLikeSourcePattern(targetPath)) return undefined;
+      return { block: true, reason: formatIntrospectionBlockReason(String(toolEvent.toolName)) };
     }
     return undefined;
   });
@@ -217,6 +302,23 @@ export function shouldBlockGrep(pattern: string, filePath: string, include?: str
 export function shouldBlockGlob(pattern: string): { block: true; reason: string } | undefined {
   if (!looksLikeSourcePattern(pattern)) return undefined;
   return { block: true, reason: formatGlobBlockReason(pattern) };
+}
+
+export function shouldBlockDiff(spec: string): { block: true; reason: string } | undefined {
+  if (!spec) return undefined;
+  return { block: true, reason: formatDiffBlockReason(spec) };
+}
+
+export function shouldBlockRepeatedRead(filePath: string, seenThisTurn: Set<string>): { block: true; reason: string } | undefined {
+  if (!seenThisTurn.has(filePath)) return undefined;
+  return { block: true, reason: formatRepeatedReadReason(filePath) };
+}
+
+export function shouldBlockIntrospection(toolName: string, args: Record<string, unknown> = {}): { block: true; reason: string } | undefined {
+  if (!isIntrospectionTool(toolName)) return undefined;
+  const targetPath = extractProjectPathFromArgs(args);
+  if (targetPath && !looksLikeSourcePattern(targetPath)) return undefined;
+  return { block: true, reason: formatIntrospectionBlockReason(toolName) };
 }
 
 export function shouldBlockBash(command: string): { block: true; reason: string } | undefined {
