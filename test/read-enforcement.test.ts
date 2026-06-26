@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { shouldBlockRead, getPreferCdevReadRule } from "../src/read-enforcement.js";
+import { shouldBlockRead, shouldBlockGrep, getPreferCdevReadRule } from "../src/read-enforcement.js";
 
 describe("read-enforcement", () => {
   describe("shouldBlockRead", () => {
@@ -41,6 +41,35 @@ describe("read-enforcement", () => {
       assert.ok(rule.length > 0);
       assert.ok(rule.includes("pi-chain-dev:enforce-cdev-tools"));
       assert.ok(rule.includes("/cdev read"));
+    });
+  });
+
+  describe("shouldBlockGrep", () => {
+    it("blocks grep on source paths", () => {
+      assert.ok(shouldBlockGrep("function", "src"));
+      assert.ok(shouldBlockGrep("TODO", "src/**/*.ts"));
+      assert.ok(shouldBlockGrep("export", "lib", "*.ts"));
+    });
+
+    it("blocks grep with no scope", () => {
+      assert.ok(shouldBlockGrep("foo", ""));
+    });
+
+    it("does not block grep outside the project", () => {
+      assert.equal(shouldBlockGrep("foo", "/etc"), undefined);
+      assert.equal(shouldBlockGrep("foo", "~/.config"), undefined);
+    });
+
+    it("does not block grep in excluded directories", () => {
+      assert.equal(shouldBlockGrep("foo", "node_modules/bar"), undefined);
+      assert.equal(shouldBlockGrep("foo", ".git/hooks"), undefined);
+    });
+
+    it("includes an actionable reason", () => {
+      const result = shouldBlockGrep("TODO", "src");
+      assert.ok(result);
+      assert.ok(result!.reason.includes("search for 'TODO' in src"));
+      assert.ok(result!.reason.includes("cdev({ quick:true"));
     });
   });
 });
