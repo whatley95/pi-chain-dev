@@ -33,6 +33,8 @@ All three must pass. Tests are in `test/**/*.test.ts` and run with Node's built-
 - Follow the existing style: no unnecessary comments, strict TypeScript, named exports.
 - Do not commit `.pi/` — it is already gitignored.
 - Do not add documentation files unless explicitly asked.
+- NEVER commit changes unless the user explicitly asks you to. It is VERY IMPORTANT to only commit when explicitly asked, otherwise the user will feel that you are being too proactive.
+- NEVER auto-commit after running quality gates or fixing code. Wait for explicit user confirmation before committing.
 
 ### Useful commands
 
