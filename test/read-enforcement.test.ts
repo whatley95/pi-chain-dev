@@ -49,10 +49,11 @@ describe("read-enforcement", () => {
       assert.ok(rule.includes("up to THREE"));
     });
 
-    it("mentions controlled bypass with reason", () => {
+    it("mentions controlled bypass example with reason", () => {
       const rule = getPreferCdevReadRule();
       assert.ok(rule.includes("CONTROLLED BYPASS"));
-      assert.ok(rule.includes("reason"));
+      assert.ok(rule.includes('read({ path:'));
+      assert.ok(rule.includes('reason:'));
     });
   });
 

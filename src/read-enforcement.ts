@@ -18,7 +18,7 @@ RULE — prefer cdev for source-file reads, search, discovery, and code analysis
 - For reading source code, verifying current code state, tracing symbols, searching, listing files, or analyzing code structure, use /cdev read <path>[:start-end] or cdev({ quick:true, task: "<describe what you need>" }).
 - Do NOT use the direct read, grep, glob, bash, diff, or code-analysis tools for source files, config files, project documents, codebase searches, file discovery, diff reviews, or symbol/AST introspection.
 - ESCALATION: If a cdev quick/advisor/research call returns low confidence, missing data, or incomplete findings, you may read up to THREE specific project files directly to verify. After those three reads, go back to using cdev for any broader follow-up.
-- CONTROLLED BYPASS: You may also read up to TWO additional source/config files directly per turn when you have a specific, justified reason (e.g., "need exact line numbers for an edit", "cdev already returned this file path", "reading a tiny snippet under 30 lines"). Provide the reason in the 'reason' field of the read tool call. Repeated reads of the same file are still blocked within one turn.
+- CONTROLLED BYPASS: You may also read up to TWO additional source/config files directly per turn when you have a specific, justified reason. To use a bypass, call the read tool with a 'reason' field, for example: read({ path: "src/foo.ts:1-40", reason: "verify cdev findings before editing" }) or read({ path: "src/foo.ts", reason: "need exact line numbers for an edit" }). Repeated reads of the same file are still blocked within one turn.
 ${INJECTION_MARKER}
 `.trim();
 
@@ -129,7 +129,7 @@ function formatBlockReason(filePath: string, bypassRemaining: number, escalation
     msg += ` You have ${escalationRemaining} escalation read(s) left from the last low-confidence cdev result.`;
   }
   if (bypassRemaining > 0) {
-    msg += ` Or provide a reason in the 'reason' field to use one of ${bypassRemaining} controlled bypass read(s) this turn.`;
+    msg += ` Or use a controlled bypass: read({ path: "${filePath}", reason: "<concrete justification>" }). You have ${bypassRemaining} bypass read(s) left this turn.`;
   }
   return msg;
 }
