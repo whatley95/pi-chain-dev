@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { shouldBlockRead, shouldBlockGrep, shouldBlockGlob, shouldBlockBash, shouldBlockDiff, shouldBlockRepeatedRead, shouldBlockIntrospection, getPreferCdevReadRule } from "../src/read-enforcement.js";
+import { shouldBlockRead, shouldBlockGrep, shouldBlockGlob, shouldBlockBash, shouldBlockDiff, shouldBlockRepeatedRead, shouldBlockIntrospection, getPreferCdevReadRule, registerReadEnforcement } from "../src/read-enforcement.js";
 
 describe("read-enforcement", () => {
   describe("shouldBlockRead", () => {
@@ -49,11 +49,10 @@ describe("read-enforcement", () => {
       assert.ok(rule.includes("up to THREE"));
     });
 
-    it("mentions controlled bypass example with reason", () => {
+    it("mentions cooldown escape valve", () => {
       const rule = getPreferCdevReadRule();
-      assert.ok(rule.includes("CONTROLLED BYPASS"));
-      assert.ok(rule.includes('read({ path:'));
-      assert.ok(rule.includes('reason:'));
+      assert.ok(rule.includes("COOLDOWN ESCAPE VALVE"));
+      assert.ok(rule.includes("one-time cooldown read"));
     });
   });
 
@@ -177,6 +176,81 @@ describe("read-enforcement", () => {
     it("does not block first read", () => {
       const seen = new Set<string>();
       assert.equal(shouldBlockRepeatedRead("src/foo.ts", seen), undefined);
+    });
+  });
+
+  describe("cooldown state", () => {
+    it("tracks cooldown via registerReadEnforcement mock events", () => {
+      const events: { event: string; args: unknown[] }[] = [];
+      const handlers: Record<string, Array<(...args: unknown[]) => unknown>> = {};
+      const pi = {
+        on: (event: string, handler: (...args: unknown[]) => unknown) => {
+          events.push({ event, args: [] });
+          handlers[event] = handlers[event] || [];
+          handlers[event].push(handler);
+        },
+        sendUserMessage: (_message: string, _options?: Record<string, unknown>) => {
+          // no-op
+        },
+      };
+      registerReadEnforcement(pi as never);
+      const turnStart = handlers["turn_start"]?.[0];
+      const toolCall = handlers["tool_call"]?.[0];
+      assert.ok(turnStart);
+      assert.ok(toolCall);
+
+      turnStart();
+
+      const ctx = { cwd: process.cwd() } as never;
+      let blocked = 0;
+      for (let i = 0; i < 2; i++) {
+        const result = toolCall({ toolName: "read", input: { path: `src/file${i}.ts` } }, ctx);
+        if (result && (result as { block?: boolean }).block) blocked++;
+      }
+      assert.equal(blocked, 2);
+
+      // Third read should be allowed because cooldown threshold (2) was reached.
+      const cooldownRead = toolCall({ toolName: "read", input: { path: "src/rescue.ts" } }, ctx);
+      assert.equal(cooldownRead, undefined);
+
+      // Fourth read should be blocked again.
+      const afterCooldown = toolCall({ toolName: "read", input: { path: "src/after.ts" } }, ctx);
+      assert.ok(afterCooldown);
+      assert.ok((afterCooldown as { block?: boolean }).block);
+    });
+
+    it("resets cooldown after a cdev tool result", () => {
+      const handlers: Record<string, Array<(...args: unknown[]) => unknown>> = {};
+      const pi = {
+        on: (event: string, handler: (...args: unknown[]) => unknown) => {
+          handlers[event] = handlers[event] || [];
+          handlers[event].push(handler);
+        },
+        sendUserMessage: () => undefined,
+      };
+      registerReadEnforcement(pi as never);
+      const turnStart = handlers["turn_start"]?.[0];
+      const toolCall = handlers["tool_call"]?.[0];
+      const toolResult = handlers["tool_result"]?.[0];
+      assert.ok(turnStart && toolCall && toolResult);
+
+      turnStart();
+      const ctx = { cwd: process.cwd() } as never;
+
+      toolCall({ toolName: "read", input: { path: "src/a.ts" } }, ctx);
+      toolCall({ toolName: "read", input: { path: "src/b.ts" } }, ctx);
+
+      toolResult({ toolName: "cdev", result: { findings: [{ observation: "ok" }] } }, ctx);
+
+      // After a successful cdev result the block counter is reset, so the next read blocks.
+      const r1 = toolCall({ toolName: "read", input: { path: "src/c.ts" } }, ctx);
+      assert.ok((r1 as { block?: boolean }).block);
+      // Second block since cdev reaches threshold (2) and arms cooldown.
+      const r2 = toolCall({ toolName: "read", input: { path: "src/d.ts" } }, ctx);
+      assert.ok((r2 as { block?: boolean }).block);
+      // Third read is the cooldown escape valve.
+      const r3 = toolCall({ toolName: "read", input: { path: "src/e.ts" } }, ctx);
+      assert.equal(r3, undefined);
     });
   });
 

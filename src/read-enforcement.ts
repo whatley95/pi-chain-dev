@@ -19,6 +19,7 @@ RULE — prefer cdev for source-file reads, search, discovery, and code analysis
 - Do NOT use the direct read, grep, glob, bash, diff, or code-analysis tools for source files, config files, project documents, codebase searches, file discovery, diff reviews, or symbol/AST introspection.
 - ESCALATION: If a cdev quick/advisor/research call returns low confidence, missing data, or incomplete findings, you may read up to THREE specific project files directly to verify. After those three reads, go back to using cdev for any broader follow-up.
 - CONTROLLED BYPASS: You may also read up to TWO additional source/config files directly per turn when you have a specific, justified reason. To use a bypass, call the read tool with a 'reason' field, for example: read({ path: "src/foo.ts:1-40", reason: "verify cdev findings before editing" }) or read({ path: "src/foo.ts", reason: "need exact line numbers for an edit" }). Repeated reads of the same file are still blocked within one turn.
+- COOLDOWN ESCAPE VALVE: If direct reads are blocked several times in a row, a one-time cooldown read will be automatically granted. Use it to get unstuck, then return to /cdev for the rest of the task.
 ${INJECTION_MARKER}
 `.trim();
 
@@ -289,6 +290,21 @@ export function registerReadEnforcement(pi: ExtensionAPI): void {
   const readPathsThisTurn = new Set<string>();
   let readEscalationRemaining = 0;
   let controlledBypassRemaining = MAX_CONTROLLED_BYPASS_READS_PER_TURN;
+  let consecutiveBlocks = 0;
+  let cooldownActive = false;
+
+  function resetCooldown(): void {
+    consecutiveBlocks = 0;
+    cooldownActive = false;
+  }
+
+  function sendSteer(message: string): void {
+    try {
+      pi.sendUserMessage?.(message, { deliverAs: "steer" });
+    } catch {
+      // best-effort steer
+    }
+  }
 
   pi.on("turn_start", async () => {
     readPathsThisTurn.clear();
@@ -298,12 +314,15 @@ export function registerReadEnforcement(pi: ExtensionAPI): void {
 
   pi.on("tool_result", (_event, ctx: ExtensionContext) => {
     const config = loadConfig(ctx.cwd);
-    if (!config.enforceCdevTools || !config.allowCdevReadEscalation) return undefined;
+    if (!config.enforceCdevTools) return undefined;
     const toolResult = _event as { toolName?: string; result?: unknown } | undefined;
-    if (toolResult?.toolName !== "cdev") return undefined;
-    const signal = extractCdevQualitySignal(toolResult.result);
-    if (signal && isLowConfidence(signal)) {
-      readEscalationRemaining = Math.max(readEscalationRemaining, 3);
+    if (toolResult?.toolName === "cdev") {
+      resetCooldown();
+      if (!config.allowCdevReadEscalation) return undefined;
+      const signal = extractCdevQualitySignal(toolResult.result);
+      if (signal && isLowConfidence(signal)) {
+        readEscalationRemaining = Math.max(readEscalationRemaining, 3);
+      }
     }
     return undefined;
   });
@@ -321,6 +340,7 @@ export function registerReadEnforcement(pi: ExtensionAPI): void {
   pi.on("tool_call", (event, ctx: ExtensionContext) => {
     const config = loadConfig(ctx.cwd);
     if (!config.enforceCdevTools) return undefined;
+    const cooldownThreshold = config.cdevReadCooldownAfterBlocks ?? 3;
     const toolEvent = event as ToolCallEventLike;
     if (toolEvent.toolName === "read") {
       const rawPath = (toolEvent.input.path ?? toolEvent.input.file_path) as string | undefined;
@@ -329,6 +349,13 @@ export function registerReadEnforcement(pi: ExtensionAPI): void {
         return { block: true, reason: formatRepeatedReadReason(rawPath) };
       }
       if (!looksLikeSourceFile(rawPath)) return undefined;
+      if (cooldownActive && cooldownThreshold > 0) {
+        cooldownActive = false;
+        consecutiveBlocks = 0;
+        readPathsThisTurn.add(rawPath);
+        sendSteer(`Cooldown read used on ${rawPath}. Enforcement is back on — use /cdev read or cdev({ quick:true }) for further discovery.`);
+        return undefined;
+      }
       if (readEscalationRemaining > 0 && config.allowCdevReadEscalation) {
         readEscalationRemaining--;
         readPathsThisTurn.add(rawPath);
@@ -344,6 +371,13 @@ export function registerReadEnforcement(pi: ExtensionAPI): void {
         return undefined;
       }
       readPathsThisTurn.add(rawPath);
+      if (cooldownThreshold > 0) {
+        consecutiveBlocks++;
+        if (consecutiveBlocks >= cooldownThreshold) {
+          cooldownActive = true;
+          sendSteer(`Read-enforcement cooldown triggered after ${consecutiveBlocks} blocked direct reads. Your next direct project-file read will be allowed as a one-time escape valve — use it wisely, then return to /cdev.`);
+        }
+      }
       return { block: true, reason: formatBlockReason(rawPath, controlledBypassRemaining, readEscalationRemaining) };
     }
     if (toolEvent.toolName === "grep") {
@@ -354,12 +388,14 @@ export function registerReadEnforcement(pi: ExtensionAPI): void {
       const effectivePath = searchPath || include;
       if (effectivePath && !looksLikeSourcePattern(effectivePath)) return undefined;
       const scope = searchPath ? searchPath : include ? `files matching ${include}` : "";
+      if (cooldownThreshold > 0) consecutiveBlocks++;
       return { block: true, reason: formatGrepBlockReason(pattern, scope) };
     }
     if (toolEvent.toolName === "glob") {
       const pattern = (toolEvent.input.pattern ?? "") as string;
       if (!pattern) return undefined;
       if (!looksLikeSourcePattern(pattern)) return undefined;
+      if (cooldownThreshold > 0) consecutiveBlocks++;
       return { block: true, reason: formatGlobBlockReason(pattern) };
     }
     if (toolEvent.toolName === "bash") {
@@ -367,17 +403,20 @@ export function registerReadEnforcement(pi: ExtensionAPI): void {
       if (!command) return undefined;
       if (!isReadLikeBashCommand(command)) return undefined;
       if (!looksLikeSourceBashCommand(command)) return undefined;
+      if (cooldownThreshold > 0) consecutiveBlocks++;
       return { block: true, reason: formatBashBlockReason(command.trim()) };
     }
     if (toolEvent.toolName === "diff") {
       const spec = ((toolEvent.input.spec ?? toolEvent.input.path ?? toolEvent.input.file_path) ?? "") as string;
       if (!spec) return undefined;
+      if (cooldownThreshold > 0) consecutiveBlocks++;
       return { block: true, reason: formatDiffBlockReason(spec) };
     }
     if (isIntrospectionTool(String(toolEvent.toolName))) {
       const args = toolEvent.input as Record<string, unknown>;
       const targetPath = extractProjectPathFromArgs(args);
       if (targetPath && !looksLikeSourcePattern(targetPath)) return undefined;
+      if (cooldownThreshold > 0) consecutiveBlocks++;
       return { block: true, reason: formatIntrospectionBlockReason(String(toolEvent.toolName)) };
     }
     return undefined;

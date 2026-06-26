@@ -32,6 +32,9 @@ This is gated by the `enforceCdevTools` config. It keeps context small and avoid
 - Binary/image files (`.png`, `.jpg`, `.pdf`, `.zip`, etc.)
 - External documentation or files outside the project
 - README-style docs (`README.md`, `AGENTS.md`, `LICENSE`, etc.)
+- Up to three escalation reads after a low-confidence cdev result (when `allowCdevReadEscalation` is `true`)
+- Up to two controlled bypass reads per turn with a concrete `reason`
+- A one-time cooldown read after `cdevReadCooldownAfterBlocks` consecutive blocked direct reads (default `2`) — a steer notifies the model when cooldown is armed and when it is consumed
 
 ### Toggle
 
@@ -690,7 +693,9 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `modelContextLimit` | number | `262144` | Model context-window limit in tokens (used for snapshot sizing and warnings) |
 | `autoCompactOnLimit` | boolean | `true` | Auto-steer `/compact` when session snapshot exceeds 95% of `modelContextLimit` |
 | `tokenEstimationCharsPerToken` | number | `4` | Characters per token used to estimate snapshot size. Increase (e.g. `8`–`12`) if cdev estimates much higher than Pi's status bar |
-| `enforceCdevTools` | boolean | `true` | Inject system prompt rule and block direct `read` tool calls for source/config files |
+| `enforceCdevTools` | boolean | `true` | Inject system prompt rule and block direct `read`/`grep`/`glob`/`bash`/`diff`/introspection tool calls for source/config files |
+| `allowCdevReadEscalation` | boolean | `true` | Allow up to 3 direct reads after a low-confidence cdev result (only when `enforceCdevTools` is `true`) |
+| `cdevReadCooldownAfterBlocks` | integer | `2` | Consecutive blocked direct reads/tools that trigger a one-time cooldown read. Set to `0` to disable the cooldown escape valve. |
 | `promptsEnabled` | boolean | `true` | Enable/disable custom prompts |
 | `prompts.explore` | string | — | Custom scout exploration prompt |
 | `prompts.synthesize` | string | — | Custom forge synthesis prompt |
