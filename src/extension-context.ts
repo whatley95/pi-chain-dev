@@ -17,6 +17,54 @@ export const AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, 
 export const DEFAULT_SIGNATURE = "whatley.xyz";
 export const FORK_COST_STATUS_KEY = "cdev-cost";
 
+import { getKimiUsageLine } from "./kimi-usage.js";
+
+const KIMI_USAGE_STATUS_KEY = "cdev-kimi-usage";
+let _kimiUsageRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let _lastKimiUsageModelId: string | undefined;
+
+export function startKimiUsageRefresh(ctx: ExtensionContext): void {
+  if (_kimiUsageRefreshTimer) {
+    clearInterval(_kimiUsageRefreshTimer);
+    _kimiUsageRefreshTimer = null;
+  }
+  void refreshKimiUsageStatus(ctx);
+  _kimiUsageRefreshTimer = setInterval(() => {
+    void refreshKimiUsageStatus(ctx);
+  }, 60_000);
+}
+
+export function stopKimiUsageRefresh(): void {
+  if (_kimiUsageRefreshTimer) {
+    clearInterval(_kimiUsageRefreshTimer);
+    _kimiUsageRefreshTimer = null;
+  }
+}
+
+export async function refreshKimiUsageStatus(ctx: ExtensionContext): Promise<void> {
+  try {
+    const config = loadConfig(ctx.cwd);
+    if (!config.kimiUsageFooter) {
+      ctx.ui.setStatus(KIMI_USAGE_STATUS_KEY, undefined);
+      return;
+    }
+    const modelId = ctx.model?.id;
+    if (!modelId || !modelId.toLowerCase().startsWith("kimi")) {
+      ctx.ui.setStatus(KIMI_USAGE_STATUS_KEY, undefined);
+      return;
+    }
+    _lastKimiUsageModelId = modelId;
+    const line = await getKimiUsageLine(modelId);
+    ctx.ui.setStatus(KIMI_USAGE_STATUS_KEY, line ? ctx.ui.theme.fg("dim", line) : undefined);
+  } catch {
+    ctx.ui.setStatus(KIMI_USAGE_STATUS_KEY, undefined);
+  }
+}
+
+export function getLastKimiUsageModelId(): string | undefined {
+  return _lastKimiUsageModelId;
+}
+
 // ── Session cost tracking ──────────────────────────────────
 
 const _sessionCostCache = new Map<string, number>();

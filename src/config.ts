@@ -42,6 +42,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   environment: {},
   offline: true,
   costFooter: true,
+  kimiUsageFooter: true,
   auto: false,
   promptsEnabled: true,
   memory: true,
@@ -175,6 +176,8 @@ export function loadConfig(cwd: string): AutoForkConfig {
     autoCompactOnLimit: projectConfig.autoCompactOnLimit ?? globalConfig.autoCompactOnLimit ?? DEFAULT_CONFIG.autoCompactOnLimit,
     tokenEstimationCharsPerToken: projectConfig.tokenEstimationCharsPerToken ?? globalConfig.tokenEstimationCharsPerToken ?? DEFAULT_CONFIG.tokenEstimationCharsPerToken,
     signature: projectConfig.signature ?? globalConfig.signature,
+    costFooter: projectConfig.costFooter ?? globalConfig.costFooter ?? DEFAULT_CONFIG.costFooter,
+    kimiUsageFooter: projectConfig.kimiUsageFooter ?? globalConfig.kimiUsageFooter ?? DEFAULT_CONFIG.kimiUsageFooter,
   };
 
   // If no stage profiles configured, try falling back to pi-fork effort profiles
@@ -232,6 +235,7 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (advisor) parsed.advisor = advisor;
     if (typeof config.offline === "boolean") parsed.offline = config.offline;
     if (typeof config.costFooter === "boolean") parsed.costFooter = config.costFooter;
+    if (typeof config.kimiUsageFooter === "boolean") parsed.kimiUsageFooter = config.kimiUsageFooter;
     if (typeof config.auto === "boolean") parsed.auto = config.auto;
     if (typeof config.promptsEnabled === "boolean") parsed.promptsEnabled = config.promptsEnabled;
     if (typeof config.memory === "boolean") parsed.memory = config.memory;

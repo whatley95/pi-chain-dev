@@ -69,6 +69,8 @@ export interface AutoForkConfig {
   offline: boolean;
   /** Show cdev cost as an extra footer status line. */
   costFooter: boolean;
+  /** Show main-model Kimi usage in the footer when the active model is a kimi-coding variant. Default true. */
+  kimiUsageFooter?: boolean;
   /** Auto-trigger mode: LLM proactively uses cdev for exploration tasks. */
   auto: boolean;
   /** Whether custom prompts are active (toggle off to use generic). */
