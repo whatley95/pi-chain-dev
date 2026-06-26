@@ -1,9 +1,9 @@
 /**
  * Kimi usage provider.
  *
- * Fetches Kimi API usage and formats a compact footer line similar to
- * pi-kimi-usage. Activated when the main model is a kimi-coding variant and
- * the user has enabled the feature in config.
+ * Fetches Kimi account balance from the documented public API and formats a
+ * compact footer line. Activated when the main model is a kimi-coding variant
+ * and the user has enabled the feature in config.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -11,25 +11,26 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 
-export interface KimiUsagePeriod {
-  period: string;
-  total: number;
-  used: number;
-  percentage: number;
-}
-
-export interface KimiUsageResponse {
+export interface KimiBalanceResponse {
+  code?: number;
+  status?: boolean;
   data?: {
-    periods?: KimiUsagePeriod[];
+    available_balance?: number;
+    voucher_balance?: number;
+    cash_balance?: number;
+  };
+  error?: {
+    message?: string;
+    type?: string;
+    code?: string;
   };
 }
 
 export interface KimiUsageSummary {
   line: string;
-  totalPercentage: number;
 }
 
-const KIMI_DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1/usages";
+const KIMI_DEFAULT_BASE_URL = "https://api.moonshot.cn/v1/users/me/balance";
 
 export function isKimiModel(modelId: string | undefined): boolean {
   if (!modelId) return false;
@@ -37,11 +38,11 @@ export function isKimiModel(modelId: string | undefined): boolean {
 }
 
 export function resolveKimiBaseUrl(): string {
-  return process.env["KIMI_CODE_BASE_URL"] || KIMI_DEFAULT_BASE_URL;
+  return process.env["KIMI_BALANCE_URL"] || KIMI_DEFAULT_BASE_URL;
 }
 
 export function resolveKimiApiKey(_cwd?: string): string | undefined {
-  const envKey = process.env["KIMI_API_KEY"];
+  const envKey = process.env["KIMI_API_KEY"] || process.env["MOONSHOT_API_KEY"];
   if (envKey) return envKey;
 
   const authPath = join(homedir(), ".pi", "agent", "auth.json");
@@ -76,39 +77,9 @@ export function resolveKimiApiKey(_cwd?: string): string | undefined {
   }
 }
 
-function formatDuration(minutes: number): string {
-  if (minutes >= 60 * 24) {
-    const days = Math.floor(minutes / (60 * 24));
-    const hours = Math.floor((minutes % (60 * 24)) / 60);
-    return `${days}d${hours}h`;
-  }
-  if (minutes >= 60) {
-    const hours = Math.floor(minutes / 60);
-    const mins = Math.floor(minutes % 60);
-    return `${hours}h${mins.toString().padStart(2, "0")}m`;
-  }
-  return `${Math.floor(minutes)}m`;
-}
-
-export function formatKimiUsage(periods: KimiUsagePeriod[]): KimiUsageSummary | null {
-  if (!periods || periods.length === 0) return null;
-
-  const sorted = [...periods].sort((a, b) => {
-    const order: Record<string, number> = { "7d": 0, "1d": 1, "24h": 1, "30d": 2, "31d": 2 };
-    return (order[a.period] ?? 99) - (order[b.period] ?? 99);
-  });
-
-  const parts: string[] = [];
-  let totalPercentage = 0;
-  for (const p of sorted.slice(0, 2)) {
-    const remaining = Math.max(0, p.total - p.used);
-    const remainingMin = remaining;
-    parts.push(`${p.period} ${p.percentage}% ${formatDuration(remainingMin)}`);
-    totalPercentage = Math.max(totalPercentage, p.percentage);
-  }
-
-  if (parts.length === 0) return null;
-  return { line: `Kimi · ${parts.join(" · ")}`, totalPercentage };
+export function formatKimiBalance(balance: number): string | null {
+  if (!Number.isFinite(balance)) return null;
+  return `¥${balance.toFixed(2)}`;
 }
 
 export async function fetchKimiUsage(apiKey?: string, baseUrl?: string): Promise<KimiUsageSummary | null> {
@@ -126,11 +97,14 @@ export async function fetchKimiUsage(apiKey?: string, baseUrl?: string): Promise
     });
     if (!response.ok) return null;
 
-    const body = (await response.json()) as KimiUsageResponse;
-    const periods = body.data?.periods;
-    if (!periods || periods.length === 0) return null;
+    const body = (await response.json()) as KimiBalanceResponse;
+    const available = body.data?.available_balance;
+    if (available === undefined || available === null) return null;
 
-    return formatKimiUsage(periods);
+    const formatted = formatKimiBalance(available);
+    if (!formatted) return null;
+
+    return { line: `Kimi · ${formatted}` };
   } catch {
     return null;
   }
@@ -148,7 +122,7 @@ export async function diagnoseKimiUsage(modelId?: string): Promise<KimiUsageDiag
   }
   const key = resolveKimiApiKey();
   if (!key) {
-    return { ok: false, error: "no KIMI_API_KEY or ~/.pi/agent/auth.json kimi-coding.key found" };
+    return { ok: false, error: "no KIMI_API_KEY, MOONSHOT_API_KEY, or ~/.pi/agent/auth.json kimi-coding.key found" };
   }
   const url = resolveKimiBaseUrl();
   try {
@@ -163,16 +137,19 @@ export async function diagnoseKimiUsage(modelId?: string): Promise<KimiUsageDiag
       const body = await response.text().catch(() => "");
       return { ok: false, error: `HTTP ${response.status} from ${url}: ${body.slice(0, 200)}` };
     }
-    const data = (await response.json()) as KimiUsageResponse;
-    const periods = data.data?.periods;
-    if (!periods || periods.length === 0) {
-      return { ok: false, error: "usage endpoint returned no periods" };
+    const data = (await response.json()) as KimiBalanceResponse;
+    if (data.code !== undefined && data.code !== 0) {
+      return { ok: false, error: `Kimi API error: ${data.error?.message ?? JSON.stringify(data)}` };
     }
-    const usage = formatKimiUsage(periods);
+    const available = data.data?.available_balance;
+    if (available === undefined || available === null) {
+      return { ok: false, error: "balance endpoint returned no available_balance" };
+    }
+    const usage = formatKimiBalance(available);
     if (!usage) {
-      return { ok: false, error: "could not format usage periods" };
+      return { ok: false, error: "could not format balance" };
     }
-    return { ok: true, line: usage.line };
+    return { ok: true, line: `Kimi · ${usage}` };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
