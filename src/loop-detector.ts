@@ -49,7 +49,7 @@ function toolTarget(record: ToolCallRecord): string {
 }
 
 function isReportPath(path: string): boolean {
-  return path.includes(".pi/cdev/reports/") || path.endsWith(".md");
+  return path.includes(".pi/cdev/reports/");
 }
 
 export function detectLoop(

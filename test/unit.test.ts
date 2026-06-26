@@ -322,6 +322,28 @@ describe("detectLoop", () => {
     assert.ok(result.reason.includes("re-reading report"));
   });
 
+  it("detects report re-reads with threshold 2", () => {
+    const calls = [
+      { toolName: "read", args: { path: ".pi/cdev/reports/fix.md" } },
+      { toolName: "read", args: { path: ".pi/cdev/reports/fix.md" } },
+    ];
+    const result = detectLoop(calls, { threshold: 2 });
+    assert.equal(result.looping, true);
+    assert.ok(result.repeatedFile?.includes("fix.md"));
+  });
+
+  it("does not treat ordinary markdown files as cdev reports", () => {
+    const calls = [
+      { toolName: "read", args: { path: "README.md" } },
+      { toolName: "read", args: { path: "README.md" } },
+      { toolName: "read", args: { path: "README.md" } },
+    ];
+    const result = detectLoop(calls, { threshold: 3 });
+    assert.equal(result.looping, true);
+    assert.equal(result.repeatedFile, undefined);
+    assert.ok(result.reason.includes("read"));
+  });
+
   it("requires threshold repetitions", () => {
     const calls = [
       { toolName: "read", args: { path: "src/a.ts" } },
@@ -431,5 +453,93 @@ describe("buildAdvisorPrompt", () => {
     const prompt = buildAdvisorPrompt("what next?", undefined, "be concise");
     assert.ok(prompt.startsWith("be concise"));
     assert.ok(prompt.includes("what next?"));
+  });
+});
+
+// ── loop-detector-runtime.ts: real-time loop detection ─────────────────────────
+
+import {
+  createLoopDetectionState,
+  recordToolCall,
+  refreshFromSessionEntries,
+  checkAndSendLoopSteer,
+  registerRealtimeLoopDetection,
+} from "../src/loop-detector-runtime.js";
+
+describe("loop-detector-runtime", () => {
+  it("steers when the same report is read twice in real time", () => {
+    const state = createLoopDetectionState();
+    const steers: string[] = [];
+    const reportPath = ".pi/cdev/reports/review.md";
+
+    recordToolCall(state, { type: "tool_execution_start", toolName: "read", args: { path: reportPath } });
+    assert.equal(steers.length, 0, "first read should not steer");
+
+    checkAndSendLoopSteer(state, (message, options) => {
+      if (options?.deliverAs === "steer") steers.push(message);
+    });
+    assert.equal(steers.length, 0, "check before threshold should not steer");
+
+    recordToolCall(state, { type: "tool_execution_start", toolName: "read", args: { path: reportPath } });
+    checkAndSendLoopSteer(state, (message, options) => {
+      if (options?.deliverAs === "steer") steers.push(message);
+    });
+    assert.equal(steers.length, 1, "second report read should steer");
+    assert.ok(steers[0]?.includes("LOOP DETECTED"));
+    assert.ok(steers[0]?.includes(reportPath));
+  });
+
+  it("cools down repeated identical loops", () => {
+    const state = createLoopDetectionState();
+    const steers: string[] = [];
+    const reportPath = ".pi/cdev/reports/loop.md";
+
+    for (let i = 0; i < 6; i++) {
+      recordToolCall(state, { type: "tool_execution_start", toolName: "read", args: { path: reportPath } });
+      checkAndSendLoopSteer(state, (message, options) => {
+        if (options?.deliverAs === "steer") steers.push(message);
+      });
+    }
+    assert.equal(steers.length, 1, "identical loop should only steer once within cooldown");
+  });
+
+  it("registers a tool_execution_start handler", () => {
+    const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
+    const steers: string[] = [];
+    const mockPi = {
+      on: (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
+        handlers[event] = handler;
+      },
+      registerTool: () => { /* ignore */ },
+      registerCommand: () => { /* ignore */ },
+      sendUserMessage: (message: string, options?: Record<string, unknown>) => {
+        if (options?.deliverAs === "steer") steers.push(message);
+      },
+    };
+
+    registerRealtimeLoopDetection(mockPi as never);
+
+    const reportPath = ".pi/cdev/reports/live.md";
+    handlers["tool_execution_start"]?.({ type: "tool_execution_start", toolName: "read", args: { path: reportPath } }, {});
+    handlers["tool_execution_start"]?.({ type: "tool_execution_start", toolName: "read", args: { path: reportPath } }, {});
+    assert.equal(steers.length, 1);
+    assert.ok(steers[0]?.includes("LOOP DETECTED"));
+  });
+
+  it("refreshes state from session entries", () => {
+    const state = createLoopDetectionState();
+    const steers: string[] = [];
+    const reportPath = ".pi/cdev/reports/restored.md";
+
+    refreshFromSessionEntries(state, [
+      { type: "tool_execution_start", toolName: "read", args: { path: reportPath } },
+      { type: "tool_execution_start", toolName: "read", args: { path: reportPath } },
+    ]);
+
+    checkAndSendLoopSteer(state, (message, options) => {
+      if (options?.deliverAs === "steer") steers.push(message);
+    });
+    assert.equal(steers.length, 1);
+    assert.ok(steers[0]?.includes(reportPath));
   });
 });

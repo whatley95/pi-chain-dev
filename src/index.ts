@@ -28,10 +28,15 @@ import {
 } from "./memory.js";
 import { getErrorCount, clearErrorLog } from "./logger.js";
 import { listSessions } from "./history.js";
-import { detectLoop, extractToolCallsFromEntries } from "./loop-detector.js";
+import {
+  registerRealtimeLoopDetection,
+  refreshFromSessionEntries,
+  checkAndSendLoopSteer,
+} from "./loop-detector-runtime.js";
 
 export default function (pi: ExtensionAPI) {
   let autoTurnCounter = 0;
+  const loopState = registerRealtimeLoopDetection(pi);
 
   function resetAutoTurnCounter(): void {
     autoTurnCounter = 0;
@@ -66,6 +71,20 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("turn_start", async (_event, ctx) => {
     updateAutoStatus(ctx);
+
+    // Refresh loop-detection history from the canonical session entries at the
+    // start of each turn so we do not miss calls that happened while this
+    // extension was not listening (e.g. restored sessions).
+    try {
+      const entries = ctx.sessionManager?.getEntries?.();
+      if (Array.isArray(entries)) {
+        refreshFromSessionEntries(loopState, entries);
+      }
+    } catch {
+      // best-effort refresh
+    }
+    checkAndSendLoopSteer(loopState, (message, options) => pi.sendUserMessage(message, options));
+
     const config = loadConfig(ctx.cwd);
     if (config.auto) {
       autoTurnCounter++;
@@ -75,24 +94,6 @@ export default function (pi: ExtensionAPI) {
           { deliverAs: "steer" },
         );
       }
-    }
-
-    // Loop detection: if the parent session is re-reading the same report or
-    // repeating the same tool call, inject a steer to break out.
-    try {
-      const entries = ctx.sessionManager?.getEntries?.();
-      if (Array.isArray(entries) && entries.length > 0) {
-        const calls = extractToolCallsFromEntries(entries);
-        const loop = detectLoop(calls, { threshold: 3, windowSize: 12 });
-        if (loop.looping) {
-          pi.sendUserMessage(
-            `Loop detected: ${loop.reason}. ${loop.suggestion}`,
-            { deliverAs: "steer" },
-          );
-        }
-      }
-    } catch {
-      // best-effort loop detection
     }
   });
 
