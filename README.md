@@ -24,7 +24,7 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 
 By default, pi-chain-dev injects a system-prompt rule that tells the agent to use `/cdev read` or `cdev({ quick:true, ... })` instead of Pi's built-in `read` tool for source/config files. Direct `read` calls for source/config files are blocked with an actionable error.
 
-This keeps context small and avoids the parent model burning tokens on one-by-one file reads.
+This is gated by the `enforceCdevTools` config. It keeps context small and avoids the parent model burning tokens on one-by-one file reads.
 
 ### Allowed exceptions
 
@@ -40,16 +40,16 @@ This keeps context small and avoids the parent model burning tokens on one-by-on
 /cdev read-enforcement off  # allow direct read tool calls
 ```
 
-The setting is stored in `~/.pi/agent/settings.json` under `pi-chain-dev.preferCdevRead`.
+The setting is stored in `~/.pi/agent/settings.json` under `pi-chain-dev.enforceCdevTools`.
 
 ### How the injection works
 
 The extension registers two handlers in `src/read-enforcement.ts`:
 
-1. `before_agent_start` — appends the read-preference rule to the system prompt when `preferCdevRead` is `true`. The rule is wrapped in `<!-- pi-chain-dev:prefer-cdev-read -->` markers so it is only added once.
+1. `before_agent_start` — appends the read-preference rule to the system prompt when `enforceCdevTools` is `true`. The rule is wrapped in `<!-- pi-chain-dev:enforce-cdev-tools -->` markers so it is only added once.
 2. `tool_call` — intercepts direct `read` tool calls, checks the file path against an allowlist of source-like extensions, and returns `{ block: true, reason: "..." }` telling the agent to use `/cdev read <path>` or `cdev({ quick:true, task: "read <path>" })` instead.
 
-To add similar global tool-choice rules, use the same `before_agent_start` + `tool_call` pattern and gate them behind a config key in `src/types.ts`/`src/config.ts`.
+To add similar global tool-choice rules, use the same `before_agent_start` + `tool_call` pattern and gate them behind the `enforceCdevTools` config key (or a dedicated key in `src/types.ts`/`src/config.ts`).
 
 ## Commands
 
@@ -639,7 +639,7 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
     "modelContextLimit": 262144,
     "autoCompactOnLimit": true,
     "tokenEstimationCharsPerToken": 4,
-    "preferCdevRead": true,
+    "enforceCdevTools": true,
     "costFooter": true,
     "yolo": {
       "enabled": false,
@@ -690,7 +690,7 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `modelContextLimit` | number | `262144` | Model context-window limit in tokens (used for snapshot sizing and warnings) |
 | `autoCompactOnLimit` | boolean | `true` | Auto-steer `/compact` when session snapshot exceeds 95% of `modelContextLimit` |
 | `tokenEstimationCharsPerToken` | number | `4` | Characters per token used to estimate snapshot size. Increase (e.g. `8`–`12`) if cdev estimates much higher than Pi's status bar |
-| `preferCdevRead` | boolean | `true` | Inject system prompt rule and block direct `read` tool calls for source/config files |
+| `enforceCdevTools` | boolean | `true` | Inject system prompt rule and block direct `read` tool calls for source/config files |
 | `promptsEnabled` | boolean | `true` | Enable/disable custom prompts |
 | `prompts.explore` | string | — | Custom scout exploration prompt |
 | `prompts.synthesize` | string | — | Custom forge synthesis prompt |

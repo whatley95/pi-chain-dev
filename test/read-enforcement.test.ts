@@ -39,7 +39,7 @@ describe("read-enforcement", () => {
     it("returns a non-empty rule with the injection marker", () => {
       const rule = getPreferCdevReadRule();
       assert.ok(rule.length > 0);
-      assert.ok(rule.includes("pi-chain-dev:prefer-cdev-read"));
+      assert.ok(rule.includes("pi-chain-dev:enforce-cdev-tools"));
       assert.ok(rule.includes("/cdev read"));
     });
   });

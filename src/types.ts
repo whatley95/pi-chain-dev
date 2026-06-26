@@ -80,7 +80,7 @@ export interface AutoForkConfig {
   /** Use theme.bg() for richer TUI rendering (progress, results). Default true. */
   themed: boolean;
   /** If true, inject a system prompt rule and block direct read tool calls for source files, redirecting to /cdev read or cdev quick. Default true. */
-  preferCdevRead: boolean;
+  enforceCdevTools: boolean;
   /** Run scout twice automatically for higher accuracy. */
   autoVerify: boolean;
   /** Split scout into N parallel sub-task scouts (1-3). Default 1. */

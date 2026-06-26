@@ -101,7 +101,7 @@ export function registerCdevCommand(
       const readEnforcementMatch = trimmed.match(/^read-enforcement\s+(on|off)$/);
       if (readEnforcementMatch) {
         const enable = readEnforcementMatch[1] === "on";
-        writeAgentSetting("preferCdevRead", enable);
+        writeAgentSetting("enforceCdevTools", enable);
         ctx.ui.notify(`cdev read-enforcement ${enable ? "ON" : "OFF"} — ${enable ? "direct read tool calls for source files will be blocked; use /cdev read instead" : "direct read tool calls are allowed"}`, "info");
         return;
       }

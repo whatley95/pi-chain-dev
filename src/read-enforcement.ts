@@ -1,7 +1,7 @@
 /**
  * Redirect direct read tool calls to cdev.
  *
- * When preferCdevRead is enabled, pi-chain-dev injects a system-prompt rule
+ * When enforceCdevTools is enabled, pi-chain-dev injects a system-prompt rule
  * asking the model to use /cdev read or cdev quick for source-file reads,
  * and blocks direct read calls for source files (with an actionable error).
  */
@@ -10,7 +10,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config.js";
 
-const INJECTION_MARKER = "<!-- pi-chain-dev:prefer-cdev-read -->";
+const INJECTION_MARKER = "<!-- pi-chain-dev:enforce-cdev-tools -->";
 
 const PREFER_CDEV_READ_RULE = `
 ${INJECTION_MARKER}
@@ -70,7 +70,7 @@ function formatBlockReason(filePath: string): string {
 export function registerReadEnforcement(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event, ctx: ExtensionContext) => {
     const config = loadConfig(ctx.cwd);
-    if (!config.preferCdevRead) return undefined;
+    if (!config.enforceCdevTools) return undefined;
     const beforeEvent = event as BeforeAgentStartEventLike;
     if (!beforeEvent.systemPrompt.includes(INJECTION_MARKER)) {
       beforeEvent.systemPrompt += `\n\n${PREFER_CDEV_READ_RULE}`;
@@ -80,7 +80,7 @@ export function registerReadEnforcement(pi: ExtensionAPI): void {
 
   pi.on("tool_call", (event, ctx: ExtensionContext) => {
     const config = loadConfig(ctx.cwd);
-    if (!config.preferCdevRead) return undefined;
+    if (!config.enforceCdevTools) return undefined;
     const toolEvent = event as ReadToolCallEventLike;
     if (toolEvent.toolName !== "read") return undefined;
     const rawPath = toolEvent.input.path ?? toolEvent.input.file_path;
