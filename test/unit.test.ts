@@ -413,6 +413,7 @@ describe("CDEV_SUBCOMMAND_HELP", () => {
     const text = CDEV_SUBCOMMAND_HELP.join("\n");
     assert.ok(text.includes("/cdev <task>"));
     assert.ok(text.includes("/cdev quick"));
+    assert.ok(text.includes("/cdev read"));
     assert.ok(text.includes("/cdev verify"));
     assert.ok(text.includes("/cdev research"));
     assert.ok(text.includes("/cdev advisor"));

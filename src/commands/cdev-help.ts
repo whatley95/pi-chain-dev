@@ -9,6 +9,7 @@ export const CDEV_SUBCOMMAND_HELP = [
   "──────────────────────────────────────",
   "/cdev <task>           Scout + Forge explore",
   "/cdev quick <task>     Scout only (fast)",
+  "/cdev read <paths...>   Scout-read files and return a concise summary",
   "/cdev fast <task>      Alias for quick (scout only)",
   "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
   "/cdev research <issue> Agent-driven investigation, no edits",

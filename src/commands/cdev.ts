@@ -55,7 +55,7 @@ export function registerCdevCommand(
   updateAutoStatus: (ctx: ExtensionContext) => void,
 ): void {
   pi.registerCommand("cdev", {
-    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, verify <task>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off",
+    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, read <paths>, verify <task>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
 
@@ -94,6 +94,25 @@ export function registerCdevCommand(
       }
 
       const config = loadConfig(ctx.cwd);
+
+      // ── Subcommand: read <paths...> ──
+      const readMatch = trimmed.match(/^read\s+(.+)$/);
+      if (readMatch) {
+        const pathsArg = readMatch[1].trim();
+        if (!pathsArg) {
+          ctx.ui.notify("Usage: /cdev read <path1> [path2] ...", "warn");
+          return;
+        }
+        const paths = pathsArg.split(/\s+/).map((p) => p.trim()).filter(Boolean);
+        if (paths.length === 0) {
+          ctx.ui.notify("Usage: /cdev read <path1> [path2] ...", "warn");
+          return;
+        }
+        ctx.ui.notify(`Scout-reading ${paths.length} file${paths.length === 1 ? "" : "s"}...`, "info");
+        const task = `Read the following file(s) carefully and return a concise but complete summary for the main agent. Include relevant file paths, function/class names, and line numbers where appropriate. Do not edit any files.\n\n${paths.map((p) => `- ${p}`).join("\n")}`;
+        pi.sendUserMessage(`Use cdev with quick=true to: ${task}`, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
 
       // ── Subcommands: scan, scan deep ──
       if (await handleScan(trimmed, ctx, config, updateAutoStatus)) return;
