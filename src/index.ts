@@ -120,6 +120,7 @@ export default function (pi: ExtensionAPI) {
       "Use /cdev scan for quick template-based stack detection, or /cdev scan deep for LLM-powered custom prompts.",
       "Use cdev with quick:true for follow-up file tracing, grep-style lookups, reading files, tracing symbols, or explaining code when raw findings suffice.",
       "When you need to read, search, trace, or explain code instead of editing it, use cdev with quick:true. This keeps context small and avoids looping on repeated file reads.",
+      "RULE: For reading source files, verifying current code state, tracing symbols, or searching the codebase, prefer calling cdev with quick:true instead of using direct read/grep tools. Only use direct read for tiny snippets (under ~30 lines) when cdev is unavailable or slower.",
        "Use cdev with verify:true only when the user explicitly asks for verification, cross-checking, or high-confidence exploration. Do not default to verify mode. verify runs scout twice and merges findings before forge.",
       "Use cdev with research:true to delegate issue investigation to a selected model. The model reports findings and a decision, but never edits code. The main agent owns any changes.",
       "Use cdev with advisor:true when you are stuck, looping, or facing a difficult decision. A scout gathers evidence, then an advisor model gives a concrete recommendation. Use askAdvisor:true to skip the scout and ask the advisor directly.",
