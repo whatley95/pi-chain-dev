@@ -18,9 +18,6 @@ import {
   logError,
   getCdevVersion,
   resolveSignature,
-  refreshKimiUsageStatus,
-  startKimiUsageRefresh,
-  stopKimiUsageRefresh,
 } from "./extension-context.js";
 import { loadConfig } from "./config.js";
 import {
@@ -52,8 +49,6 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     try {
       updateForkCostStatus(ctx);
-      refreshKimiUsageStatus(ctx);
-      startKimiUsageRefresh(ctx);
       const config = loadConfig(ctx.cwd);
       if (config.auto) resetAutoTurnCounter();
       registerLifecycleHandlers(pi, ctx);
@@ -65,16 +60,13 @@ export default function (pi: ExtensionAPI) {
   pi.on("turn_end", async (_event, ctx) => {
     try {
       updateForkCostStatus(ctx);
-      refreshKimiUsageStatus(ctx);
     } catch { /* best effort */ }
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
     try {
-      stopKimiUsageRefresh();
       ctx.ui.setStatus(FORK_COST_STATUS_KEY, undefined);
       ctx.ui.setStatus("cdev-memory", undefined);
-      ctx.ui.setStatus("cdev-kimi-usage", undefined);
       ctx.ui.setWidget("cdev-progress", undefined);
     } catch { /* best effort */ }
   });

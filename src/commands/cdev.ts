@@ -36,7 +36,6 @@ import {
   checkSessionCostAlert,
   estimateForkCost,
   formatModelPrice,
-  getLastKimiUsageDiagnostic,
 } from "../extension-context.js";
 import { handleScan } from "./cdev-scan.js";
 import { handleMemory, memoryTopicCount } from "./cdev-memory.js";
@@ -575,15 +574,6 @@ export function registerCdevCommand(
         lines.push(`  Auto-trigger:     ${config.auto ? "⚡ ON (sends steer every 3 turns to prompt cdev use)" : "OFF (agent uses cdev only when asked or it decides)"}`);
         lines.push(`  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`);
         lines.push(`  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`);
-        lines.push(`  Kimi balance footer:${config.kimiUsageFooter ? "ON" : "OFF"}  (shows when main model is kimi-coding)`);
-        const kimiDiag = getLastKimiUsageDiagnostic();
-        if (kimiDiag) {
-          if (kimiDiag.ok && kimiDiag.line) {
-            lines.push(`  Kimi balance:     ${kimiDiag.line}`);
-          } else {
-            lines.push(`  Kimi balance:     — ${kimiDiag.error ?? "unknown error"}`);
-          }
-        }
         lines.push(`  Project memory:   ${config.memory ? "ON" : "OFF"}`);
         lines.push(`  Memory auto-refresh: ${config.memoryAutoRefresh ? "ON" : "OFF"}`);
         lines.push(`  Auto-verify:      ${config.autoVerify ? "✓ ON (scout ×2)" : "OFF (scout ×1)"}`);
