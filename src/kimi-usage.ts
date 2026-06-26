@@ -38,7 +38,7 @@ export function isKimiModel(modelId: string | undefined): boolean {
 }
 
 export function resolveKimiBaseUrl(): string {
-  return process.env["KIMI_BALANCE_URL"] || KIMI_DEFAULT_BASE_URL;
+  return process.env["KIMI_BALANCE_URL"] || process.env["MOONSHOT_BALANCE_URL"] || KIMI_DEFAULT_BASE_URL;
 }
 
 export function resolveKimiApiKey(_cwd?: string): string | undefined {
@@ -139,18 +139,18 @@ export async function diagnoseKimiUsage(modelId?: string): Promise<KimiUsageDiag
     }
     const data = (await response.json()) as KimiBalanceResponse;
     if (data.code !== undefined && data.code !== 0) {
-      return { ok: false, error: `Kimi API error: ${data.error?.message ?? JSON.stringify(data)}` };
+      return { ok: false, error: `Kimi API error (${url}): ${data.error?.message ?? JSON.stringify(data)}` };
     }
     const available = data.data?.available_balance;
     if (available === undefined || available === null) {
-      return { ok: false, error: "balance endpoint returned no available_balance" };
+      return { ok: false, error: `balance endpoint returned no available_balance (${url})` };
     }
     const usage = formatKimiBalance(available);
     if (!usage) {
-      return { ok: false, error: "could not format balance" };
+      return { ok: false, error: `could not format balance (${url})` };
     }
     return { ok: true, line: `Kimi · ${usage}` };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: `${url} — ${err instanceof Error ? err.message : String(err)}` };
   }
 }
