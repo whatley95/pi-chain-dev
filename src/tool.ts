@@ -953,9 +953,12 @@ export async function executeCdevTool(
 
       const verdictLabel = yoloResult.finalVerdict === "pass" ? "✅ pass" : yoloResult.finalVerdict === "blocked" ? "❌ blocked" : "⚠️ needs-work";
       const summary = `YOLO loop complete.\n\nRounds used: ${yoloResult.rounds.length} / ${yolo.maxRounds}\nTotal cost: ${formatCost(yoloResult.totalCost)}\nFinal verdict: ${verdictLabel}\nFinal report: ${yoloResult.finalReportPath}\n\nInitial report: ${yoloResult.initial.reportPath}`;
+      const reportBody = yoloResult.finalReportText
+        ? `\n\n---\n\n## Final report\n\n${yoloResult.finalReportText}`
+        : "";
 
       return {
-        content: [{ type: "text" as const, text: summary }],
+        content: [{ type: "text" as const, text: summary + reportBody }],
         details: withUiDetails(
           yoloResult.rounds.length > 0 ? yoloResult.rounds[yoloResult.rounds.length - 1].review.details : yoloResult.initial.details,
           {

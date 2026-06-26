@@ -702,11 +702,13 @@ export interface YoloLoopResult {
     result: ForkResult;
     details: AutoForkDetails;
     reportPath: string;
+    reportText: string;
   };
   rounds: YoloRoundResult[];
   totalCost: number;
   finalVerdict: ReviewVerdict;
   finalReportPath: string;
+  finalReportText: string;
 }
 
 export interface RunYoloLoopOptions extends Omit<RunAutoForkOptions, "onProgress" | "onUpdate"> {
@@ -804,6 +806,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
   const rounds: YoloRoundResult[] = [];
   let finalVerdict: ReviewVerdict = "unknown";
   let finalReportPath = initialReportPath;
+  let finalReportText = initialText;
   let latestReport = initialText;
 
   for (let round = 1; round <= yoloConfig.maxRounds; round++) {
@@ -862,6 +865,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       body: reviewText || "(no review output)",
     });
     finalReportPath = reviewReportPath;
+    finalReportText = reviewText;
     saveSession(cwd, `yolo review round ${round}: ${task}`, true, reviewStart, reviewDetails, reviewResult);
 
     const verdict = parseReviewVerdict(reviewText);
@@ -951,6 +955,8 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
         body: fixText,
       });
       fixReportPath = reportRelPath;
+      finalReportPath = fixReportPath;
+      finalReportText = fixText;
       saveSession(cwd, `yolo ${yoloConfig.autoApply === "auto" ? "auto-fix" : "fix proposal"} round ${round}: ${task}`, false, fixStart, fixDetails, fixResult);
     }
 
@@ -971,10 +977,12 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       result: initialResult,
       details: initialDetails,
       reportPath: initialReportPath,
+      reportText: initialText,
     },
     rounds,
     totalCost: totalUsage.cost,
     finalVerdict,
     finalReportPath,
+    finalReportText,
   };
 }
