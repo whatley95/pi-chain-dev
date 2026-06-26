@@ -3,13 +3,16 @@ import { loadProjectMap, summarizeMapForPrompt, type ParallelSubTask } from "./p
 
 export const STAGE_AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
 
-export function buildStage1Prompt(task: string, customPrompt?: string, editMode?: boolean, cwd?: string, subTask?: ParallelSubTask): string {
+export function buildStage1Prompt(task: string, customPrompt?: string, editMode?: boolean, cwd?: string, subTask?: ParallelSubTask, quick?: boolean): string {
   const guard = editMode ? "" : STAGE_AUDIT_GUARD;
   const mapContext = cwd ? loadMapContext(cwd) : "";
   const scopeHint = subTask?.scope?.length
     ? `\n\nFocus your exploration on these areas: ${subTask.scope.join(", ")}`
     : "";
   const focusTask = subTask ? subTask.focus : task;
+  const quickGuard = quick
+    ? "\n\nQUICK MODE — READ ONLY: You do not have tools to create, modify, or write files. Do NOT claim that any files were created, modified, or changed. Only report observations, findings, and evidence. If the task asks you to implement something, explain that quick mode cannot modify files and describe what would need to be done."
+    : "";
   const jsonSchema = `{
   "summary": "one-sentence summary of what was explored",
   "findings": [
@@ -41,7 +44,7 @@ ${jsonSchema}
 Efficiency rules:
 - Batch reads: use \`bash\`, \`cat\`, \`grep\`, \`find\`, \`ls\`, or globs instead of many individual \`read\` calls.
 - Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
-- Read a file individually only when you need the full content of a specific, named file.${guard}`;
+- Read a file individually only when you need the full content of a specific, named file.${guard}${quickGuard}`;
   }
   return `${focusTask}${mapContext}${scopeHint}
 
@@ -66,7 +69,7 @@ Rules:
 - "deadEnds", "assumptions", "openQuestions" are optional.
 - "coverage" is required. Provide honest counts.
 - Do NOT write structured sections like "Result", "Output", "Evidence", or "Learnings" outside the JSON.
-- Estimate "coverage" honestly: count files you inspected, files cited in findings, commands you ran, and likely relevant files you did NOT read.${guard}`;
+- Estimate "coverage" honestly: count files you inspected, files cited in findings, commands you ran, and likely relevant files you did NOT read.${guard}${quickGuard}`;
 }
 
 export function buildStage2Prompt(task: string, stage1Output: string, customPrompt?: string, editMode?: boolean): string {

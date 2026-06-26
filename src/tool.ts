@@ -29,6 +29,7 @@ import {
   maybeNotifyCostAlert,
   formatForkResultOutput,
 } from "./extension-context.js";
+import { safeDisplayText } from "./text-width.js";
 
 export interface AutoForkParamsType {
   task?: string;
@@ -238,7 +239,7 @@ export async function executeCdevTool(
         if (entry) {
           const detail = formatTopicDetail(entry, ctx.cwd);
           return {
-            content: [{ type: "text" as const, text: `🧠 cdev memory hit: ${p.recall}\n\n${detail}` }],
+            content: [{ type: "text" as const, text: safeDisplayText(`🧠 cdev memory hit: ${p.recall}\n\n${detail}`) }],
             details: { stage1: null, stage2: null, ui: { mode: "recall", task: p.recall } },
           };
         }
@@ -250,7 +251,7 @@ export async function executeCdevTool(
       const memory = loadMemory(ctx.cwd);
       const listing = formatMemoryTopics(memory);
       return {
-        content: [{ type: "text" as const, text: `🧠 cdev memory\n\n${listing}` }],
+        content: [{ type: "text" as const, text: safeDisplayText(`🧠 cdev memory\n\n${listing}`) }],
         details: { stage1: null, stage2: null, ui: { mode: "recall" } },
       };
     }
@@ -958,7 +959,7 @@ export async function executeCdevTool(
         : "";
 
       return {
-        content: [{ type: "text" as const, text: summary + reportBody }],
+        content: [{ type: "text" as const, text: safeDisplayText(summary + reportBody) }],
         details: withUiDetails(
           yoloResult.rounds.length > 0 ? yoloResult.rounds[yoloResult.rounds.length - 1].review.details : yoloResult.initial.details,
           {
@@ -1090,6 +1091,10 @@ export async function executeCdevTool(
     const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);
     let resultText = formatForkResultOutput(result, details);
 
+    if (quick) {
+      resultText = `🔍 cdev quick (read-only) findings\n\n${resultText}\n\n---\nℹ️ Quick mode is read-only. No files were created or modified.`;
+    }
+
     // Compare to previous report on same task, if available
     const previous = findPreviousSession(ctx.cwd, p.task);
     if (previous?.resultText && previous.id !== current.id) {
@@ -1106,7 +1111,7 @@ export async function executeCdevTool(
       : "";
 
     return {
-      content: [{ type: "text" as const, text: resultText + reportNote }],
+      content: [{ type: "text" as const, text: safeDisplayText(resultText + reportNote) }],
       details: withUiDetails(details, buildReportUiDetails(getFinalAssistantText(result.messages), {
         mode: isPlan ? "plan" : quick ? "quick" : verify ? "verify" : useParallel ? "parallel" : "fork",
         task: p.task,
@@ -1118,7 +1123,7 @@ export async function executeCdevTool(
     ctx.ui.setWidget("cdev-progress", undefined);
     logError(ctx.cwd, "tool", err);
     return {
-      content: [{ type: "text" as const, text: `cdev error: ${err instanceof Error ? err.message : String(err)}` }],
+      content: [{ type: "text" as const, text: safeDisplayText(`cdev error: ${err instanceof Error ? err.message : String(err)}`) }],
       details: { stage1: null, stage2: null },
       isError: true,
     };

@@ -17,7 +17,8 @@ ${INJECTION_MARKER}
 RULE — prefer cdev for source-file reads, search, discovery, and code analysis:
 - For reading source code, verifying current code state, tracing symbols, searching, listing files, or analyzing code structure, use /cdev read <path>[:start-end] or cdev({ quick:true, task: "<describe what you need>" }).
 - Do NOT use the direct read, grep, glob, bash, diff, or code-analysis tools for source files, config files, project documents, codebase searches, file discovery, diff reviews, or symbol/AST introspection.
-- Only use direct read for tiny snippets (under ~30 lines) when cdev is unavailable, or for binary/image files, external documentation, or files outside the project.
+- ESCALATION: If a cdev quick/advisor/research call returns low confidence, missing data, or incomplete findings, you may read up to THREE specific project files directly to verify. After those three reads, go back to using cdev for any broader follow-up.
+- CONTROLLED BYPASS: You may also read up to TWO additional source/config files directly per turn when you have a specific, justified reason (e.g., "need exact line numbers for an edit", "cdev already returned this file path", "reading a tiny snippet under 30 lines"). Provide the reason in the 'reason' field of the read tool call. Repeated reads of the same file are still blocked within one turn.
 ${INJECTION_MARKER}
 `.trim();
 
@@ -45,7 +46,7 @@ interface BeforeAgentStartEventLike {
 
 interface ReadToolCallEventLike {
   toolName: "read";
-  input: { path?: string; file_path?: string };
+  input: { path?: string; file_path?: string; reason?: string; start?: number; end?: number };
 }
 
 interface GrepToolCallEventLike {
@@ -100,8 +101,37 @@ function looksLikeSourceFile(filePath: string): boolean {
   return SOURCE_LIKE_EXTENSIONS.has(ext);
 }
 
-function formatBlockReason(filePath: string): string {
-  return `Direct read is disabled for source/config files. Use /cdev read ${filePath} or cdev({ quick:true, task: "read ${filePath}" }) instead.`;
+const MAX_CONTROLLED_BYPASS_READS_PER_TURN = 2;
+
+function isJustifiedBypassReason(reason: string | undefined): boolean {
+  if (!reason || typeof reason !== "string") return false;
+  const trimmed = reason.trim();
+  if (trimmed.length < 8) return false;
+  const lower = trimmed.toLowerCase();
+  const genericFiller = new Set(["read", "want", "need", "file", "check", "see", "look"]);
+  const meaningfulWords = lower.split(/\s+/).filter((w) => w.length > 0 && !genericFiller.has(w));
+  if (meaningfulWords.length < 2) return false;
+  const redFlags = ["ignore", "bypass", "disable guard", "loophole"];
+  if (redFlags.some((flag) => lower.includes(flag))) return false;
+  return true;
+}
+
+function isSmallSnippet(start: unknown, end: unknown): boolean {
+  if (typeof start !== "number" || typeof end !== "number") return false;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  if (start < 1 || end < start) return false;
+  return end - start + 1 <= 30;
+}
+
+function formatBlockReason(filePath: string, bypassRemaining: number, escalationRemaining: number): string {
+  let msg = `Direct read is disabled for source/config files. Use /cdev read ${filePath} or cdev({ quick:true, task: "read ${filePath}" }) instead.`;
+  if (escalationRemaining > 0) {
+    msg += ` You have ${escalationRemaining} escalation read(s) left from the last low-confidence cdev result.`;
+  }
+  if (bypassRemaining > 0) {
+    msg += ` Or provide a reason in the 'reason' field to use one of ${bypassRemaining} controlled bypass read(s) this turn.`;
+  }
+  return msg;
 }
 
 function formatGrepBlockReason(pattern: string, scope: string): string {
@@ -210,6 +240,43 @@ interface GenericToolCallEventLike {
   input: Record<string, unknown>;
 }
 
+interface CdevQualitySignal {
+  groundingScore?: number;
+  qualityScore?: number;
+  ungroundedClaimCount?: number;
+  actionItemCount?: number;
+  hasFindings: boolean;
+}
+
+const LOW_CONFIDENCE_THRESHOLD = 0.5;
+
+function isLowConfidence(signal: CdevQualitySignal): boolean {
+  if (!signal.hasFindings) return true;
+  if (signal.qualityScore !== undefined && signal.qualityScore < LOW_CONFIDENCE_THRESHOLD) return true;
+  if (signal.groundingScore !== undefined && signal.groundingScore < LOW_CONFIDENCE_THRESHOLD) return true;
+  if (signal.ungroundedClaimCount !== undefined && signal.ungroundedClaimCount > 0) return true;
+  return false;
+}
+
+function extractCdevQualitySignal(details: unknown): CdevQualitySignal | undefined {
+  if (!details || typeof details !== "object") return undefined;
+  const d = details as Record<string, unknown>;
+  const ui = d.ui as Record<string, unknown> | undefined;
+  const hasFindings =
+    typeof ui?.actionItemCount === "number" && ui.actionItemCount > 0
+      ? true
+      : Array.isArray(d.findings) && d.findings.length > 0;
+
+  const signal: CdevQualitySignal = {
+    hasFindings: Boolean(hasFindings),
+    groundingScore: typeof ui?.groundingScore === "number" ? ui.groundingScore : undefined,
+    qualityScore: typeof ui?.qualityScore === "number" ? ui.qualityScore : undefined,
+    ungroundedClaimCount: typeof ui?.ungroundedClaimCount === "number" ? ui.ungroundedClaimCount : undefined,
+    actionItemCount: typeof ui?.actionItemCount === "number" ? ui.actionItemCount : undefined,
+  };
+  return signal;
+}
+
 type ToolCallEventLike =
   | ReadToolCallEventLike
   | GrepToolCallEventLike
@@ -220,9 +287,25 @@ type ToolCallEventLike =
 
 export function registerReadEnforcement(pi: ExtensionAPI): void {
   const readPathsThisTurn = new Set<string>();
+  let readEscalationRemaining = 0;
+  let controlledBypassRemaining = MAX_CONTROLLED_BYPASS_READS_PER_TURN;
 
   pi.on("turn_start", async () => {
     readPathsThisTurn.clear();
+    readEscalationRemaining = 0;
+    controlledBypassRemaining = MAX_CONTROLLED_BYPASS_READS_PER_TURN;
+  });
+
+  pi.on("tool_result", (_event, ctx: ExtensionContext) => {
+    const config = loadConfig(ctx.cwd);
+    if (!config.enforceCdevTools || !config.allowCdevReadEscalation) return undefined;
+    const toolResult = _event as { toolName?: string; result?: unknown } | undefined;
+    if (toolResult?.toolName !== "cdev") return undefined;
+    const signal = extractCdevQualitySignal(toolResult.result);
+    if (signal && isLowConfidence(signal)) {
+      readEscalationRemaining = Math.max(readEscalationRemaining, 3);
+    }
+    return undefined;
   });
 
   pi.on("before_agent_start", (event, ctx: ExtensionContext) => {
@@ -246,8 +329,22 @@ export function registerReadEnforcement(pi: ExtensionAPI): void {
         return { block: true, reason: formatRepeatedReadReason(rawPath) };
       }
       if (!looksLikeSourceFile(rawPath)) return undefined;
+      if (readEscalationRemaining > 0 && config.allowCdevReadEscalation) {
+        readEscalationRemaining--;
+        readPathsThisTurn.add(rawPath);
+        return undefined;
+      }
+      if (isSmallSnippet(toolEvent.input.start, toolEvent.input.end)) {
+        readPathsThisTurn.add(rawPath);
+        return undefined;
+      }
+      if (controlledBypassRemaining > 0 && isJustifiedBypassReason(toolEvent.input.reason as string | undefined)) {
+        controlledBypassRemaining--;
+        readPathsThisTurn.add(rawPath);
+        return undefined;
+      }
       readPathsThisTurn.add(rawPath);
-      return { block: true, reason: formatBlockReason(rawPath) };
+      return { block: true, reason: formatBlockReason(rawPath, controlledBypassRemaining, readEscalationRemaining) };
     }
     if (toolEvent.toolName === "grep") {
       const pattern = (toolEvent.input.pattern ?? "") as string;
@@ -289,7 +386,7 @@ export function registerReadEnforcement(pi: ExtensionAPI): void {
 
 export function shouldBlockRead(filePath: string): { block: true; reason: string } | undefined {
   if (!looksLikeSourceFile(filePath)) return undefined;
-  return { block: true, reason: formatBlockReason(filePath) };
+  return { block: true, reason: formatBlockReason(filePath, MAX_CONTROLLED_BYPASS_READS_PER_TURN, 0) };
 }
 
 export function shouldBlockGrep(pattern: string, filePath: string, include?: string): { block: true; reason: string } | undefined {

@@ -48,6 +48,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   memoryAutoRefresh: false,
   themed: false,
   enforceCdevTools: true,
+  allowCdevReadEscalation: true,
   autoVerify: false,
   parallel: 1,
   parallelBackup: false,
@@ -162,6 +163,7 @@ export function loadConfig(cwd: string): AutoForkConfig {
     memoryAutoRefresh: projectConfig.memoryAutoRefresh ?? globalConfig.memoryAutoRefresh ?? DEFAULT_CONFIG.memoryAutoRefresh,
     themed: projectConfig.themed ?? globalConfig.themed ?? DEFAULT_CONFIG.themed,
     enforceCdevTools: projectConfig.enforceCdevTools ?? globalConfig.enforceCdevTools ?? DEFAULT_CONFIG.enforceCdevTools,
+    allowCdevReadEscalation: projectConfig.allowCdevReadEscalation ?? globalConfig.allowCdevReadEscalation ?? DEFAULT_CONFIG.allowCdevReadEscalation,
     autoVerify: projectConfig.autoVerify ?? globalConfig.autoVerify ?? DEFAULT_CONFIG.autoVerify,
     parallel: projectConfig.parallel ?? globalConfig.parallel ?? DEFAULT_CONFIG.parallel,
     parallelBackup: projectConfig.parallelBackup ?? globalConfig.parallelBackup ?? DEFAULT_CONFIG.parallelBackup,
@@ -241,6 +243,7 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (typeof config.memoryAutoRefresh === "boolean") parsed.memoryAutoRefresh = config.memoryAutoRefresh;
     if (typeof config.themed === "boolean") parsed.themed = config.themed;
     if (typeof config.enforceCdevTools === "boolean") parsed.enforceCdevTools = config.enforceCdevTools;
+    if (typeof config.allowCdevReadEscalation === "boolean") parsed.allowCdevReadEscalation = config.allowCdevReadEscalation;
     if (typeof config.autoVerify === "boolean") parsed.autoVerify = config.autoVerify;
     if (typeof config.signature === "string") parsed.signature = config.signature;
     if (typeof config.parallel === "number") parsed.parallel = Math.max(1, Math.min(3, Number.isFinite(config.parallel) ? config.parallel : 1));

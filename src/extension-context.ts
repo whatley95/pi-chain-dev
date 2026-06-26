@@ -8,6 +8,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type AutoForkConfig } from "./config.js";
 import { getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
 import { parsePlanReport, parseStage2Report, formatPlanReport, formatStage2Report } from "./json-extract.js";
+import { safeDisplayText } from "./text-width.js";
 import type { AutoForkDetails, ForkResult, StageProfile } from "./types.js";
 import { memoryTopicCount } from "./memory.js";
 import { BUILD_DATE } from "./build-date.js";
@@ -455,20 +456,20 @@ export function formatResultContent(result: ForkResult, details: AutoForkDetails
 export function formatForkResultOutput(result: ForkResult, details: AutoForkDetails): string {
   const stage2Text = getFinalAssistantText(result.messages);
   if (!stage2Text) {
-    return formatResultContent(result, details);
+    return safeDisplayText(formatResultContent(result, details));
   }
   const report = parseStage2Report(stage2Text);
   if (report) {
-    return formatStage2Report(report);
+    return safeDisplayText(formatStage2Report(report));
   }
   const plan = parsePlanReport(stage2Text);
   if (plan) {
-    return formatPlanReport(plan);
+    return safeDisplayText(formatPlanReport(plan));
   }
   // If stage 2 produced text but it didn't parse as structured JSON, still
   // return the raw text so the LLM can see the actual output rather than
   // a generic stage header.
-  return stage2Text;
+  return safeDisplayText(stage2Text);
 }
 
 export function updateForkCostStatus(ctx: ExtensionContext): void {

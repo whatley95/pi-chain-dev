@@ -81,6 +81,8 @@ export interface AutoForkConfig {
   themed: boolean;
   /** If true, inject a system prompt rule and block direct read tool calls for source files, redirecting to /cdev read or cdev quick. Default true. */
   enforceCdevTools: boolean;
+  /** If true (and enforceCdevTools is true), allow one direct read of an explicit project file after a cdev quick/advisor/research call returns low-confidence or incomplete findings. Default true. */
+  allowCdevReadEscalation: boolean;
   /** Run scout twice automatically for higher accuracy. */
   autoVerify: boolean;
   /** Split scout into N parallel sub-task scouts (1-3). Default 1. */

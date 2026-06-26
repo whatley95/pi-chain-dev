@@ -88,7 +88,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   }
 
   async function runStage1Run(label: string, stageTask: string, profile?: StageProfile, subTask?: ParallelSubTask): Promise<ForkResult> {
-    const prompt = buildStage1Prompt(stageTask, customExplorePrompt, editMode, cwd, subTask);
+    const prompt = buildStage1Prompt(stageTask, customExplorePrompt, editMode, cwd, subTask, quick);
     return runStageWithRetry({
       cwd,
       task: prompt,

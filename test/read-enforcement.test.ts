@@ -42,6 +42,18 @@ describe("read-enforcement", () => {
       assert.ok(rule.includes("pi-chain-dev:enforce-cdev-tools"));
       assert.ok(rule.includes("/cdev read"));
     });
+
+    it("mentions up to three escalation reads", () => {
+      const rule = getPreferCdevReadRule();
+      assert.ok(rule.includes("ESCALATION"));
+      assert.ok(rule.includes("up to THREE"));
+    });
+
+    it("mentions controlled bypass with reason", () => {
+      const rule = getPreferCdevReadRule();
+      assert.ok(rule.includes("CONTROLLED BYPASS"));
+      assert.ok(rule.includes("reason"));
+    });
   });
 
   describe("shouldBlockGrep", () => {
