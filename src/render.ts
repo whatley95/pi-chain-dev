@@ -231,9 +231,10 @@ class SimpleText implements Component {
 
 function formatModeLabel(mode: unknown, details: any): string {
   if (typeof mode === "string" && mode) return mode;
+  if (details?.research) return "research";
   if (details?.stage1 && !details?.stage2) return "quick";
-  if (!details?.stage1 && details?.stage2) return "review";
-  if (details?.stage1 && details?.stage2) return "fork";
+  if (!details?.stage1 && details?.stage2) return details?.ui?.mode === "advisor" ? "advisor" : "review";
+  if (details?.stage1 && details?.stage2) return details?.ui?.mode === "advisor" ? "advisor" : "fork";
   return "";
 }
 

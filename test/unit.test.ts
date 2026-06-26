@@ -306,10 +306,43 @@ describe("CDEV_SUBCOMMAND_HELP", () => {
     assert.ok(text.includes("/cdev quick"));
     assert.ok(text.includes("/cdev verify"));
     assert.ok(text.includes("/cdev research"));
+    assert.ok(text.includes("/cdev advisor"));
+    assert.ok(text.includes("/cdev ask-advisor"));
     assert.ok(text.includes("/cdev multi"));
     assert.ok(text.includes("/cdev status"));
     assert.ok(text.includes("/cdev config"));
     assert.ok(text.includes("/cdev-help"));
     assert.ok(text.includes("/cdev-model"));
+  });
+});
+
+// ── prompts.ts: buildAdvisorPrompt ─────────────────────────
+
+import { buildAdvisorPrompt } from "../src/prompts.js";
+
+describe("buildAdvisorPrompt", () => {
+  it("includes the question and JSON schema", () => {
+    const prompt = buildAdvisorPrompt("should we refactor this?");
+    assert.ok(prompt.includes("should we refactor this?"));
+    assert.ok(prompt.includes('"recommendation"'));
+    assert.ok(prompt.includes('"confidence"'));
+    assert.ok(prompt.includes('"actionItems"'));
+  });
+
+  it("includes scout findings when provided", () => {
+    const prompt = buildAdvisorPrompt("what next?", "found foo in bar.ts");
+    assert.ok(prompt.includes("<scout_findings>"));
+    assert.ok(prompt.includes("found foo in bar.ts"));
+  });
+
+  it("omits scout findings tag when not provided", () => {
+    const prompt = buildAdvisorPrompt("what next?");
+    assert.ok(!prompt.includes("<scout_findings>"));
+  });
+
+  it("prepends custom prompt when provided", () => {
+    const prompt = buildAdvisorPrompt("what next?", undefined, "be concise");
+    assert.ok(prompt.startsWith("be concise"));
+    assert.ok(prompt.includes("what next?"));
   });
 });

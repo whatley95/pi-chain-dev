@@ -235,6 +235,35 @@ Rules:
   return base;
 }
 
+export function buildAdvisorPrompt(question: string, scoutFindings?: string, customPrompt?: string, cwd?: string): string {
+  const mapContext = cwd ? loadMapContext(cwd) : "";
+  const base = `You are an ADVISOR. The main agent is stuck or needs help with a difficult decision. ${scoutFindings ? "A scout has already gathered relevant project data below." : "Use your knowledge and any available tools to investigate if needed."} Do NOT implement or edit code. Give a clear, concise recommendation the main agent can act on.
+
+Question: ${question}${mapContext}${scoutFindings ? `\n\n<scout_findings>\n${scoutFindings}\n</scout_findings>` : ""}
+
+Return your advice as a single JSON object matching this schema (no markdown fences, no extra prose):
+{
+  "summary": "one-sentence summary of the situation",
+  "recommendation": "your concrete recommendation or next step",
+  "reasoning": "brief reasoning with concrete anchors when possible",
+  "confidence": "high|medium|low",
+  "openQuestions": ["optional questions the main agent must resolve"],
+  "actionItems": ["concrete verifiable tasks the main agent should do next"]
+}
+
+Rules:
+- "summary" is required and must be one sentence.
+- "recommendation" is required. Be direct and actionable.
+- "reasoning" is required. Cite files, commands, or evidence when available.
+- "confidence" is required.
+- "openQuestions" and "actionItems" are required (use empty arrays if none).`;
+
+  if (customPrompt) {
+    return `${customPrompt}\n\n${base}`;
+  }
+  return base;
+}
+
 export function buildReviewPrompt(customPrompt?: string): string {
   if (customPrompt) return customPrompt + STAGE_AUDIT_GUARD;
   return `Review the code changes made in this session. Your job is to find issues the developer may have missed.

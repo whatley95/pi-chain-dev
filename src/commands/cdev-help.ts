@@ -12,6 +12,8 @@ export const CDEV_SUBCOMMAND_HELP = [
   "/cdev fast <task>      Alias for quick (scout only)",
   "/cdev verify <task>    Scout ×2 + forge (higher accuracy)",
   "/cdev research <issue> Agent-driven investigation, no edits",
+  "/cdev advisor <question> Scout + advisor recommendation (when stuck)",
+  "/cdev ask-advisor <question> Ask advisor directly (no scout)",
   "/cdev multi <n> [backup|no-backup] <task>  Split scout into N scouts (requires map)",
   "/cdev plan <task>      Scout + planner (implementation plan only)",
   "/cdev yolo <task>      Scout + forge, then review loops",

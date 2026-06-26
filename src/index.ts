@@ -99,6 +99,7 @@ export default function (pi: ExtensionAPI) {
       "Use cdev with quick:true for follow-up file tracing, grep-style lookups, or when raw findings suffice.",
        "Use cdev with verify:true only when the user explicitly asks for verification, cross-checking, or high-confidence exploration. Do not default to verify mode. verify runs scout twice and merges findings before forge.",
       "Use cdev with research:true to delegate issue investigation to a selected model. The model reports findings and a decision, but never edits code. The main agent owns any changes.",
+      "Use cdev with advisor:true when you are stuck, looping, or facing a difficult decision. A scout gathers evidence, then an advisor model gives a concrete recommendation. Use askAdvisor:true to skip the scout and ask the advisor directly.",
       "Prefer cdev over bash/grep when you need to understand file relationships, not just find text matches.",
       "Tell cdev to surface ambiguities back to you — don't resolve them in the fork.",
       "cdev stages do not modify code unless yolo autoApply is set to 'auto'.",
@@ -150,6 +151,14 @@ export default function (pi: ExtensionAPI) {
       research: Type.Optional(Type.Boolean({
         description:
           "If true, run research-only mode: a selected model investigates the issue, reports findings and a decision, but never edits code. Use for issue triage, root-cause analysis, or when you want the main agent to own any changes.",
+      })),
+      advisor: Type.Optional(Type.Boolean({
+        description:
+          "If true, run advisor mode: a scout gathers evidence, then an advisor model gives a concrete recommendation for when the main agent is stuck or facing a difficult decision. Advisor never edits code.",
+      })),
+      askAdvisor: Type.Optional(Type.Boolean({
+        description:
+          "If true, ask the advisor model directly without running a scout first. Faster but less grounded. Use when you need a quick second opinion.",
       })),
       yolo: Type.Optional(Type.Boolean({
         description:

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { join, isAbsolute } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config.js";
-import { runAutoFork, runCdevReview, runFileReview, runDiffReview, runYoloLoop, runCdevResearch } from "./runner.js";
+import { runAutoFork, runCdevReview, runFileReview, runDiffReview, runYoloLoop, runCdevResearch, runCdevAdvisor } from "./runner.js";
 import { setStageSemaphoreMaxConcurrency } from "./fork-stage.js";
 import { computeReportDiff, formatReportDiff, parsePlanReport, parseStage2Report } from "./json-extract.js";
 import { writeReportFile } from "./report.js";
@@ -38,6 +38,8 @@ export interface AutoForkParamsType {
   plan?: boolean;
   yolo?: boolean;
   research?: boolean;
+  advisor?: boolean;
+  askAdvisor?: boolean;
   parallel?: number;
   parallelBackup?: boolean;
   recall?: string;
@@ -179,7 +181,7 @@ function validateAutoForkParams(params: Record<string, unknown>): { valid: true;
     if (typeof params.task !== "string") errors.push("task must be a string");
     else out.task = params.task;
   }
-  for (const key of ["review", "quick", "verify", "plan", "yolo", "research", "parallelBackup"] as const) {
+  for (const key of ["review", "quick", "verify", "plan", "yolo", "research", "parallelBackup", "advisor", "askAdvisor"] as const) {
     if (params[key] !== undefined) {
       if (typeof params[key] !== "boolean") errors.push(`${key} must be a boolean`);
       else out[key] = params[key];
@@ -618,6 +620,118 @@ export async function executeCdevTool(
       };
     }
     const { snapshot } = snapshotResult;
+
+    // ── Advisor mode ──
+    if (p.advisor) {
+      if (!p.task) {
+        return {
+          content: [{ type: "text" as const, text: "cdev error: task is required for advisor mode." }],
+          details: { stage1: null, stage2: null },
+          isError: true,
+        };
+      }
+      const advisorProfile = config.advisor ?? profiles.stage2;
+      if (!advisorProfile.provider || !advisorProfile.id) {
+        return {
+          content: [{ type: "text" as const, text: "cdev advisor error: Advisor model not configured. Use /cdev-model." }],
+          details: { stage1: null, stage2: null },
+          isError: true,
+        };
+      }
+
+      const askAdvisorOnly = params.askAdvisor === true;
+      const estimate = estimateForkCost({
+        task: p.task,
+        stage1Profile: askAdvisorOnly ? advisorProfile : profiles.stage1,
+        stage2Profile: advisorProfile,
+        quick: askAdvisorOnly,
+        forkSessionSnapshotJsonl: snapshot ?? undefined,
+      });
+      const budgetCheck = checkCostBudget(config, ctx.cwd, estimate.cost);
+      if (!budgetCheck.allowed) {
+        return {
+          content: [{ type: "text" as const, text: `cdev budget error: ${budgetCheck.reason}\nEstimated: ~${formatCost(estimate.cost)} (${estimate.inputTokens} input / ${estimate.outputTokens} output tokens)` }],
+          details: { stage1: null, stage2: null },
+          isError: true,
+        };
+      }
+
+      const onProgress = (stage: "scout" | "advisor", model: string) => {
+        const icon = stage === "scout" ? "🔍" : "🧭";
+        ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${stage === "scout" ? "Scout gathering evidence" : "Advisor reasoning"}…  (${model})`)]);
+      };
+      onProgress(askAdvisorOnly ? "advisor" : "scout", askAdvisorOnly
+        ? (advisorProfile.thinking ? `${advisorProfile.provider}:${advisorProfile.id} • ${advisorProfile.thinking}` : `${advisorProfile.provider}:${advisorProfile.id}`)
+        : (profiles.stage1.thinking ? `${profiles.stage1.provider}:${profiles.stage1.id} • ${profiles.stage1.thinking}` : `${profiles.stage1.provider}:${profiles.stage1.id}`));
+      const startTime = Date.now();
+      const { result, details: advisorDetails, scoutText } = await runCdevAdvisor({
+        cwd: ctx.cwd,
+        question: p.task,
+        forkSessionSnapshotJsonl: snapshot,
+        advisorProfile,
+        scoutProfile: profiles.stage1,
+        customPrompt: config.promptsEnabled ? config.prompts?.advisor : undefined,
+        scoutTimeoutMs: config.profileTimeouts?.scout ?? config.scoutTimeoutMs,
+        advisorTimeoutMs: config.profileTimeouts?.forge ?? config.forgeTimeoutMs,
+        includeScout: !askAdvisorOnly,
+        onProgress,
+        onUpdate: (update) => {
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🧭 Advisor ${update.stage}… ${update.activity ?? ""}`)]);
+        },
+        extensions: config.extensions,
+        environment: config.environment,
+        offline: config.offline,
+        signal,
+      });
+      ctx.ui.setWidget("cdev-progress", undefined);
+
+      const current = saveSession(ctx.cwd, p.task, false, startTime, advisorDetails, result);
+
+      const advisorText = getFinalAssistantText(result.messages) || "";
+      const advisorCost = (advisorDetails.stage1?.usage?.cost ?? 0) + (advisorDetails.stage2?.usage?.cost ?? 0);
+      recordForkCost(ctx.cwd, advisorCost);
+      maybeNotifyCostAlert(ctx, config);
+      maybeWarnSessionSize(ctx);
+
+      let reportRelPath = "";
+      if (advisorText && !result.errorMessage) {
+        const slug = p.task
+          .replace(/[^a-zA-Z0-9]+/g, "-")
+          .replace(/^-|-$/g, "")
+          .toLowerCase()
+          .slice(0, 60);
+        const { reportRelPath: savedPath } = writeReportFile({
+          cwd: ctx.cwd,
+          fileName: `advisor-${slug}-${Date.now().toString(36)}.md`,
+          title: `Advisor: ${p.task.slice(0, 80)}`,
+          reviewer: advisorProfile.id,
+          body: advisorText,
+        });
+        reportRelPath = savedPath;
+      }
+
+      const scoutNote = scoutText ? "\n\n---\n🔍 Scout evidence was included in the advisor prompt." : "";
+      const reportNote = reportRelPath ? `\n\n---\n📄 Advisor report saved: ${reportRelPath}` : "";
+      let resultText = formatForkResultOutput(result, advisorDetails) + scoutNote + reportNote;
+
+      const previous = findPreviousSession(ctx.cwd, p.task);
+      if (previous?.resultText && previous.id !== current.id) {
+        const diff = computeReportDiff(previous.resultText, advisorText);
+        if (diff.added.length > 0 || diff.removed.length > 0) {
+          resultText += "\n\n---\n📊 Changes vs previous advisor run\n\n" + formatReportDiff(diff);
+        }
+      }
+
+      return {
+        content: [{ type: "text" as const, text: resultText }],
+        details: withUiDetails(advisorDetails, buildReportUiDetails(advisorText, {
+          mode: "advisor",
+          task: p.task,
+          reportPath: reportRelPath || undefined,
+        })),
+        isError: result.exitCode > 0 && !advisorText,
+      };
+    }
 
     const quick = p.quick ?? false;
     const verify = p.verify ?? (config.autoVerify && !p.quick);

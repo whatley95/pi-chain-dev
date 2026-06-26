@@ -136,6 +136,7 @@ export function loadConfig(cwd: string): AutoForkConfig {
     stage2: projectConfig.stage2 || globalConfig.stage2 || DEFAULT_CONFIG.stage2,
     review: projectConfig.review || globalConfig.review,
     research: projectConfig.research || globalConfig.research,
+    advisor: projectConfig.advisor || globalConfig.advisor,
     // Deep-merge prompts so project can override individual keys without losing global
     prompts: {
       ...DEFAULT_CONFIG.prompts,
@@ -214,6 +215,8 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     const stage1Backup = parseStageProfile(config.stage1Backup);
     const stage2 = parseStageProfile(config.stage2);
     const review = parseStageProfile(config.review);
+    const research = parseStageProfile(config.research);
+    const advisor = parseStageProfile(config.advisor);
 
     const yoloRaw = config.yolo && typeof config.yolo === "object" ? config.yolo as Record<string, unknown> : undefined;
     const yoloReview = parseStageProfile(yoloRaw?.reviewProfile);
@@ -225,9 +228,8 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (stage1Backup) parsed.stage1Backup = stage1Backup;
     if (stage2) parsed.stage2 = stage2;
     if (review) parsed.review = review;
-
-  const research = parseStageProfile(config.research);
-  if (research) parsed.research = research;
+    if (research) parsed.research = research;
+    if (advisor) parsed.advisor = advisor;
     if (typeof config.offline === "boolean") parsed.offline = config.offline;
     if (typeof config.costFooter === "boolean") parsed.costFooter = config.costFooter;
     if (typeof config.auto === "boolean") parsed.auto = config.auto;
@@ -294,7 +296,7 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (config.prompts && typeof config.prompts === "object") {
       const prompts = config.prompts as Record<string, unknown>;
       const parsedPrompts: Record<string, string> = {};
-    for (const key of ["explore", "synthesize", "plan", "review", "research"]) {
+    for (const key of ["explore", "synthesize", "plan", "review", "research", "advisor"]) {
       if (typeof prompts[key] === "string" && (prompts[key] as string).trim()) {
         parsedPrompts[key] = (prompts[key] as string).trim();
       }

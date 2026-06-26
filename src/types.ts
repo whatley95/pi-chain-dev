@@ -23,6 +23,8 @@ export interface PromptsConfig {
   review?: string;
   /** Custom prompt for research mode. */
   research?: string;
+  /** Custom prompt for advisor mode. */
+  advisor?: string;
 }
 
 /** Gate thresholds for deciding whether scout evidence is strong enough for forge. */
@@ -55,6 +57,8 @@ export interface AutoForkConfig {
   review?: StageProfile;
   /** Optional model for research mode. Falls back to stage1 if unset. */
   research?: StageProfile;
+  /** Optional model for advisor mode. Falls back to stage2 if unset. */
+  advisor?: StageProfile;
   /** Custom prompts for each stage. */
   prompts?: PromptsConfig;
   /** Extensions to load in child processes. null = normal, [] = none. */
@@ -251,7 +255,7 @@ export interface AutoForkDetails {
   ui?: AutoForkUiDetails;
 }
 
-export type CdevUiMode = "fork" | "quick" | "verify" | "plan" | "review" | "yolo" | "recall" | "parallel" | "research";
+export type CdevUiMode = "fork" | "quick" | "verify" | "plan" | "review" | "yolo" | "recall" | "parallel" | "research" | "advisor";
 
 export interface AutoForkUiDetails {
   mode?: CdevUiMode;

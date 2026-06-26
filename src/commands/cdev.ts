@@ -55,7 +55,7 @@ export function registerCdevCommand(
   updateAutoStatus: (ctx: ExtensionContext) => void,
 ): void {
   pi.registerCommand("cdev", {
-    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, verify <task>, research <issue>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off",
+    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, verify <task>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
 
@@ -346,6 +346,30 @@ export function registerCdevCommand(
         return;
       }
 
+      // ── Subcommand: advisor ──
+      if (trimmed.startsWith("advisor ")) {
+        const advisorQuestion = trimmed.slice(8).trim();
+        if (!advisorQuestion) {
+          ctx.ui.notify("Usage: /cdev advisor <question>", "warn");
+          return;
+        }
+        ctx.ui.notify(`Queuing advisor (scout + advisor)...`, "info");
+        pi.sendUserMessage(`Use cdev with advisor=true to: ${advisorQuestion}`, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
+
+      // ── Subcommand: ask-advisor ──
+      if (trimmed.startsWith("ask-advisor ")) {
+        const advisorQuestion = trimmed.slice(12).trim();
+        if (!advisorQuestion) {
+          ctx.ui.notify("Usage: /cdev ask-advisor <question>", "warn");
+          return;
+        }
+        ctx.ui.notify(`Queuing ask-advisor (advisor only)...`, "info");
+        pi.sendUserMessage(`Use cdev with advisor=true, askAdvisor=true to: ${advisorQuestion}`, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
+
       // ── Subcommand: multi n [no-backup] task ──
       const multiMatch = trimmed.match(/^multi\s+(\d{1,2})(?:\s+(backup|no-backup))?\s+(.+)$/i);
       if (multiMatch) {
@@ -473,6 +497,7 @@ export function registerCdevCommand(
         lines.push(`  Forge:            ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`);
         lines.push(`  Review:           ${config.review ? `${config.review.provider}:${config.review.id}  •  ${config.review.thinking}` : `↳ Forge (${config.stage2.id})`}`);
         lines.push(`  Research:         ${config.research ? `${config.research.provider}:${config.research.id}  •  ${config.research.thinking}` : `↳ Scout A (${config.stage1.id})`}`);
+        lines.push(`  Advisor:          ${config.advisor ? `${config.advisor.provider}:${config.advisor.id}  •  ${config.advisor.thinking}` : `↳ Forge (${config.stage2.id})`}`);
         lines.push(`  Model prices:     Scout A ${formatModelPrice(config.stage1.id)}  |  Forge ${formatModelPrice(config.stage2.id)}`);
         lines.push(`  Auto-trigger:     ${config.auto ? "⚡ ON (sends steer every 3 turns to prompt cdev use)" : "OFF (agent uses cdev only when asked or it decides)"}`);
         lines.push(`  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`);
@@ -532,6 +557,8 @@ export function registerCdevCommand(
           "Quick explore",
           "Deep verify",
           "Research issue",
+          "Advisor question",
+          "Ask advisor directly",
           "Multi explore",
           "Plan implementation",
           "Review current session",
@@ -590,6 +617,8 @@ export function registerCdevCommand(
           "Quick explore": "/cdev quick <task>",
           "Deep verify": "/cdev verify <task>",
           "Research issue": "/cdev research <issue or question>",
+          "Advisor question": "/cdev advisor <question>",
+          "Ask advisor directly": "/cdev ask-advisor <question>",
           "Multi explore": "/cdev multi <1-3> [backup|no-backup] <task>",
           "Plan implementation": "/cdev plan <task>",
           "Review file or diff": "/cdev review <path-or-diff>",
@@ -599,7 +628,7 @@ export function registerCdevCommand(
       }
 
       // ── Fuzzy match ──
-       const subcommands = ["status", "quick", "fast", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "auto-compact", "config", "retry", "estimate", "help", "clear", "yolo", "verify", "plan", "multi", "research"];
+       const subcommands = ["status", "quick", "fast", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "auto-compact", "config", "retry", "estimate", "help", "clear", "yolo", "verify", "plan", "multi", "research", "advisor", "ask-advisor"];
       const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
       const isSingleWord = !trimmed.includes(" ");
       const fuzzy = subcommands
