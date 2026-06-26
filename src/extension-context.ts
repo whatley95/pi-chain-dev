@@ -17,11 +17,12 @@ export const AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, 
 export const DEFAULT_SIGNATURE = "whatley.xyz";
 export const FORK_COST_STATUS_KEY = "cdev-cost";
 
-import { getKimiUsageLine } from "./kimi-usage.js";
+import { diagnoseKimiUsage } from "./kimi-usage.js";
 
 const KIMI_USAGE_STATUS_KEY = "cdev-kimi-usage";
 let _kimiUsageRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let _lastKimiUsageModelId: string | undefined;
+let _lastKimiUsageDiagnostic: Awaited<ReturnType<typeof diagnoseKimiUsage>> | undefined;
 
 export function startKimiUsageRefresh(ctx: ExtensionContext): void {
   if (_kimiUsageRefreshTimer) {
@@ -46,23 +47,31 @@ export async function refreshKimiUsageStatus(ctx: ExtensionContext): Promise<voi
     const config = loadConfig(ctx.cwd);
     if (!config.kimiUsageFooter) {
       ctx.ui.setStatus(KIMI_USAGE_STATUS_KEY, undefined);
+      _lastKimiUsageDiagnostic = { ok: false, error: "disabled in config" };
       return;
     }
     const modelId = ctx.model?.id;
     if (!modelId || !modelId.toLowerCase().startsWith("kimi")) {
       ctx.ui.setStatus(KIMI_USAGE_STATUS_KEY, undefined);
+      _lastKimiUsageDiagnostic = { ok: false, error: `model ${modelId ?? "unknown"} is not kimi` };
       return;
     }
     _lastKimiUsageModelId = modelId;
-    const line = await getKimiUsageLine(modelId);
-    ctx.ui.setStatus(KIMI_USAGE_STATUS_KEY, line ? ctx.ui.theme.fg("dim", line) : undefined);
-  } catch {
+    const diag = await diagnoseKimiUsage(modelId);
+    _lastKimiUsageDiagnostic = diag;
+    ctx.ui.setStatus(KIMI_USAGE_STATUS_KEY, diag.ok && diag.line ? ctx.ui.theme.fg("dim", diag.line) : undefined);
+  } catch (err) {
     ctx.ui.setStatus(KIMI_USAGE_STATUS_KEY, undefined);
+    _lastKimiUsageDiagnostic = { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
 export function getLastKimiUsageModelId(): string | undefined {
   return _lastKimiUsageModelId;
+}
+
+export function getLastKimiUsageDiagnostic(): Awaited<ReturnType<typeof diagnoseKimiUsage>> | undefined {
+  return _lastKimiUsageDiagnostic;
 }
 
 // ── Session cost tracking ──────────────────────────────────

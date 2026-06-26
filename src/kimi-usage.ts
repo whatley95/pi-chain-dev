@@ -136,8 +136,44 @@ export async function fetchKimiUsage(apiKey?: string, baseUrl?: string): Promise
   }
 }
 
-export async function getKimiUsageLine(modelId?: string): Promise<string | undefined> {
-  if (!isKimiModel(modelId)) return undefined;
-  const usage = await fetchKimiUsage();
-  return usage?.line;
+export interface KimiUsageDiagnostic {
+  ok: boolean;
+  line?: string;
+  error?: string;
+}
+
+export async function diagnoseKimiUsage(modelId?: string): Promise<KimiUsageDiagnostic> {
+  if (!isKimiModel(modelId)) {
+    return { ok: false, error: `model ${modelId ?? "unknown"} is not a kimi model` };
+  }
+  const key = resolveKimiApiKey();
+  if (!key) {
+    return { ok: false, error: "no KIMI_API_KEY or ~/.pi/agent/auth.json kimi-coding.key found" };
+  }
+  const url = resolveKimiBaseUrl();
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      return { ok: false, error: `HTTP ${response.status} from ${url}: ${body.slice(0, 200)}` };
+    }
+    const data = (await response.json()) as KimiUsageResponse;
+    const periods = data.data?.periods;
+    if (!periods || periods.length === 0) {
+      return { ok: false, error: "usage endpoint returned no periods" };
+    }
+    const usage = formatKimiUsage(periods);
+    if (!usage) {
+      return { ok: false, error: "could not format usage periods" };
+    }
+    return { ok: true, line: usage.line };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
