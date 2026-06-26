@@ -414,6 +414,9 @@ describe("CDEV_SUBCOMMAND_HELP", () => {
     assert.ok(text.includes("/cdev <task>"));
     assert.ok(text.includes("/cdev quick"));
     assert.ok(text.includes("/cdev read"));
+    assert.ok(text.includes("/cdev grep"));
+    assert.ok(text.includes("/cdev trace"));
+    assert.ok(text.includes("/cdev explain"));
     assert.ok(text.includes("/cdev verify"));
     assert.ok(text.includes("/cdev research"));
     assert.ok(text.includes("/cdev advisor"));

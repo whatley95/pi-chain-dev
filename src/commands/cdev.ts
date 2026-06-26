@@ -114,6 +114,59 @@ export function registerCdevCommand(
         return;
       }
 
+      // ── Subcommand: grep <pattern> [path] ──
+      const grepMatch = trimmed.match(/^grep\s+(.+)$/);
+      if (grepMatch) {
+        const rest = grepMatch[1].trim();
+        if (!rest) {
+          ctx.ui.notify("Usage: /cdev grep <pattern> [path]", "warn");
+          return;
+        }
+        const tokens = rest.split(/\s+/);
+        const lastToken = tokens[tokens.length - 1];
+        const hasPath = lastToken && (lastToken.includes("/") || lastToken.includes("\\") || lastToken === "." || lastToken.endsWith("/"));
+        const pattern = hasPath ? tokens.slice(0, -1).join(" ") : rest;
+        const searchPath = hasPath ? lastToken : ".";
+        if (!pattern) {
+          ctx.ui.notify("Usage: /cdev grep <pattern> [path]", "warn");
+          return;
+        }
+        ctx.ui.notify(`Scout-grepping for "${pattern}"...`, "info");
+        const task = `Search the codebase for occurrences of "${pattern}" under ${searchPath}. Return a concise list of matching file paths, line numbers, and a short snippet for each match. Do not edit any files.`;
+        pi.sendUserMessage(`Use cdev with quick=true to: ${task}`, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
+
+      // ── Subcommand: trace <symbol> ──
+      const traceMatch = trimmed.match(/^trace\s+(.+)$/);
+      if (traceMatch) {
+        const symbol = traceMatch[1].trim();
+        if (!symbol) {
+          ctx.ui.notify("Usage: /cdev trace <symbol>", "warn");
+          return;
+        }
+        ctx.ui.notify(`Scout-tracing "${symbol}"...`, "info");
+        const task = `Trace the symbol "${symbol}" in the codebase. Find its definition(s), declarations, and key call sites/usages. Return file paths, line numbers, and a brief explanation of what it does. Do not edit any files.`;
+        pi.sendUserMessage(`Use cdev with quick=true to: ${task}`, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
+
+      // ── Subcommand: explain <path|symbol> ──
+      const explainMatch = trimmed.match(/^explain\s+(.+)$/);
+      if (explainMatch) {
+        const target = explainMatch[1].trim();
+        if (!target) {
+          ctx.ui.notify("Usage: /cdev explain <file-path-or-symbol>", "warn");
+          return;
+        }
+        ctx.ui.notify(`Scout-explaining "${target}"...`, "info");
+        const task = target.includes("/") || target.includes("\\") || target.endsWith(".ts") || target.endsWith(".js") || target.endsWith(".java") || target.endsWith(".py")
+          ? `Explain the file "${target}" in detail. Include its purpose, key functions/classes, important logic, and how it fits into the project. Do not edit any files.`
+          : `Explain what "${target}" is in this codebase. Find its definition and main usages, then describe its purpose and behavior. Do not edit any files.`;
+        pi.sendUserMessage(`Use cdev with quick=true to: ${task}`, { triggerTurn: true, deliverAs: "steer" });
+        return;
+      }
+
       // ── Subcommands: scan, scan deep ──
       if (await handleScan(trimmed, ctx, config, updateAutoStatus)) return;
 
