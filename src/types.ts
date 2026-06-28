@@ -39,6 +39,8 @@ export interface ConfidenceGateConfig {
   minCommandEvidence?: number;
   /** If true, gate failures trigger an automatic re-explore. Default true. */
   autoReExplore?: boolean;
+  /** If true, re-explore when quality/confidence gates fail. Default false (relaxed — no coverage passes). */
+  strictValidation?: boolean;
 }
 
 /** Configuration stored under "pi-chain-dev" key in settings.json. */
@@ -166,6 +168,7 @@ export function normalizeConfidenceGates(config?: ConfidenceGateConfig): Require
     minFileAnchors: Math.max(0, config?.minFileAnchors ?? 1),
     minCommandEvidence: Math.max(0, config?.minCommandEvidence ?? 1),
     autoReExplore: config?.autoReExplore ?? true,
+    strictValidation: config?.strictValidation ?? false,
   };
 }
 

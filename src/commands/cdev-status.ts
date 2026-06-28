@@ -58,6 +58,10 @@ export function formatCdevStatus(ctx: ExtensionContext, config: AutoForkConfig):
   lines.push(`  Multi scouts:     ${config.parallel && config.parallel > 1 ? `${config.parallel} (backup ${config.parallelBackup ? "on" : "off"})` : "OFF"}`);
   lines.push(`  Scout timeout:    ${((config.profileTimeouts?.scout ?? config.scoutTimeoutMs ?? 600_000) / 1000).toFixed(0)}s${config.profileTimeouts?.scout ? " (profile override)" : ""}`);
   lines.push(`  Forge timeout:    ${((config.profileTimeouts?.forge ?? config.forgeTimeoutMs ?? 180_000) / 1000).toFixed(0)}s${config.profileTimeouts?.forge ? " (profile override)" : ""}`);
+  const gates = config.confidenceGates;
+  const strict = gates?.strictValidation ?? false;
+  const autoRe = gates?.autoReExplore ?? true;
+  lines.push(`  Quality gates:    ${strict ? `strict  (min ${gates?.minFindings ?? 3} findings, max ${Math.round((gates?.maxLowConfidenceRatio ?? 0.5) * 100)}% low, ${autoRe ? "auto re-explore" : "no re-explore"})` : "relaxed  (no coverage passes)"}`);
   const yolo = normalizeYoloConfig(config.yolo);
   lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, ${yolo.autoApply === "auto" ? "auto-edit" : yolo.autoApply === "propose" ? "propose fixes" : "main agent fixes"})` : "OFF"}`);
   const hasMap = !!loadProjectMap(ctx.cwd);

@@ -284,7 +284,8 @@ const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeou
     const reExploreCheck = shouldReExplore(stage1Findings, verify);
     const gateCheck = stage1Findings ? evaluateConfidenceGates(stage1Findings, confidenceGates) : { passed: false, reasons: ["no valid findings"] };
     const gateAutoReExplore = confidenceGates?.autoReExplore ?? true;
-    const needsMoreExploration = reExploreCheck.should || (!gateCheck.passed && gateAutoReExplore);
+    const strictValidation = confidenceGates?.strictValidation ?? false;
+    const needsMoreExploration = strictValidation && (reExploreCheck.should || (!gateCheck.passed && gateAutoReExplore));
     if (!gateCheck.passed && !gateAutoReExplore) {
       stage1Result.stderr += `\n[cdev] confidence gate failed but autoReExplore is off: ${gateCheck.reasons.join("; ")}\n`;
     }

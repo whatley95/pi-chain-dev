@@ -66,6 +66,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
     minFileAnchors: 1,
     minCommandEvidence: 1,
     autoReExplore: true,
+    strictValidation: false,
   },
   yolo: {
     enabled: false,
@@ -322,6 +323,7 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
       if (typeof gates.minFileAnchors === "number") parsedGates.minFileAnchors = gates.minFileAnchors;
       if (typeof gates.minCommandEvidence === "number") parsedGates.minCommandEvidence = gates.minCommandEvidence;
       if (typeof gates.autoReExplore === "boolean") parsedGates.autoReExplore = gates.autoReExplore;
+      if (typeof gates.strictValidation === "boolean") parsedGates.strictValidation = gates.strictValidation;
       parsed.confidenceGates = parsedGates;
     }
 
