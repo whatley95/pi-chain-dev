@@ -8,7 +8,6 @@ import { scanProject, formatScanReport } from "../scan.js";
 import {
   withAuditGuard,
   makeThemedBg,
-  buildSessionSnapshotJsonl,
   resolveStageProfiles,
   logError,
 } from "../extension-context.js";
@@ -48,8 +47,8 @@ export async function handleScan(args: string, ctx: ExtensionContext, config: Au
     }
     ctx.ui.notify("Deep scanning project (stage 1 → stage 2)...", "info");
     try {
-      const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, config.modelContextLimit);
-      if (!snapshot) { ctx.ui.notify("Cannot snapshot session.", "error"); return true; }
+      // Start child Pi with clean session — avoids 400 tool-ordering errors
+      const snapshot = "";
 
       const scanTask = withAuditGuard(DEEP_SCAN_TASK);
       const scanStartTime = Date.now();

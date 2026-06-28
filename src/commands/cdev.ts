@@ -38,7 +38,7 @@ export function registerCdevCommand(
   updateAutoStatus: (ctx: ExtensionContext) => void,
 ): void {
   pi.registerCommand("cdev", {
-    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, read <paths>, grep <pattern>, trace <symbol>, explain <path|symbol>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, quality on|off, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off, todo <name>",
+    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, read <paths>, grep <pattern>, trace <symbol>, explain <path|symbol>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, quality on|off, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic|--all|--stale>, themed on|off, todo <name>",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
       const lower = trimmed.toLowerCase();

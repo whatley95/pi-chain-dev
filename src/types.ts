@@ -355,8 +355,6 @@ export interface Stage1Findings {
   openQuestions?: string[];
   /** Coverage statistics collected during exploration. */
   coverage?: SourceCoverageStats;
-  /** Contradictions found between multiple scout runs. */
-  contradictions?: FindingContradiction[];
 }
 
 export function isStage1Findings(value: unknown): value is Stage1Findings {
@@ -376,7 +374,6 @@ export function isStage1Findings(value: unknown): value is Stage1Findings {
   if (v.assumptions !== undefined && (!Array.isArray(v.assumptions) || !v.assumptions.every((item) => typeof item === "string"))) return false;
   if (v.openQuestions !== undefined && (!Array.isArray(v.openQuestions) || !v.openQuestions.every((item) => typeof item === "string"))) return false;
   if (v.coverage !== undefined && !isSourceCoverageStats(v.coverage)) return false;
-  if (v.contradictions !== undefined && (!Array.isArray(v.contradictions) || !v.contradictions.every(isFindingContradiction))) return false;
   return true;
 }
 
@@ -416,13 +413,6 @@ export interface SourceCoverageStats {
 
 /** Result of a review pass. */
 export type ReviewVerdict = "pass" | "needs-work" | "blocked" | "unknown";
-
-/** Contradiction between two scout findings. */
-export interface FindingContradiction {
-  observationA: string;
-  observationB: string;
-  summary: string;
-}
 
 /** Structured output expected from plan mode. */
 export interface PlanReport {
@@ -477,14 +467,6 @@ function isSourceCoverageStats(value: unknown): value is SourceCoverageStats {
     return false;
   }
   return true;
-}
-
-function isFindingContradiction(value: unknown): value is FindingContradiction {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const v = value as Record<string, unknown>;
-  return typeof v.observationA === "string"
-    && typeof v.observationB === "string"
-    && typeof v.summary === "string";
 }
 
 export function isStage2Report(value: unknown): value is Stage2Report {

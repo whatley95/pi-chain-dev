@@ -13,7 +13,7 @@ import {
   formatForkResultOutput, formatCost, makeThemedBg,
   withAuditGuard, resolveStageProfiles, getSessionForkCost,
 } from "../extension-context.js";
-import { indexFindingsAsync } from "../memory.js";
+import { indexFindingsAsync, getMemoryContext } from "../memory.js";
 import { clearProgress, withUiDetails, buildReportUiDetails,
   formatProgressDetail, modelLabel, checkForkBudget,
 } from "./shared-helpers.js";
@@ -34,7 +34,11 @@ export async function handleFullFork(
   const quick: boolean = p.quick ?? false;
   const auditedTask = withAuditGuard(task);
 
-  const budget = checkForkBudget(config, ctx.cwd, auditedTask,
+  // Prepend relevant past findings as context — compensates for clean child sessions
+  const memoryContext = config.memory ? getMemoryContext(task, ctx.cwd) : null;
+  const enrichedTask = memoryContext ? `${memoryContext}\n---\n${auditedTask}` : auditedTask;
+
+  const budget = checkForkBudget(config, ctx.cwd, enrichedTask,
     profiles.stage1, profiles.stage2,
     { quick, snapshot });
   if (!budget.allowed) {
@@ -69,7 +73,7 @@ export async function handleFullFork(
   const startTime = Date.now();
   const { result, details } = await runAutoFork({
     cwd: ctx.cwd,
-    task: auditedTask,
+    task: enrichedTask,
     forkSessionSnapshotJsonl: snapshot,
     stage1Profile: profiles.stage1,
     stage1bProfile: config.stage1b,

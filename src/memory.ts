@@ -873,3 +873,92 @@ export function memoryTopicCount(cwd: string): number {
   }
   return count;
 }
+
+/** Search memory for findings relevant to a task.
+ *  Returns formatted context to prepend to the task, or null if nothing relevant found.
+ *  Used to provide project context to child Pi processes that start with clean sessions. */
+export function getMemoryContext(task: string, cwd: string): string | null {
+  const memory = loadMemory(cwd);
+  const topicEntries = Object.entries(memory.topics);
+  if (topicEntries.length === 0) return null;
+
+  const taskLower = task.toLowerCase();
+  const keywords = taskLower.split(/[\s,.;:!?()\][{}]+/).filter(k => k.length > 2);
+  if (keywords.length === 0) return null;
+
+  // Score each topic for relevance
+  const scored = topicEntries.map(([name, topic]) => {
+    let score = 0;
+    const nameLower = name.toLowerCase();
+
+    // Direct topic name match in task
+    if (taskLower.includes(nameLower)) score += 10;
+    // Partial topic name matches
+    for (const part of nameLower.split(/[-_\s]+/)) {
+      if (part.length > 2 && taskLower.includes(part)) score += 5;
+    }
+
+    // Keyword matches in topic name
+    for (const kw of keywords) {
+      if (nameLower.includes(kw)) score += 3;
+    }
+
+    // File path matches
+    for (const fp of topic.files) {
+      const fpLower = fp.toLowerCase();
+      if (taskLower.includes(fpLower)) score += 5;
+      for (const kw of keywords) {
+        if (fpLower.includes(kw)) score += 2;
+      }
+    }
+
+    // Finding text keyword matches
+    const latestFindings = topic.findings.slice(0, 3);
+    for (const f of latestFindings) {
+      const fLower = f.text.toLowerCase();
+      for (const kw of keywords) {
+        if (fLower.includes(kw)) score += 1;
+      }
+    }
+
+    // Recency bonus
+    const hoursAgo = topic.lastSeen ? (Date.now() - topic.lastSeen) / (1000 * 60 * 60) : 9999;
+    if (hoursAgo < 1) score += 3;
+    else if (hoursAgo < 24) score += 2;
+    else if (hoursAgo < 168) score += 1; // within a week
+
+    return { name, topic, score };
+  });
+
+  // Filter and sort by score
+  const relevant = scored
+    .filter(s => s.score >= 5)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  if (relevant.length === 0) return null;
+
+  // Build context string
+  const lines: string[] = ["[cdev memory context — past findings relevant to this task]"];
+  for (const { name, topic } of relevant) {
+    lines.push(`\n## ${name}`);
+    const latest = topic.findings[0];
+    if (latest) {
+      // Truncate long finding text
+      const text = latest.text.length > 600
+        ? latest.text.slice(0, 600) + "…"
+        : latest.text;
+      lines.push(`${text}`);
+      if (latest.fileFingerprints && Object.keys(latest.fileFingerprints).length > 0) {
+        const files = Object.keys(latest.fileFingerprints).slice(0, 5);
+        lines.push(`Files: ${files.join(", ")}`);
+      }
+    }
+    if (topic.staleFindings && topic.staleFindings.length > 0) {
+      lines.push(`⚠ ${topic.staleFindings.length} stale finding(s) — files changed since`);
+    }
+  }
+  lines.push("", "Use /cdev recall <topic> to view full findings.", "");
+
+  return lines.join("\n");
+}

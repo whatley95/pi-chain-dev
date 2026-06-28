@@ -21,7 +21,6 @@ import {
 import {
   withAuditGuard,
   makeThemedBg,
-  buildSessionSnapshotJsonl,
   resolveStageProfiles,
   logError,
 } from "../extension-context.js";
@@ -40,8 +39,9 @@ async function refreshMemoryTopic(
   }
   ctx.ui.notify(`Refreshing memory topic "${topic}" (stage 1 → stage 2)...`, "info");
   try {
-    const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, config.modelContextLimit);
-    if (!snapshot) { ctx.ui.notify("Cannot snapshot session.", "error"); return null; }
+    // Start child Pi with clean session — avoids 400 tool-ordering errors.
+    // The refresh task already includes files list + previous findings as context.
+    const snapshot = "";
 
     const filesList = entry.files.slice(0, 15).join(", ");
     const previousFindings = entry.findings.slice(0, 3).map((f: { text: string }) => `- ${f.text}`).join("\n");
@@ -163,6 +163,66 @@ export async function handleMemory(args: string, ctx: ExtensionContext, config: 
     } else {
       ctx.ui.notify("No similar topics to merge.", "info");
     }
+    return true;
+  }
+
+  const memoryRefreshAllMatch = trimmed.match(/^memory refresh\s+--all$/i);
+  if (memoryRefreshAllMatch) {
+    if (!config.memory) {
+      ctx.ui.notify("Project memory is disabled. /cdev memory on to enable.", "warn");
+      return true;
+    }
+    const memory = loadMemory(ctx.cwd);
+    const topics = Object.entries(memory.topics);
+    if (topics.length === 0) {
+      ctx.ui.notify("No memory topics to refresh.", "info");
+      return true;
+    }
+    ctx.ui.notify(`Refreshing all ${topics.length} memory topics…`, "info");
+    let succeeded = 0;
+    let failed = 0;
+    for (let i = 0; i < topics.length; i++) {
+      const [name, entry] = topics[i];
+      ctx.ui.notify(`  ${i + 1}/${topics.length} Refreshing "${name}"…`, "info");
+      const updated = await refreshMemoryTopic(ctx, config, name, entry);
+      if (updated) {
+        succeeded++;
+      } else {
+        failed++;
+        ctx.ui.notify(`  ✗ "${name}" refresh failed`, "warn");
+      }
+    }
+    ctx.ui.notify(`Memory refresh done: ${succeeded} succeeded, ${failed} failed.`, "info");
+    return true;
+  }
+
+  const memoryRefreshStaleMatch = trimmed.match(/^memory refresh\s+--stale$/i);
+  if (memoryRefreshStaleMatch) {
+    if (!config.memory) {
+      ctx.ui.notify("Project memory is disabled. /cdev memory on to enable.", "warn");
+      return true;
+    }
+    const memory = loadMemory(ctx.cwd);
+    const topics = Object.entries(memory.topics).filter(([_, entry]) => topicHasStaleFindings(entry, ctx.cwd));
+    if (topics.length === 0) {
+      ctx.ui.notify("No stale topics to refresh.", "info");
+      return true;
+    }
+    ctx.ui.notify(`Refreshing ${topics.length} stale topic(s)…`, "info");
+    let succeeded = 0;
+    let failed = 0;
+    for (let i = 0; i < topics.length; i++) {
+      const [name, entry] = topics[i];
+      ctx.ui.notify(`  ${i + 1}/${topics.length} Refreshing "${name}"…`, "info");
+      const updated = await refreshMemoryTopic(ctx, config, name, entry);
+      if (updated) {
+        succeeded++;
+      } else {
+        failed++;
+        ctx.ui.notify(`  ✗ "${name}" refresh failed`, "warn");
+      }
+    }
+    ctx.ui.notify(`Memory refresh done: ${succeeded} succeeded, ${failed} failed.`, "info");
     return true;
   }
 

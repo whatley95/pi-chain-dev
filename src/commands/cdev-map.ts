@@ -7,7 +7,6 @@ import { indexFindingsAsync } from "../memory.js";
 import {
   withAuditGuard,
   makeThemedBg,
-  buildSessionSnapshotJsonl,
   resolveStageProfiles,
   logError,
 } from "../extension-context.js";
@@ -285,11 +284,8 @@ export async function handleMap(args: string, ctx: ExtensionContext, config: Aut
     ctx.ui.notify(isRefresh ? "Refreshing project map via scout+forge..." : "Generating project map via scout+forge...", "info");
 
     try {
-      const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, config.modelContextLimit);
-      if (!snapshot) {
-        ctx.ui.notify("Cannot snapshot session.", "error");
-        return true;
-      }
+      // Start child Pi with clean session — avoids 400 tool-ordering errors
+      const snapshot = "";
 
       const existingMap = loadProjectMap(ctx.cwd);
       const baseMap = existingMap || generateProjectMap(ctx.cwd);

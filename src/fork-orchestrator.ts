@@ -1,6 +1,6 @@
 import { buildStage1Prompt, buildStage2Prompt, buildPlanPrompt, buildYoloReviewSnapshot, buildYoloFixTask } from "./prompts.js";
 import { parseStage1Findings, parseStage2Report } from "./json-extract.js";
-import { runStageWithRetry, sanitizeSessionJsonl } from "./fork-stage.js";
+import { runStageWithRetry } from "./fork-stage.js";
 import { getFinalAssistantText } from "./runner-events.js";
 import { runCdevReview } from "./review.js";
 import { withAuditGuard, formatCost, estimateForkCost, getSessionForkCost } from "./extension-context.js";
@@ -54,14 +54,11 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   const scoutTimeoutMs = Number.isFinite(opts.scoutTimeoutMs) && (opts.scoutTimeoutMs as number) > 0
     ? (opts.scoutTimeoutMs as number)
     : 600_000;
-  const MIN_SCOUT_ENTRIES = 6; // header+5 entries for scout
-const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeoutMs as number) > 0
+  const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeoutMs as number) > 0
     ? (opts.forgeTimeoutMs as number)
     : 180_000;
 
   const details: AutoForkDetails = { stage1: null, stage2: null };
-
-  const sanitizedSnapshot = sanitizeSessionJsonl(forkSessionSnapshotJsonl);
 
   const onUpdate = opts.onUpdate;
   const parallel = Math.max(1, Math.min(3, Number.isFinite(opts.parallel) ? (opts.parallel as number) : 1));
@@ -73,16 +70,11 @@ const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeou
 
   async function runStage1Run(label: string, stageTask: string, profile?: StageProfile, subTask?: ParallelSubTask): Promise<ForkResult> {
     const prompt = buildStage1Prompt(stageTask, customExplorePrompt, editMode, cwd, subTask, quick);
-    // Scouts read files independently - trim snapshot to header+last 5 entries
-    const sl = forkSessionSnapshotJsonl.trim().split("\n");
-    const trimmedSnapshot = sl.length > MIN_SCOUT_ENTRIES
-      ? sl.slice(0, 1).concat(sl.slice(-(MIN_SCOUT_ENTRIES - 1))).join('\n') + '\n'
-      : forkSessionSnapshotJsonl;
     return runStageWithRetry({
       cwd,
       task: prompt,
       stageLabel: label,
-      forkSessionJsonl: trimmedSnapshot,
+      forkSessionJsonl: forkSessionSnapshotJsonl,
       stageProfile: profile || stage1Profile,
       extensions,
       environment,
@@ -326,7 +318,6 @@ const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeou
         noTools: true,
         toolMode: "forge",
         stageTimeoutMs: forgeTimeoutMs,
-        sanitizedSessionJsonl: sanitizedSnapshot,
         retries: 1,
         onUpdate,
       });
@@ -373,7 +364,6 @@ const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeou
       noTools: !editMode,
       toolMode: editMode ? undefined : "forge",
       stageTimeoutMs: forgeTimeoutMs,
-      sanitizedSessionJsonl: sanitizedSnapshot,
       retries: 1,
       onUpdate,
     });
@@ -438,15 +428,6 @@ export function formatStage1FindingsForStage2(findings: Stage1Findings): string 
     lines.push("");
     lines.push("Open questions:");
     for (const q of findings.openQuestions) lines.push(`- ${q}`);
-  }
-  if (findings.contradictions?.length) {
-    lines.push("");
-    lines.push("Contradictions between scout runs:");
-    for (const c of findings.contradictions) {
-      lines.push(`- ${c.summary}`);
-      lines.push(`  A: ${c.observationA}`);
-      lines.push(`  B: ${c.observationB}`);
-    }
   }
   if (findings.coverage) {
     const c = findings.coverage;
@@ -524,7 +505,6 @@ export function mergeStage1Findings(a: Stage1Findings, b: Stage1Findings): Stage
     deadEnds: [...(a.deadEnds ?? [])],
     assumptions: [...(a.assumptions ?? [])],
     openQuestions: [...(a.openQuestions ?? [])],
-    contradictions: a.contradictions ? [...a.contradictions] : undefined,
   };
   for (const f of b.findings) {
     if (!merged.findings.some(existing => findingsOverlap(existing.observation, f.observation))) {

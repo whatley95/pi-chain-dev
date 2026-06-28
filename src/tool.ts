@@ -124,7 +124,11 @@ export async function executeCdevTool(
         details: { stage1: null, stage2: null, autoCompact: snapshotResult.autoCompact },
       };
     }
-    const { snapshot } = snapshotResult;
+    // Don't pass the parent Pi session snapshot to child processes.
+    // Child Pis start with clean sessions to avoid LLM API 400 errors
+    // ("Messages with role 'tool' must follow a preceding 'tool_calls'").
+    // Memory provides project context instead.
+    const snapshot = "";
 
     // ── Advisor mode ──
     if (p.advisor) {

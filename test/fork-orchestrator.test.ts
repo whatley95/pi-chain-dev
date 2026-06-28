@@ -62,7 +62,7 @@ describe("validateStage1Findings", () => {
 });
 
 describe("shouldReExplore", () => {
-  it("should re-explore when fewer than 3 findings and not verify", () => {
+  it("should re-explore when fewer than 3 findings", () => {
     const f: Stage1Findings = {
       summary: "Two findings.",
       findings: [
@@ -72,11 +72,11 @@ describe("shouldReExplore", () => {
       files: [],
       commands: [],
     };
-    const result = shouldReExplore(f, false);
+    const result = shouldReExplore(f);
     assert.equal(result.should, true);
   });
 
-  it("should not re-explore with 3+ findings and verify false", () => {
+  it("should not re-explore with 3+ findings", () => {
     const f: Stage1Findings = {
       summary: "Three findings.",
       findings: [
@@ -87,12 +87,12 @@ describe("shouldReExplore", () => {
       files: [],
       commands: [],
     };
-    const result = shouldReExplore(f, false);
+    const result = shouldReExplore(f);
     assert.equal(result.should, false);
   });
 
   it("should re-explore when findings is null", () => {
-    const result = shouldReExplore(null, true);
+    const result = shouldReExplore(null);
     assert.equal(result.should, true);
   });
 });

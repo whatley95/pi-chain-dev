@@ -114,8 +114,8 @@ export default function (pi: ExtensionAPI) {
     name: "cdev",
     label: "Chain Dev",
     description:
-      "Two-stage development fork: first a cheap model (scout) explores and gathers evidence, then a powerful model (forge) synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for scout only (raw findings, no forge). Set recall=<topic> to retrieve past fork findings from project memory (no fork runs). Set reviewFile=<path> with review=true to review a specific file/artifact instead of the session. Set diffSpec=<range> to review a git/svn diff (e.g. 'HEAD~3..HEAD'). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
-    promptSnippet: "Two-stage fork: scout (cheap) explores → forge (powerful) writes (or scout only with quick:true). Use recall to retrieve past findings.",
+      "Two-stage development fork: first cheap models (2 scouts by default) explore in parallel and gather evidence, then a powerful model (forge) synthesizes a structured report from merged findings. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for scout only (raw findings, no forge). Set parallel=1 for a single scout. Set recall=<topic> to retrieve past fork findings from project memory (no fork runs). Set reviewFile=<path> with review=true to review a specific file/artifact instead of the session. Set diffSpec=<range> to review a git/svn diff (e.g. 'HEAD~3..HEAD'). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
+    promptSnippet: "Two-stage fork: 2 parallel scouts (cheap) explore → merge → forge (powerful) writes. Use quick:true for scout only. Use recall to retrieve past findings.",
     promptGuidelines: [
       "Use cdev for any task requiring more than 3-4 file reads — cheaper than parent model reading files one-by-one.",
       "Use cdev with recall=<topic> to check project memory before exploring a topic that may have been explored before. This costs $0 and avoids duplicate work.",
@@ -170,7 +170,7 @@ export default function (pi: ExtensionAPI) {
       })),
       parallel: Type.Optional(Type.Integer({
         description:
-          "Split the scout stage into N parallel sub-task scouts (1-3). Requires a project map for task splitting. Each scout can use a different model via /cdev-model. A backup scout can take over failed sub-tasks if configured.",
+          "Number of parallel scouts (1-3, default 2). Each scout runs the same task independently; findings are merged before forge. Set to 1 for single scout. Each scout can use a different model via /cdev-model. A backup scout can take over failed sub-tasks if configured via parallelBackup.",
       })),
       parallelBackup: Type.Optional(Type.Boolean({
         description:

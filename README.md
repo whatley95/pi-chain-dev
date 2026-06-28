@@ -27,7 +27,6 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 | `/cdev <task>` | Full two-stage: cheap model gathers evidence, powerful model writes structured report |
 | `/cdev quick <task>` | Scout only — cheap model returns raw findings, skip forge (synthesis) |
 | `/cdev fast <task>` | Alias for `/cdev quick` |
-| `/cdev verify <task>` | Scout ×2 + forge — higher accuracy, ~2× stage 1 cost |
 | `/cdev research <issue>` | Agent-driven investigation; reports findings and a decision, never edits code |
 | `/cdev advisor <question>` | Scout gathers evidence, then advisor model gives a concrete recommendation (use when stuck) |
 | `/cdev ask-advisor <question>` | Ask the advisor model directly, no scout (faster, less grounded) |
@@ -41,8 +40,6 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 | `/cdev yolo auto` | cdev reviews and edits files automatically between rounds (high trust) |
 | `/cdev auto on` | Auto-trigger mode — LLM proactively uses `cdev` for exploration tasks |
 | `/cdev auto off` | Disable auto-trigger |
-| `/cdev auto-verify on` | Automatic scout ×2 for every `/cdev <task>` — ~2× stage 1 cost |
-| `/cdev auto-verify off` | Scout ×1 unless `/cdev verify` is used explicitly (default) |
 | `/cdev auto-compact on` | Auto-steer `/compact` when session snapshot nears model context limit (default) |
 | `/cdev auto-compact off` | Only warn near model context limit |
 | `/cdev todo <name>` | Create `.pi/cdev/todos/<session-id>_<timestamp>_<name>.md` with checklist |
@@ -89,8 +86,7 @@ The LLM can also call `cdev` via a registered tool — no typing commands:
 |---|---|---|
 | `task` | string | Full two-stage fork |
 | `quick` | boolean | Scout only (raw findings, skip forge) |
-| `verify` | boolean | Scout ×2 + forge (self-consistency, higher accuracy) |
-| `parallel` | integer | Split scout into N parallel sub-task scouts (1-3). Requires project map. |
+| `parallel` | integer | Number of parallel scouts (1-3, default 2). Uses the same task for each scout. |
 | `parallelBackup` | boolean | Backup scout takes over failed parallel sub-tasks (default `false`) |
 | `review` | boolean | Forge only (code review, skip scout) |
 | `recall` | string | Retrieve past findings from project memory (e.g. `"auth"`) — $0, no fork |
@@ -106,9 +102,8 @@ Auto-trigger mode tells the LLM to use the tool proactively. The agent also rece
 - Run `/cdev map` to generate a project map for any stack; scouts use it automatically for context
 - Use `review:true` after significant code changes
 - Use `quick:true` for quick file tracing
-- Use `verify:true` for high-stakes exploration where accuracy matters more than speed or cost
 - Use `research:true` for agent-driven investigation — the model reports findings but never edits code
-- Use `parallel:<n>` to split a large exploration into n parallel scouts (requires map)
+- Use `parallel:<n>` to set the number of parallel scouts (default 2)
 - Prefer cdev over bash/grep for understanding relationships
 
 ## Project memory
@@ -198,16 +193,16 @@ Logged for: tool crashes, review failures, full-mode failures, deep-scan failure
        │
        ▼
   ┌──────────────────────────────────────────────┐
-  │  SCOUT — cheap model (deepseek-v4-flash)     │
+  │  SCOUT A — cheap model (deepseek-v4-flash)   │
   │  Reads files, traces deps, gathers evidence  │
-  │  Returns structured JSON findings:           │
-  │  summary, findings[], deadEnds[],            │
-  │  assumptions[], openQuestions[]              │
+  ├──────────────────────────────────────────────┤
+  │  SCOUT B — cheap model (deepseek-v4-flash)   │
+  │  Reads files, traces deps, gathers evidence  │
   └──────────────────┬───────────────────────────┘
-                     │ validated findings
+                     │ merge + deduplicate findings
    ┌──────────────────▼───────────────────────────┐
    │  FORGE — powerful model (deepseek-v4-pro)    │
-   │  Synthesizes into structured report          │
+   │  Synthesizes merged findings into report     │
    │  Result / Output / Evidence / Learnings      │
    └──────────────────┬───────────────────────────┘
                       │ report
@@ -215,18 +210,7 @@ Logged for: tool crashes, review failures, full-mode failures, deep-scan failure
                PARENT reads report, decides, codes
 ```
 
-If stage 1 output is invalid or empty, cdev retries the scout stage once automatically. If findings are sparse (fewer than 3) or mostly low-confidence, cdev runs a second exploration pass automatically and merges the results (unless verify mode already ran two scouts). If it still fails, cdev falls back to passing the raw text to forge rather than failing completely.
-
-### Auto-verify (`/cdev auto-verify`)
-
-By default, every `/cdev <task>` runs scout once (`autoVerify: false`). You can toggle this:
-
-- `/cdev auto-verify on` — scout ×2 automatically (~2× stage 1 cost)
-- `/cdev auto-verify off` — scout ×1 unless you use `/cdev verify <task>` (default)
-
-The setting is stored in `~/.pi/agent/settings.json` under `pi-chain-dev.autoVerify`.
-
-You can also configure a second scout model (`pi-chain-dev.stage1b`) so the two runs use different models for broader coverage. If unset, both runs use `stage1`. Use `/cdev-model` → "Scout B (verify)" to set it.
+If stage 1 output is invalid or empty, cdev retries the scout stage once automatically. If findings are sparse (fewer than 3) or mostly low-confidence, cdev runs a second exploration pass automatically and merges the results. If it still fails, cdev falls back to passing the raw text to forge rather than failing completely.
 
 ### Auto-compact (`/cdev auto-compact`)
 
@@ -256,7 +240,7 @@ or
 - Rate limit is 100 req/min (only config.js was checked, not the limit value)
 ```
 
-If grounding is low or findings were sparse/low-confidence, cdev automatically re-explored before forge. You can still re-run with `/cdev verify <task>` or `/cdev quick <topic>` for deeper confirmation.
+If grounding is low or findings were sparse/low-confidence, cdev automatically re-explores before forge. You can still re-run with `/cdev quick <topic>` for deeper confirmation.
 
 ### Research mode (`/cdev research <issue>`)
 
@@ -316,34 +300,6 @@ Use it for:
 `/cdev ask-advisor <question>` skips the scout and asks the advisor directly — faster but less grounded. Use it when you already have context or need a quick second opinion.
 
 Configure the advisor model via `/cdev-model` → "Advisor". Custom prompt via `prompts.advisor`.
-
-### Verify mode (`/cdev verify <task>`)
-
-```
-  Parent: "I need high-confidence exploration before a big refactor"
-       │
-       ▼
-  ┌──────────────────────────────────────────────┐
-  │  SCOUT A — cheap model                       │
-  │  Returns structured findings                 │
-  └──────────────────┬───────────────────────────┘
-                     │
-  ┌──────────────────┼───────────────────────────┐
-  │  SCOUT B — same model                        │
-  │  Returns structured findings                 │
-  └──────────────────┬───────────────────────────┘
-                     │ merge unique / deduplicate
-                     ▼
-  ┌──────────────────────────────────────────────┐
-  │  FORGE — powerful model                      │
-  │  Synthesizes merged findings into report     │
-  └──────────────────┬───────────────────────────┘
-                     │ report
-                     ▼
-              PARENT reads report, decides, codes
-```
-
-If one scout run produces invalid findings, cdev uses the valid run. If both are invalid, cdev falls back to the raw text from the first run. The two runs use the same model configuration unless you set `stage1b`; their independence (different random samples, and optionally different models) gives broader coverage without relying on unsupported CLI flags.
 
 ### Multi mode (`/cdev multi <n> [backup|no-backup] <task>`)
 
@@ -597,8 +553,7 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
       "thinking": "xhigh"
     },
     "auto": false,
-    "autoVerify": false,
-    "parallel": 1,
+    "parallel": 2,
     "parallelBackup": false,
     "promptsEnabled": true,
     "memory": true,
@@ -624,8 +579,8 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `stage1.provider` | string | _required_ | Provider for scout (exploration) |
 | `stage1.id` | string | _required_ | Model ID for scout |
 | `stage1.thinking` | `off` — `xhigh` | `minimal` | Thinking level for scout |
-| `stage1b.provider` | string | — | Optional second scout model for verify mode |
-| `stage1b.id` | string | — | Model ID for second scout |
+| `stage1b.provider` | string | — | Optional second scout model (used by parallel mode if set) |
+| `stage1b.id` | string | — | Model ID for second scout (parallel mode, fallback to stage1) |
 | `stage1b.thinking` | `off` — `xhigh` | `minimal` | Thinking level for second scout |
 | `stage1c.provider` | string | — | Optional third scout model for multi mode |
 | `stage1c.id` | string | — | Model ID for third scout |
@@ -646,8 +601,7 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `advisor.id` | string | — | Model ID for advisor |
 | `advisor.thinking` | `off` — `xhigh` | `xhigh` | Thinking level for advisor |
 | `auto` | boolean | `false` | Auto-trigger mode (LLM proactively uses cdev) |
-| `autoVerify` | boolean | `false` | Automatic scout ×2 for higher accuracy |
-| `parallel` | integer | `1` | Default number of parallel scouts for `cdev` tool calls |
+| `parallel` | integer | `2` | Default number of parallel scouts for `cdev` tool calls (1-3) |
 | `parallelBackup` | boolean | `false` | Backup scout takes over failed parallel sub-tasks |
 | `maxConcurrentStages` | integer | `3` | Max child Pi processes cdev spawns simultaneously |
 | `scoutTimeoutMs` | number | `600000` | Per-scout stage timeout in milliseconds (min 30s, max 1h) |
@@ -996,8 +950,7 @@ Forks recorded to `.pi/cdev/sessions/<id>.json`. Auto-purged after 7 days.
   Custom prompts:   — (none)
   Cost footer:      ON
   Project memory:   ON
-  Auto-verify:      OFF (scout ×1)
-  Multi scouts:     OFF
+  Multi scouts:     2 (backup off)
   Scout timeout:    600s
   Forge timeout:    180s
   YOLO:             OFF

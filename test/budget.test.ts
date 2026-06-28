@@ -32,7 +32,6 @@ function config(overrides: Partial<AutoForkConfig> = {}): AutoForkConfig {
     promptsEnabled: true,
     memory: true,
     themed: false,
-    autoVerify: true,
     maxForkCost: 0,
     maxSessionCost: 0,
     yolo: { enabled: false, maxRounds: 3, stopOnPass: true, autoApply: "manual" },

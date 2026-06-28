@@ -806,22 +806,15 @@ describe("mergeStage1Findings (fork-orchestrator.ts)", () => {
 });
 
 describe("formatStage1FindingsForStage2 (fork-orchestrator.ts)", () => {
-  it("includes coverage and contradictions for forge", async () => {
+  it("includes coverage for forge", async () => {
     const { formatStage1FindingsForStage2 } = await import("../src/fork-orchestrator.js");
     const text = formatStage1FindingsForStage2({
       summary: "explored auth",
       findings: [{ observation: "JWT is validated", confidence: "high", file: "src/auth.ts", evidence: "read src/auth.ts" }],
       coverage: { filesInspected: 3, filesCited: 1, commandsRun: 2, unreadLikelyFiles: 1 },
-      contradictions: [{
-        observationA: "JWT is validated",
-        observationB: "JWT validation is missing",
-        summary: "One finding affirms while the other negates validation",
-      }],
     });
     assert.match(text, /Coverage:/);
     assert.match(text, /Files inspected: 3/);
-    assert.match(text, /Contradictions between scout runs:/);
-    assert.match(text, /JWT validation is missing/);
   });
 });
 
