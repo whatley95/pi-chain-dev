@@ -24,7 +24,7 @@ export function addUsage(target: UsageStats, source: Partial<UsageStats> & { cos
   target.turns += finiteNumber(source.turns);
   const contextTokens = finiteNumber(source.contextTokens) || finiteNumber(source.totalTokens);
   if (contextTokens) {
-    target.contextTokens = Math.max(target.contextTokens || 0, contextTokens);
+    target.contextTokens = (target.contextTokens || 0) + contextTokens;
   }
 }
 

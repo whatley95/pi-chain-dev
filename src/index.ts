@@ -33,7 +33,8 @@ import {
   refreshFromSessionEntries,
   checkAndSendLoopSteer,
 } from "./loop-detector-runtime.js";
-import { registerAdvisorPrompt } from "./advisor-prompt.js";
+import { registerAdvisorPrompt } from "./advisor-prompt.js"
+import { clearStageSemaphores } from "./fork-stage.js";;
 
 export default function (pi: ExtensionAPI) {
   let autoTurnCounter = 0;
@@ -74,6 +75,7 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus(FORK_COST_STATUS_KEY, undefined);
       ctx.ui.setStatus("cdev-memory", undefined);
       ctx.ui.setWidget("cdev-progress", undefined);
+      clearStageSemaphores();
     } catch (err) {
       logError(ctx.cwd, "session_shutdown", err);
     }

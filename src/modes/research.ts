@@ -18,6 +18,7 @@ import {
   formatProgressDetail, checkForkBudget,
 } from "./shared-helpers.js";
 import { computeReportDiff, formatReportDiff } from "../json-extract.js";
+import { safeDisplayText } from "../text-width.js";
 
 export async function handleResearch(
   p: AutoForkParamsType,
@@ -130,7 +131,7 @@ export async function handleResearch(
   }
 
   return {
-    content: [{ type: "text" as const, text: resultText }],
+    content: [{ type: "text" as const, text: safeDisplayText(resultText) }],
     details: withUiDetails(details, buildReportUiDetails(researchText, {
       mode: "research",
       task,

@@ -22,6 +22,25 @@ import { formatCost } from "./extension-context.js";
 import { logWarn, logError } from "./logger.js";
 import { isPathUnderCwd } from "./path-guards.js";
 
+// ── Mutex for serializing memory writes ─────────────────────
+// Prevents concurrent read-modify-write cycles from corrupting
+// memory.json when multiple forks index findings at the same time.
+
+const _memoryLocks = new Map<string, Promise<unknown>>();
+
+function withMemoryLock<T>(cwd: string, fn: () => T): T {
+  const prev = _memoryLocks.get(cwd) ?? Promise.resolve();
+  let release: (() => void) | undefined;
+  const next = new Promise<void>((resolve) => { release = resolve; });
+  _memoryLocks.set(cwd, prev.then(() => next));
+  try {
+    const result = fn();
+    return result;
+  } finally {
+    if (release) release();
+  }
+}
+
 // ── Storage ──────────────────────────────────────────────
 
 function getMemoryPath(cwd: string): string {
@@ -321,6 +340,7 @@ function findingTextOverlap(a: string, b: string): number {
 }
 
 function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
+  return withMemoryLock(input.cwd, () => {
   const { task, resultText, stage1Model, stage2Model, stage1bModel, stage1cModel, isReview, quick, cost, cwd, promptVersion } = input;
 
   const filePaths = extractFilePaths(resultText, cwd);
@@ -449,6 +469,7 @@ function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
   saveMemory(cwd, memory);
   _topicCountCache = null;
   return topic;
+  });
 }
 
 // ── Staleness check ──────────────────────────────────────
@@ -656,20 +677,25 @@ function formatTimeAgo(ts: number): string {
 // ── Memory operations ────────────────────────────────────
 
 export function memoryClear(cwd: string): void {
+  return withMemoryLock(cwd, () => {
   saveMemory(cwd, { version: 1, topics: {} });
   _topicCountCache = null;
+  });
 }
 
 export function memoryForget(cwd: string, topic: string): boolean {
+  return withMemoryLock(cwd, () => {
   const memory = loadMemory(cwd);
   if (!memory.topics[topic]) return false;
   delete memory.topics[topic];
   saveMemory(cwd, memory);
   _topicCountCache = null;
   return true;
+  });
 }
 
 export function memoryRename(cwd: string, oldName: string, newName: string): boolean {
+  return withMemoryLock(cwd, () => {
   const memory = loadMemory(cwd);
   if (!memory.topics[oldName]) return false;
   if (memory.topics[newName]) {
@@ -700,9 +726,11 @@ export function memoryRename(cwd: string, oldName: string, newName: string): boo
   saveMemory(cwd, memory);
   _topicCountCache = null;
   return true;
+  });
 }
 
 export function memoryDeleteFinding(cwd: string, topic: string, index: number): boolean {
+  return withMemoryLock(cwd, () => {
   const memory = loadMemory(cwd);
   const entry = memory.topics[topic];
   if (!entry) return false;
@@ -712,6 +740,7 @@ export function memoryDeleteFinding(cwd: string, topic: string, index: number): 
   saveMemory(cwd, memory);
   _topicCountCache = null;
   return true;
+  });
 }
 
 /** Build a cross-topic file index: file path → list of topic names that reference it. */
@@ -745,6 +774,7 @@ function topicSimilarity(a: string, b: string): number {
 }
 
 export function mergeSimilarTopics(cwd: string, threshold = 0.6): string[] {
+  return withMemoryLock(cwd, () => {
   const memory = loadMemory(cwd);
   const topics = Object.keys(memory.topics);
   if (topics.length < 2) return [];
@@ -795,6 +825,7 @@ export function mergeSimilarTopics(cwd: string, threshold = 0.6): string[] {
     _topicCountCache = null;
   }
   return merged;
+  });
 }
 
 export function memoryGetTopic(cwd: string, topic: string): CdevTopic | null {

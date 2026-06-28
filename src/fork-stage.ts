@@ -68,6 +68,13 @@ function getStageSemaphore(cwd: string): Semaphore {
   return sem;
 }
 
+
+/** Clean up all per-cwd semaphore instances. Call on session shutdown. */
+export function clearStageSemaphores(): void {
+  stageSemaphores.clear();
+}
+
+
 export function setStageSemaphoreMaxConcurrency(n: number): void {
   defaultSemaphoreMaxConcurrency = Math.max(1, n);
   // Update existing semaphores in place
@@ -358,7 +365,7 @@ export function buildPiArgs(
 
   args.push("--provider", stageProfile.provider);
   args.push("--model", stageProfile.id);
-  args.push("--thinking", stageProfile.thinking);
+  if (stageProfile.thinking) args.push("--thinking", stageProfile.thinking);
 
   if (extensions !== null && extensions.length > 0) {
     for (const extension of extensions) {

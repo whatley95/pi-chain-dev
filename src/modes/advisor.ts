@@ -19,6 +19,7 @@ import {
   formatProgressDetail, checkForkBudget,
 } from "./shared-helpers.js";
 import { computeReportDiff, formatReportDiff } from "../json-extract.js";
+import { safeDisplayText } from "../text-width.js";
 
 export async function handleAdvisor(
   p: AutoForkParamsType,
@@ -133,7 +134,7 @@ export async function handleAdvisor(
   }
 
   return {
-    content: [{ type: "text" as const, text: resultText }],
+    content: [{ type: "text" as const, text: safeDisplayText(resultText) }],
     details: withUiDetails(advisorDetails, buildReportUiDetails(advisorText, {
       mode: "advisor",
       task,
