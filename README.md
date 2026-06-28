@@ -72,6 +72,9 @@ Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re�
 | `/cdev memory clear` | Same as `/cdev clear` |
 | `/cdev memory forget auth` | Remove one topic from memory |
 | `/cdev memory merge` | Auto-merge similar memory topics |
+| `/cdev memory refresh auth` | Re-explore a topic and update findings |
+| `/cdev memory refresh --stale` | Refresh all stale topics |
+| `/cdev memory refresh --all` | Refresh all topics |
 | `/cdev memory auto-refresh on` | Auto-refresh stale topics when recalling (default off) |
 | `/cdev memory auto-refresh off` | Disable auto-refresh on recall (default) |
 | `/cdev memory on` | Enable project memory |

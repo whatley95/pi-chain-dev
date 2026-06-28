@@ -91,94 +91,16 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   let stage1Findings: Stage1Findings | null;
 
   if (useParallel) {
-    const map = loadProjectMap(cwd);
-    const subTasks = splitTaskByMap(task, map, parallel);
-    const workerProfiles: (StageProfile | undefined)[] = [stage1Profile, stage1bProfile, stage1cProfile];
-    const activeProfiles = workerProfiles.slice(0, subTasks.length).map((p) => p || stage1Profile);
-    const labels = subTasks.map((s) => `scout ${s.label}`);
-    const modelLabels = activeProfiles.map(modelLabel);
-    opts.onProgress?.("scout", modelLabels.join(" + "));
-
-    const workerRuns = await Promise.all(
-      subTasks.map((subTask, i) =>
-        runStage1Run(labels[i], task, activeProfiles[i], subTask).then((r): { result: ForkResult; subTask: ParallelSubTask; index: number } => ({ result: r, subTask, index: i }))
-      )
+    const { stage1Result: parallelResult, stage1Findings: parallelFindings } = await runParallelScouts(
+      { cwd, task, parallel, parallelBackup: opts.parallelBackup === true, stage1Profile, stage1bProfile, stage1cProfile, stage1BackupProfile, onProgress: opts.onProgress },
+      runStage1Run,
+      modelLabel,
+      details,
     );
-
-    const failedRuns = workerRuns.filter((w) => w.result.exitCode !== 0 || !getFinalAssistantText(w.result.messages));
-    const backupProfile = stage1BackupProfile && stage1BackupProfile.provider && stage1BackupProfile.id ? stage1BackupProfile : stage1Profile;
-    const useBackup = opts.parallelBackup === true && failedRuns.length > 0 && backupProfile;
-    let backupRuns: { result: ForkResult; subTask: ParallelSubTask; index: number }[] | undefined;
-
-    if (useBackup) {
-      opts.onProgress?.("scout", `backup ${modelLabel(backupProfile)} taking over ${failedRuns.length} failed sub-task(s)`);
-      backupRuns = await Promise.all(
-        failedRuns.map((w) =>
-          runStage1Run(`backup ${w.subTask.label}`, task, backupProfile, w.subTask).then((r): { result: ForkResult; subTask: ParallelSubTask; index: number } => ({ result: r, subTask: w.subTask, index: w.index }))
-        )
-      );
-      for (const b of backupRuns) {
-        workerRuns[b.index] = b;
-      }
-    }
-
-    const successful = workerRuns.filter((w) => w.result.exitCode === 0 && getFinalAssistantText(w.result.messages));
-    if (successful.length === 0) {
-      return {
-        result: {
-          ...emptyFailedResult(task, `Parallel scout failed: all ${workerRuns.length} sub-task scout(s) failed`),
-          provider: stage1Profile.provider,
-          model: stage1Profile.id,
-        },
-        details,
-      };
-    }
-
-    const combinedUsage: UsageStats = emptyUsage();
-
-    for (const w of workerRuns) addUsage(combinedUsage, w.result.usage);
-
-    const maxDuration = Math.max(0, ...workerRuns.map((w) => w.result.durationMs ?? 0));
-    const backupMaxDuration = useBackup && backupRuns
-      ? Math.max(0, ...backupRuns.map((b) => b.result.durationMs ?? 0))
-      : 0;
-    const totalDuration = useBackup ? maxDuration + backupMaxDuration : maxDuration;
-
-    const stderrLines: string[] = [
-      `[cdev] parallel mode: ${successful.length}/${workerRuns.length} scout(s) succeeded${useBackup ? " (backup used)" : ""}`,
-      ...workerRuns.map((w) => {
-        const status = w.result.exitCode === 0 && getFinalAssistantText(w.result.messages) ? "ok" : "failed";
-        const dur = fmtDuration(w.result.durationMs);
-        return `  scout ${w.subTask.label}: ${status}${dur ? ` in ${dur}` : ""}${w.result.errorMessage ? ` — ${w.result.errorMessage}` : ""}`;
-      }),
-    ];
-
-    let mergedFindings: Stage1Findings | null = null;
-    for (const w of successful) {
-      const text = getFinalAssistantText(w.result.messages) || "";
-      const findings = parseStage1Findings(text);
-      if (!findings) continue;
-      if (!mergedFindings) {
-        mergedFindings = findings;
-      } else {
-        mergedFindings = mergeStage1Findings(mergedFindings, findings);
-      }
-    }
-
-    stage1Result = {
-      ...successful[0].result,
-      task,
-      usage: combinedUsage,
-      stderr: stderrLines.filter(Boolean).join("\n"),
-      durationMs: totalDuration,
-    };
-    details.stage1 = successful[0].result;
-    details.stage1b = workerRuns.length > 1 ? workerRuns[1].result : null;
-    details.stage1c = workerRuns.length > 2 ? workerRuns[2].result : null;
-    details.stage1Backup = backupRuns?.[0]?.result ?? null;
-    stage1Findings = mergedFindings;
-    if (!stage1Findings) {
-      stage1Result.stderr += "\n[cdev] parallel mode: no valid findings produced by any scout";
+    stage1Result = parallelResult;
+    stage1Findings = parallelFindings;
+    if (stage1Result.exitCode !== 0 && !stage1Findings) {
+      return { result: stage1Result, details };
     }
   } else {
     stage1Result = await runStage1Run("exploration", task);
@@ -544,6 +466,119 @@ export function parseReviewVerdict(text: string): ReviewVerdict {
   if (section.includes("blocked")) return "blocked";
   if (section.includes("pass")) return "pass";
   return "unknown";
+}
+
+interface ParallelScoutContext {
+  cwd: string;
+  task: string;
+  parallel: number;
+  parallelBackup: boolean;
+  stage1Profile: StageProfile;
+  stage1bProfile?: StageProfile;
+  stage1cProfile?: StageProfile;
+  stage1BackupProfile?: StageProfile;
+  onProgress?: (stage: string, model: string) => void;
+}
+
+async function runParallelScouts(
+  ctx: ParallelScoutContext,
+  runStage1Run: (label: string, stageTask: string, profile?: StageProfile, subTask?: ParallelSubTask) => Promise<ForkResult>,
+  modelLabel: (prof: StageProfile) => string,
+  details: AutoForkDetails,
+): Promise<{ stage1Result: ForkResult; stage1Findings: Stage1Findings | null }> {
+  const { cwd, task, parallel, parallelBackup, stage1Profile, stage1bProfile, stage1cProfile, stage1BackupProfile, onProgress } = ctx;
+  const map = loadProjectMap(cwd);
+  const subTasks = splitTaskByMap(task, map, parallel);
+  const workerProfiles: (StageProfile | undefined)[] = [stage1Profile, stage1bProfile, stage1cProfile];
+  const activeProfiles = workerProfiles.slice(0, subTasks.length).map((p) => p || stage1Profile);
+  const labels = subTasks.map((s) => `scout ${s.label}`);
+  const modelLabels = activeProfiles.map(modelLabel);
+  onProgress?.("scout", modelLabels.join(" + "));
+
+  const workerRuns = await Promise.all(
+    subTasks.map((subTask, i) =>
+      runStage1Run(labels[i], task, activeProfiles[i], subTask).then((r): { result: ForkResult; subTask: ParallelSubTask; index: number } => ({ result: r, subTask, index: i }))
+    )
+  );
+
+  const failedRuns = workerRuns.filter((w) => w.result.exitCode !== 0 || !getFinalAssistantText(w.result.messages));
+  const backupProfile = stage1BackupProfile && stage1BackupProfile.provider && stage1BackupProfile.id ? stage1BackupProfile : stage1Profile;
+  const useBackup = parallelBackup === true && failedRuns.length > 0 && backupProfile;
+  let backupRuns: { result: ForkResult; subTask: ParallelSubTask; index: number }[] | undefined;
+
+  if (useBackup) {
+    onProgress?.("scout", `backup ${modelLabel(backupProfile)} taking over ${failedRuns.length} failed sub-task(s)`);
+    backupRuns = await Promise.all(
+      failedRuns.map((w) =>
+        runStage1Run(`backup ${w.subTask.label}`, task, backupProfile, w.subTask).then((r): { result: ForkResult; subTask: ParallelSubTask; index: number } => ({ result: r, subTask: w.subTask, index: w.index }))
+      )
+    );
+    for (const b of backupRuns) {
+      workerRuns[b.index] = b;
+    }
+  }
+
+  const successful = workerRuns.filter((w) => w.result.exitCode === 0 && getFinalAssistantText(w.result.messages));
+  if (successful.length === 0) {
+    return {
+      stage1Result: {
+        ...emptyFailedResult(task, `Parallel scout failed: all ${workerRuns.length} sub-task scout(s) failed`),
+        provider: stage1Profile.provider,
+        model: stage1Profile.id,
+      },
+      stage1Findings: null,
+    };
+  }
+
+  const combinedUsage: UsageStats = emptyUsage();
+
+  for (const w of workerRuns) addUsage(combinedUsage, w.result.usage);
+
+  const maxDuration = Math.max(0, ...workerRuns.map((w) => w.result.durationMs ?? 0));
+  const backupMaxDuration = useBackup && backupRuns
+    ? Math.max(0, ...backupRuns.map((b) => b.result.durationMs ?? 0))
+    : 0;
+  const totalDuration = useBackup ? maxDuration + backupMaxDuration : maxDuration;
+
+  const stderrLines: string[] = [
+    `[cdev] parallel mode: ${successful.length}/${workerRuns.length} scout(s) succeeded${useBackup ? " (backup used)" : ""}`,
+    ...workerRuns.map((w) => {
+      const status = w.result.exitCode === 0 && getFinalAssistantText(w.result.messages) ? "ok" : "failed";
+      const dur = fmtDuration(w.result.durationMs);
+      return `  scout ${w.subTask.label}: ${status}${dur ? ` in ${dur}` : ""}${w.result.errorMessage ? ` — ${w.result.errorMessage}` : ""}`;
+    }),
+  ];
+
+  let mergedFindings: Stage1Findings | null = null;
+  for (const w of successful) {
+    const text = getFinalAssistantText(w.result.messages) || "";
+    const findings = parseStage1Findings(text);
+    if (!findings) continue;
+    if (!mergedFindings) {
+      mergedFindings = findings;
+    } else {
+      mergedFindings = mergeStage1Findings(mergedFindings, findings);
+    }
+  }
+
+  const stage1Result: ForkResult = {
+    ...successful[0].result,
+    task,
+    usage: combinedUsage,
+    stderr: stderrLines.filter(Boolean).join("\n"),
+    durationMs: totalDuration,
+  };
+  details.stage1 = successful[0].result;
+  details.stage1b = workerRuns.length > 1 ? workerRuns[1].result : null;
+  details.stage1c = workerRuns.length > 2 ? workerRuns[2].result : null;
+  details.stage1Backup = backupRuns?.[0]?.result ?? null;
+
+  const stage1Findings = mergedFindings;
+  if (!stage1Findings) {
+    stage1Result.stderr += "\n[cdev] parallel mode: no valid findings produced by any scout";
+  }
+
+  return { stage1Result, stage1Findings };
 }
 
 export interface YoloRoundResult {

@@ -12,13 +12,16 @@ import {
   logError,
 } from "../extension-context.js";
 import { writeProjectSetting } from "../settings-helpers.js";
+import { loadProjectMap, saveProjectMap } from "../project-map.js";
 
 const DEEP_SCAN_TASK = `Scan this project's architecture, conventions, and patterns. Generate 3 focused prompts for future cdev use:
 1. explore — what to focus on during exploration (stack-specific patterns, conventions, key areas)
 2. synthesize — how to structure synthesis reports (what risks to flag, what ordering matters)
 3. review — what to check during code review (project-specific pitfalls, conventions, anti-patterns)
 
-Read package.json, key source files, config files, and directory structure. Return ONLY the 3 prompts in this format:
+Also generate a MAP_NOTES section with project-specific gotchas scouts should know (e.g. custom middleware, non-standard patterns, known edge cases, files to avoid). These notes will be merged into the project map so plain scouts benefit even without custom prompts.
+
+Read package.json, key source files, config files, and directory structure. Return ONLY the 3 prompts and notes in this format:
 
 EXPLORE_PROMPT:
 <text>
@@ -27,7 +30,11 @@ SYNTHESIZE_PROMPT:
 <text>
 
 REVIEW_PROMPT:
-<text>`;
+<text>
+
+MAP_NOTES:
+- <note 1>
+- <note 2>`;
 
 function savePrompts(cwd: string, prompts: { explore: string; synthesize: string; review: string }): void {
   writeProjectSetting(cwd, "prompts", prompts);
@@ -92,7 +99,8 @@ export async function handleScan(args: string, ctx: ExtensionContext, config: Au
       const text = getFinalAssistantText(result.messages) || "";
       const exploreMatch = text.match(/EXPLORE_PROMPT:\s*\n([\s\S]*?)(?=\n\nSYNTHESIZE_PROMPT:|$)/i);
       const synthMatch = text.match(/SYNTHESIZE_PROMPT:\s*\n([\s\S]*?)(?=\n\nREVIEW_PROMPT:|$)/i);
-      const reviewMatch = text.match(/REVIEW_PROMPT:\s*\n([\s\S]*?)$/i);
+      const reviewMatch = text.match(/REVIEW_PROMPT:\s*\n([\s\S]*?)(?=\n\nMAP_NOTES:|$)/i);
+      const notesMatch = text.match(/MAP_NOTES:\s*\n([\s\S]*?)$/i);
 
       const explore = exploreMatch?.[1]?.trim() || "";
       const synthesize = synthMatch?.[1]?.trim() || "";
@@ -104,6 +112,30 @@ export async function handleScan(args: string, ctx: ExtensionContext, config: Au
       }
 
       savePrompts(ctx.cwd, { explore, synthesize, review });
+
+      // Merge deep scan gotchas into project map so plain scouts benefit
+      const notesText = notesMatch?.[1]?.trim() || "";
+      if (notesText) {
+        const noteLines = notesText
+          .split(/\n/)
+          .map((l) => l.replace(/^\s*[-*]\s*/, "").trim())
+          .filter((l) => l.length > 0);
+        if (noteLines.length > 0) {
+          const map = loadProjectMap(ctx.cwd);
+          if (map) {
+            const existingNotes = new Set(map.notes);
+            for (const note of noteLines) {
+              if (!existingNotes.has(note) && note.length <= 500) {
+                map.notes.push(note);
+                existingNotes.add(note);
+              }
+            }
+            // Cap at 20 notes
+            if (map.notes.length > 20) map.notes = map.notes.slice(-20);
+            saveProjectMap(ctx.cwd, map);
+          }
+        }
+      }
 
       ctx.ui.notify(
         `Deep scan complete!\nScout: ${scanDetails.stage1?.model || "?"}\nForge: ${scanDetails.stage2?.model || "?"}\n\nUse these prompts with:\n  /cdev prompts on|off`,

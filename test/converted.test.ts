@@ -617,12 +617,9 @@ describe("buildPiArgs (fork-stage.ts)", () => {
   });
 });
 
-// ── Structured stage 1 findings ──────────────────────────
-
 // ── YOLO config and verdict helpers ──────────────────────
 
 import { normalizeYoloConfig, formatYoloStatus } from "../src/types.js";
-import { parseReviewVerdict } from "../src/fork-orchestrator.js";
 
 describe("normalizeYoloConfig (types.ts)", () => {
   it("clamps maxRounds to 7", () => {
@@ -690,10 +687,6 @@ describe("parseReviewVerdict (fork-orchestrator.ts)", () => {
 });
 
 // ── Structured stage 1 findings ──────────────────────────
-
-import { mergeStage1Findings } from "../src/fork-orchestrator.js";
-
-// (isStage1Findings and parseStage1Findings imported from json-extract.js)
 
 describe("isStage1Findings (json-extract.ts)", () => {
   it("accepts valid findings", () => {

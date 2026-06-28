@@ -265,9 +265,7 @@ export function cachedBuildSessionSnapshot(
     const hash = hashSessionEntries(branchEntries);
     const cached = _snapshotCache.get(cwd);
     if (cached && cached.hash === hash) return cached.snapshot;
-    const snapshot = buildMinimalSessionSnapshot
-      ? buildMinimalSessionSnapshot(sessionManager, 10)
-      : buildSessionSnapshotJsonl(sessionManager, maxTokens);
+    const snapshot = buildMinimalSessionSnapshot(sessionManager, 10);
     if (maxTokens !== undefined) {
       _snapshotCache.set(cwd, { hash, snapshot });
     }

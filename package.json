@@ -24,7 +24,7 @@
   ],
   "scripts": {
     "build": "node scripts/update-build-date.cjs && tsc",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "tsx --test test/**/*.test.ts",
     "test:watch": "tsx --test --watch test/**/*.test.ts",
     "lint": "eslint src test",

@@ -45,7 +45,13 @@ Efficiency rules:
 - Batch reads: use \`bash\`, \`cat\`, \`grep\`, \`find\`, \`ls\`, or globs instead of many individual \`read\` calls.
 - Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
 - **Parallel tool calls**: You can issue multiple \`read\`, \`bash\`, \`grep\`, or \`find\` calls in a single response. Pi executes them simultaneously — use this to read many files at once.
-- Read a file individually only when you need the full content of a specific, named file.${guard}${quickGuard}`;
+- Read a file individually only when you need the full content of a specific, named file.${guard}${quickGuard}
+
+⚠️ ANTI-HALLUCINATION:
+- "evidence" must be a verbatim snippet or exact command output you actually observed. Do NOT fabricate, guess, or paraphrase evidence.
+- Do NOT claim you read a file unless you actually read it with a tool.
+- Do NOT invent file paths, command outputs, or configuration values.
+- If uncertain, set confidence to "low" and explain what you did NOT verify in the observation.`;
   }
   return `${focusTask}${mapContext}${scopeHint}
 
@@ -71,7 +77,10 @@ Rules:
 - "deadEnds", "assumptions", "openQuestions" are optional.
 - "coverage" is required. Provide honest counts.
 - Do NOT write structured sections like "Result", "Output", "Evidence", or "Learnings" outside the JSON.
-- Estimate "coverage" honestly: count files you inspected, files cited in findings, commands you ran, and likely relevant files you did NOT read.${guard}${quickGuard}`;
+- Estimate "coverage" honestly: count files you inspected, files cited in findings, commands you ran, and likely relevant files you did NOT read.
+- "evidence" must be a verbatim snippet or exact command output you actually observed. Do NOT fabricate, guess, or paraphrase evidence.
+- Do NOT claim you read a file unless you actually read it with a tool.
+- If uncertain, set confidence to "low" and explain what you did NOT verify in the observation.${guard}${quickGuard}`;
 }
 
 export function buildStage2Prompt(task: string, stage1Output: string, customPrompt?: string, editMode?: boolean): string {
@@ -233,7 +242,10 @@ Rules:
 - "file" and "evidence" are optional but strongly preferred when applicable.
 - "deadEnds", "assumptions", "openQuestions" are optional.
 - "coverage" is required. Provide honest counts.
-- Do NOT write structured sections like "Result", "Output", "Evidence", or "Learnings" outside the JSON.`;
+- Do NOT write structured sections like "Result", "Output", "Evidence", or "Learnings" outside the JSON.
+- "evidence" must be a verbatim snippet or exact command output you actually observed. Do NOT fabricate, guess, or paraphrase evidence.
+- Do NOT claim you read a file unless you actually read it with a tool.
+- If uncertain, set confidence to "low" and explain what you did NOT verify in the observation.`;
 
   if (customPrompt) {
     return `${customPrompt}\n\n${base}`;

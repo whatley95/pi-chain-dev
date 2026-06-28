@@ -506,12 +506,13 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
     let killed = false;
     let abortHandler: (() => void) | undefined;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let sigkillTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
     const killProc = () => {
       if (killed || !proc.pid) return;
       killed = true;
       try { proc.kill("SIGTERM"); } catch { /* ignore */ }
-      setTimeout(() => {
+      sigkillTimeoutId = setTimeout(() => {
         if (settled || !proc.pid) return;
         if (process.platform === "win32") {
           try {
@@ -520,11 +521,13 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
         } else {
           try { proc.kill("SIGKILL"); } catch { /* ignore */ }
         }
+        sigkillTimeoutId = undefined;
       }, SIGKILL_TIMEOUT_MS);
     };
 
     const settle = (exitCode: number) => {
       if (timeoutId) { clearTimeout(timeoutId); timeoutId = undefined; }
+      if (sigkillTimeoutId) { clearTimeout(sigkillTimeoutId); sigkillTimeoutId = undefined; }
       if (abortHandler && signal) {
         signal.removeEventListener("abort", abortHandler);
       }

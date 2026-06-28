@@ -94,7 +94,8 @@ Rules:
 - Preserve fields that already look correct; fix only wrong or missing ones.
 - Be concise. Use glob patterns where helpful.
 - Do NOT include prose outside the YAML document.
-- If you cannot determine a value, use an empty array or omit optional string fields.`;
+- If you cannot determine a value, use an empty array or omit optional string fields.
+- VERIFY commands: do NOT trust template-detected build/test/lint/run commands. Read package.json scripts, build.gradle, Makefile, pyproject.toml, Cargo.toml, or equivalent config files to confirm the correct commands. Only include commands you can confirm from actual config files. If a command doesn't exist in config, remove it.`;
 
 function parseGeneratedYaml(text: string): unknown {
   const match = text.match(/```yaml\s*\n([\s\S]*?)\n```/) || text.match(/```\s*\n([\s\S]*?)\n```/);
@@ -261,7 +262,7 @@ function mergeMaps(base: ReturnType<typeof generateProjectMap>, generated: unkno
       layers: record(gArchitecture?.layers).length ? { ...base.architecture.layers, ...record(gArchitecture?.layers) } : base.architecture.layers,
     },
     notes: Array.isArray(gNotes) && gNotes.length && gNotes.every((n) => typeof n === "string")
-      ? [...base.notes, ...gNotes]
+      ? (() => { const seen = new Set(base.notes); for (const n of gNotes as string[]) { if (!seen.has(n)) base.notes.push(n); } return base.notes.slice(-20); })()
       : base.notes,
     generatedAt: new Date().toISOString(),
     generatedBy: "cdev scout+forge map generator",

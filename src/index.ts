@@ -34,7 +34,7 @@ import {
   checkAndSendLoopSteer,
 } from "./loop-detector-runtime.js";
 import { registerAdvisorPrompt } from "./advisor-prompt.js"
-import { clearStageSemaphores } from "./fork-stage.js";;
+import { clearStageSemaphores } from "./fork-stage.js";
 
 export default function (pi: ExtensionAPI) {
   let autoTurnCounter = 0;

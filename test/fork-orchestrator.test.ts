@@ -8,20 +8,19 @@ import type { Stage1Findings } from "../src/types.js";
 
 describe("countLowConfidenceFindings", () => {
   it("returns 0 for empty findings", () => {
-    const f: Stage1Findings = { findings: [], files: [], commands: [] };
+    const f: Stage1Findings = { summary: "empty", findings: [] };
     assert.equal(countLowConfidenceFindings(f), 0);
   });
 
   it("counts low confidence findings", () => {
     const f: Stage1Findings = {
+      summary: "four findings",
       findings: [
         { observation: "a", confidence: "high", evidence: "x", file: "x.ts" },
         { observation: "b", confidence: "low", evidence: "y", file: "y.ts" },
         { observation: "c", confidence: "medium", evidence: "z", file: "z.ts" },
         { observation: "d", confidence: "low", evidence: "w", file: "w.ts" },
       ],
-      files: [],
-      commands: [],
     };
     assert.equal(countLowConfidenceFindings(f), 2);
   });
@@ -32,15 +31,13 @@ describe("validateStage1Findings", () => {
     const f: Stage1Findings = {
       summary: "Found important patterns in the codebase.",
       findings: [{ observation: "x uses zod for validation", confidence: "high", evidence: "seen in schema.ts", file: "schema.ts" }],
-      files: ["schema.ts"],
-      commands: ["grep"],
     };
     const result = validateStage1Findings(f, "test");
     assert.equal(result.valid, true);
   });
 
   it("flags empty findings", () => {
-    const f: Stage1Findings = { summary: "Nothing found.", findings: [], files: [], commands: [] };
+    const f: Stage1Findings = { summary: "Nothing found.", findings: [] };
     const result = validateStage1Findings(f, "test");
     assert.equal(result.valid, false);
     if (!result.valid) assert.ok(result.reason);
@@ -53,8 +50,6 @@ describe("validateStage1Findings", () => {
         { observation: "maybe x", confidence: "low", evidence: "guess", file: "a.ts" },
         { observation: "maybe y", confidence: "low", evidence: "hunch", file: "b.ts" },
       ],
-      files: [],
-      commands: [],
     };
     const result = validateStage1Findings(f, "test");
     assert.equal(result.valid, false);
@@ -69,8 +64,6 @@ describe("shouldReExplore", () => {
         { observation: "x", confidence: "high", evidence: "e", file: "f.ts" },
         { observation: "y", confidence: "high", evidence: "e", file: "g.ts" },
       ],
-      files: [],
-      commands: [],
     };
     const result = shouldReExplore(f);
     assert.equal(result.should, true);
@@ -84,8 +77,6 @@ describe("shouldReExplore", () => {
         { observation: "y", confidence: "high", evidence: "e", file: "g.ts" },
         { observation: "z", confidence: "high", evidence: "e", file: "h.ts" },
       ],
-      files: [],
-      commands: [],
     };
     const result = shouldReExplore(f);
     assert.equal(result.should, false);
