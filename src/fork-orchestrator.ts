@@ -9,7 +9,7 @@ import { writeReportFile } from "./report.js";
 import { loadProjectMap, splitTaskByMap, type ParallelSubTask } from "./project-map.js";
 import { fmtDuration, slugFromTask } from "./format.js";
 import { addUsage } from "./usage.js";
-import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, AutoForkConfig, YoloConfig, ConfidenceGateConfig } from "./types.js";
+import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, AutoForkConfig, YoloConfig, ConfidenceGateConfig, ReviewVerdict } from "./types.js";
 import { emptyUsage, emptyFailedResult, evaluateConfidenceGates } from "./types.js";
 
 export interface RunAutoForkOptions {
@@ -25,7 +25,6 @@ export interface RunAutoForkOptions {
   customSynthesizePrompt?: string;
   customPlanPrompt?: string;
   quick?: boolean;
-  verify?: boolean;
   plan?: boolean;
   parallel?: number;
   parallelBackup?: boolean;
@@ -48,7 +47,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   const { cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage1bProfile,
           stage1cProfile, stage1BackupProfile, stage2Profile, customExplorePrompt,
           customSynthesizePrompt, customPlanPrompt,
-          quick = false, verify = false, plan = false, editMode = false,
+          quick = false, plan = false, editMode = false,
           confidenceGates,
           extensions = null, environment = {}, offline = true, signal } = opts;
 
@@ -66,7 +65,7 @@ const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeou
 
   const onUpdate = opts.onUpdate;
   const parallel = Math.max(1, Math.min(3, Number.isFinite(opts.parallel) ? (opts.parallel as number) : 1));
-  const useParallel = parallel > 1 && !quick && !verify;
+  const useParallel = parallel > 1 && !quick;
 
   function modelLabel(prof: StageProfile): string {
     return prof.thinking ? `${prof.provider}:${prof.id} • ${prof.thinking}` : `${prof.provider}:${prof.id}`;
@@ -97,7 +96,7 @@ const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeou
   }
 
   let stage1Result: ForkResult;
-  let stage1Findings: Stage1Findings | null = null;
+  let stage1Findings: Stage1Findings | null;
 
   if (useParallel) {
     const map = loadProjectMap(cwd);
@@ -189,89 +188,6 @@ const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeou
     if (!stage1Findings) {
       stage1Result.stderr += "\n[cdev] parallel mode: no valid findings produced by any scout";
     }
-  } else if (verify) {
-    const secondProfile = stage1bProfile && stage1bProfile.provider && stage1bProfile.id ? stage1bProfile : stage1Profile;
-    const modelA = stage1Profile.thinking ? `${stage1Profile.provider}:${stage1Profile.id} • ${stage1Profile.thinking}` : `${stage1Profile.provider}:${stage1Profile.id}`;
-    const modelB = secondProfile.thinking ? `${secondProfile.provider}:${secondProfile.id} • ${secondProfile.thinking}` : `${secondProfile.provider}:${secondProfile.id}`;
-    opts.onProgress?.("scout", `Scout A ${modelA} + Scout B ${modelB}`);
-
-    const [settledA, settledB] = await Promise.allSettled([
-      runStage1Run("exploration A", task, stage1Profile).then((r) => {
-        opts.onProgress?.("scout", `Scout A ${modelA} done`);
-        return r;
-      }),
-      runStage1Run("exploration B", task, secondProfile).then((r) => {
-        opts.onProgress?.("scout", `Scout B ${modelB} done`);
-        return r;
-      }),
-    ]);
-
-    const emptyRun = (label: string, err?: string): ForkResult => ({
-      ...emptyFailedResult(task, `${label} failed${err ? `: ${err}` : ""}`),
-      provider: stage1Profile.provider,
-      model: stage1Profile.id,
-    });
-
-    const runA = settledA.status === "fulfilled" ? settledA.value : emptyRun("exploration A", settledA.reason instanceof Error ? settledA.reason.message : String(settledA.reason));
-    const runB = settledB.status === "fulfilled" ? settledB.value : emptyRun("exploration B", settledB.reason instanceof Error ? settledB.reason.message : String(settledB.reason));
-
-    if (!getFinalAssistantText(runA.messages) && !getFinalAssistantText(runB.messages)) {
-      return {
-        result: {
-          ...emptyFailedResult(task, `Verify mode exploration failed: both scout runs failed (${runA.errorMessage || "A"}; ${runB.errorMessage || "B"})`),
-          provider: stage1Profile.provider,
-          model: stage1Profile.id,
-        },
-        details,
-      };
-    }
-
-    const combinedUsage: UsageStats = emptyUsage();
-    addUsage(combinedUsage, runA.usage);
-    addUsage(combinedUsage, runB.usage);
-
-    const aDuration = fmtDuration(runA.durationMs);
-    const bDuration = fmtDuration(runB.durationMs);
-    const primaryRun = getFinalAssistantText(runA.messages) ? runA : runB;
-    stage1Result = {
-      ...primaryRun,
-      task,
-      usage: combinedUsage,
-      stderr: [
-        `[cdev] verify mode: Scout A ${modelA}${aDuration ? ` in ${aDuration}` : ""} | Scout B ${modelB}${bDuration ? ` in ${bDuration}` : ""}`,
-        runA.stderr,
-        runB.stderr,
-      ].filter(Boolean).join("\n"),
-      durationMs: Math.max(runA.durationMs ?? 0, runB.durationMs ?? 0),
-    };
-    details.stage1 = runA;
-    details.stage1b = runB;
-
-    const textA = getFinalAssistantText(runA.messages) || "";
-    const textB = getFinalAssistantText(runB.messages) || "";
-    const findingsA = parseStage1Findings(textA);
-    const findingsB = parseStage1Findings(textB);
-
-    const validationA = findingsA ? validateStage1Findings(findingsA, "exploration A") : { valid: false, reason: "exploration A: output was not valid JSON findings" };
-    const validationB = findingsB ? validateStage1Findings(findingsB, "exploration B") : { valid: false, reason: "exploration B: output was not valid JSON findings" };
-
-    if (validationA.valid && validationB.valid) {
-      const contradictions = detectContradictions(findingsA!, findingsB!);
-      stage1Findings = mergeStage1Findings(findingsA!, findingsB!);
-      if (contradictions.length > 0) {
-        stage1Findings.contradictions = contradictions;
-        stage1Result.stderr += `\n[cdev] verify mode: found ${contradictions.length} contradiction(s) between scout runs\n`;
-      }
-      stage1Result.stderr += `\n[cdev] verify mode: merged ${findingsA!.findings.length} + ${findingsB!.findings.length} findings into ${stage1Findings.findings.length} unique findings\n`;
-    } else if (validationA.valid) {
-      stage1Findings = findingsA;
-      stage1Result.stderr += `\n[cdev] verify mode: exploration A valid, B invalid (${validationB.reason}); using A\n`;
-    } else if (validationB.valid) {
-      stage1Findings = findingsB;
-      stage1Result.stderr += `\n[cdev] verify mode: exploration B valid, A invalid (${validationA.reason}); using B\n`;
-    } else {
-      stage1Result.stderr += `\n[cdev] verify mode: both explorations invalid (${validationA.reason}; ${validationB.reason})\n`;
-    }
   } else {
     stage1Result = await runStage1Run("exploration", task);
     details.stage1 = stage1Result;
@@ -281,7 +197,7 @@ const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeou
     const validation = stage1Findings ? validateStage1Findings(stage1Findings, "exploration") : { valid: false, reason: "output was not valid JSON findings" };
     const stage1Usage: UsageStats = stage1Result.usage ? { ...stage1Result.usage } : emptyUsage();
 
-    const reExploreCheck = shouldReExplore(stage1Findings, verify);
+    const reExploreCheck = shouldReExplore(stage1Findings);
     const gateCheck = stage1Findings ? evaluateConfidenceGates(stage1Findings, confidenceGates) : { passed: false, reasons: ["no valid findings"] };
     const gateAutoReExplore = confidenceGates?.autoReExplore ?? true;
     const strictValidation = confidenceGates?.strictValidation ?? false;
@@ -548,10 +464,10 @@ export function countLowConfidenceFindings(findings: Stage1Findings): number {
   return findings.findings.filter((f) => f.confidence === "low").length;
 }
 
-export function shouldReExplore(findings: Stage1Findings | null, verify: boolean): { should: boolean; reason?: string } {
+export function shouldReExplore(findings: Stage1Findings | null): { should: boolean; reason?: string } {
   if (!findings) return { should: true, reason: "stage 1 produced no valid structured findings" };
   if (findings.findings.length === 0) return { should: true, reason: "stage 1 returned zero findings" };
-  if (findings.findings.length < 3 && !verify) return { should: true, reason: `only ${findings.findings.length} finding(s); likely insufficient coverage` };
+  if (findings.findings.length < 3) return { should: true, reason: `only ${findings.findings.length} finding(s); likely insufficient coverage` };
   const lowConfidenceCount = countLowConfidenceFindings(findings);
   const meaningfulFindings = findings.findings.filter(f => f.observation && f.observation.trim().length > 0);
   const denominator = Math.max(1, meaningfulFindings.length || findings.findings.length);
@@ -640,43 +556,6 @@ export function mergeStage1Findings(a: Stage1Findings, b: Stage1Findings): Stage
   return merged;
 }
 
-export function detectContradictions(a: Stage1Findings, b: Stage1Findings): import("./types.js").FindingContradiction[] {
-  const contradictions: import("./types.js").FindingContradiction[] = [];
-  const normalize = (text: string) => text.toLowerCase().replace(/\s+/g, " ").trim();
-  for (const fa of a.findings) {
-    for (const fb of b.findings) {
-      if (fa.observation === fb.observation) continue;
-      const oa = normalize(fa.observation);
-      const ob = normalize(fb.observation);
-      // Same file but opposite confidence is a soft contradiction
-      if (fa.file && fb.file && fa.file === fb.file) {
-        const opposite = (fa.confidence === "high" && fb.confidence === "low") || (fa.confidence === "low" && fb.confidence === "high");
-        if (opposite && oa.length > 20 && ob.length > 20 && (oa.startsWith(ob.slice(0, 30)) || ob.startsWith(oa.slice(0, 30)))) {
-          contradictions.push({
-            observationA: fa.observation,
-            observationB: fb.observation,
-            summary: `Same file (${fa.file}) but opposite confidence: A=${fa.confidence}, B=${fb.confidence}`,
-          });
-        }
-      }
-      // Direct negation keywords
-      const negationWords = ["not ", "no ", "does not", "doesn't", "cannot", "can't", "missing", "absent"];
-      const aNeg = negationWords.some((w) => oa.includes(w));
-      const bNeg = negationWords.some((w) => ob.includes(w));
-      if (aNeg !== bNeg && oa.length > 25 && ob.length > 25 && (oa.startsWith(ob.slice(0, 35)) || ob.startsWith(oa.slice(0, 35)))) {
-        contradictions.push({
-          observationA: fa.observation,
-          observationB: fb.observation,
-          summary: "One finding affirms while the other negates a closely related point",
-        });
-      }
-    }
-  }
-  return contradictions.slice(0, 5);
-}
-
-export type ReviewVerdict = "pass" | "needs-work" | "blocked" | "unknown";
-
 export function parseReviewVerdict(text: string): ReviewVerdict {
   const match = text.match(/## Result\b([\s\S]*?)(?=##\s|$)/i);
   if (!match) return "unknown";
@@ -764,8 +643,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
     customExplorePrompt,
     customSynthesizePrompt,
     quick: false,
-    verify: false,
-    scoutTimeoutMs,
+        scoutTimeoutMs,
     forgeTimeoutMs,
     onProgress: (stage, model) => onProgress?.(stage as "scout" | "forge" | "review" | "fix", model),
     onUpdate,
@@ -918,8 +796,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
       customExplorePrompt,
       customSynthesizePrompt,
       quick: false,
-      verify: false,
-      editMode: yoloConfig.autoApply === "auto",
+            editMode: yoloConfig.autoApply === "auto",
       scoutTimeoutMs,
       forgeTimeoutMs: yoloFixTimeoutMs ?? forgeTimeoutMs,
       onProgress: (stage, model) => onProgress?.(stage === "scout" || stage === "forge" ? stage : "fix", model, round),

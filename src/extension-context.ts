@@ -182,7 +182,6 @@ export interface ForkCostEstimateInput {
   stage1Profile: StageProfile;
   stage2Profile: StageProfile;
   quick?: boolean;
-  verify?: boolean;
   forkSessionSnapshotJsonl?: string;
 }
 
@@ -193,7 +192,7 @@ export interface ForkCostEstimate {
 }
 
 export function estimateForkCost(input: ForkCostEstimateInput): ForkCostEstimate {
-  const { task, stage1Profile, stage2Profile, quick = false, verify = false, forkSessionSnapshotJsonl = "" } = input;
+  const { task, stage1Profile, stage2Profile, quick = false, forkSessionSnapshotJsonl = "" } = input;
 
   const charsPerToken = getTokenEstimationRatio();
 
@@ -210,7 +209,7 @@ export function estimateForkCost(input: ForkCostEstimateInput): ForkCostEstimate
   const stage1Price = lookupModelPrice(stage1Profile.id) ?? DEFAULT_MODEL_PRICE;
   const stage2Price = lookupModelPrice(stage2Profile.id) ?? DEFAULT_MODEL_PRICE;
 
-  const stage1Runs = verify ? 2 : 1;
+  const stage1Runs = 1;
   const stage1InputCost = (inputTokens / 1_000_000) * stage1Price.input * stage1Runs;
   const stage1OutputCost = (outputTokens / 1_000_000) * stage1Price.output * stage1Runs;
 

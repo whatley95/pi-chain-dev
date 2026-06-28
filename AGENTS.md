@@ -6,11 +6,11 @@ This repo is the **pi-chain-dev** Pi extension: a two-stage scout→forge runner
 
 ### cdev workflow
 
-Use the simplest cdev mode that fits the task. Do not default to verify mode.
+Use the simplest cdev mode that fits the task.
 
 - **Small question / single file check** → `/cdev quick <task>` or `/cdev fast <task>`
 - **Code change / feature / investigation** → `/cdev <task>` (scout + forge, single scout)
-- **High-confidence cross-check** → `/cdev verify <task>` only when asked
+- **Cross-check** → /cdev <task> (use parallel or plan for thoroughness)
 - **After code changes** → `/cdev review` or `/cdev review changes`
 - **Before big refactor** → `/cdev plan <task>`
 
@@ -51,7 +51,7 @@ All three must pass. Tests are in `test/**/*.test.ts` and run with Node's built-
 - `src/index.ts` — extension entry point; registers tool and commands.
 - `src/tool.ts` — cdev tool execution and dispatch.
 - `src/commands/` — `/cdev`, `/cdev-model`, `/cdev-scan`, `/cdev-memory`, `/cdev-map`.
-- `src/fork-orchestrator.ts` — two-stage runner, verify, parallel, YOLO loops.
+- `src/fork-orchestrator.ts` — two-stage runner, parallel, YOLO loops.
 - `src/fork-stage.ts` — child Pi process spawning and session handling.
 - `src/extension-context.ts` — snapshots, cost tracking, status helpers.
 - `src/prompts.ts` — stage prompts.

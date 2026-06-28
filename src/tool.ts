@@ -15,7 +15,6 @@ export interface AutoForkParamsType {
   task?: string;
   review?: boolean;
   quick?: boolean;
-  verify?: boolean;
   plan?: boolean;
   yolo?: boolean;
   research?: boolean;
@@ -36,7 +35,7 @@ export function validateAutoForkParams(params: Record<string, unknown>): { valid
     if (typeof params.task !== "string") errors.push("task must be a string");
     else out.task = params.task;
   }
-  for (const key of ["review", "quick", "verify", "plan", "yolo", "research", "parallelBackup", "advisor", "askAdvisor"] as const) {
+  for (const key of ["review", "quick", "plan", "yolo", "research", "parallelBackup", "advisor", "askAdvisor"] as const) {
     if (params[key] !== undefined) {
       if (typeof params[key] !== "boolean") errors.push(`${key} must be a boolean`);
       else out[key] = params[key];

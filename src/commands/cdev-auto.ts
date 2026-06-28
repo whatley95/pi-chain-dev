@@ -19,11 +19,6 @@ export function handleAutoSubcommand(
     resetAutoTurnCounter(); updateAutoStatus(ctx);
     return true;
   }
-  if (lower === "auto-verify on" || lower === "auto-verify off") {
-    writeAgentSetting("autoVerify", lower === "auto-verify on");
-    ctx.ui.notify("cdev auto-verify " + (lower === "auto-verify on" ? "ON" : "OFF"), "info");
-    return true;
-  }
   if (lower === "auto-compact on" || lower === "auto-compact off") {
     writeAgentSetting("autoCompactOnLimit", lower === "auto-compact on");
     ctx.ui.notify("cdev auto-compact " + (lower === "auto-compact on" ? "ON" : "OFF"), "info");

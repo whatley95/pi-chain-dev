@@ -37,7 +37,7 @@ export interface SessionRecord {
     cost: number;
     errorDetails: string;
   } | null;
-  /** Stage 1B details (only in verify mode). */
+
   stage1b?: {
     model: string;
     exitCode: number;
@@ -375,7 +375,7 @@ export function formatSessionRecord(s: SessionRecord): string {
   }
 
   if (s.stage1b) {
-    lines.push(`  Stage 1B (verify scout):`, ``);
+
     lines.push(`    Model:      ${s.stage1b.model}`);
     lines.push(`    Exit code:  ${s.stage1b.exitCode}`);
     if (s.stage1b.inputTokens || s.stage1b.outputTokens) {

@@ -24,12 +24,11 @@ describe("validateAutoForkParams", () => {
   });
 
   it("accepts boolean flags", () => {
-    const result = validateAutoForkParams({ quick: true, verify: false });
+    const result = validateAutoForkParams({ quick: true });
     assert.equal(result.valid, true);
     if (result.valid) {
       assert.equal(result.value.quick, true);
-      assert.equal(result.value.verify, false);
-    }
+          }
   });
 
   it("rejects parallel out of range", () => {

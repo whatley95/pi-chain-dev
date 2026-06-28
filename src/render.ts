@@ -91,8 +91,6 @@ export function renderCall(args: unknown, theme: Theme, _context?: { cwd?: strin
     label = task ? `cdev-yolo "${task}"` : "cdev-yolo";
   } else if (a?.quick) {
     label = task ? `cdev-quick "${task}"` : "cdev-quick";
-  } else if (a?.verify) {
-    label = task ? `cdev-verify "${task}"` : "cdev-verify";
   } else {
     label = task ? `cdev "${task}"` : "cdev";
   }

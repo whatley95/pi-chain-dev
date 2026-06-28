@@ -114,7 +114,7 @@ export default function (pi: ExtensionAPI) {
     name: "cdev",
     label: "Chain Dev",
     description:
-      "Two-stage development fork: first a cheap model (scout) explores and gathers evidence, then a powerful model (forge) synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for scout only (raw findings, no forge). Set verify=true to run the scout stage twice and merge the findings before forge (better accuracy, slower, costs ~2x stage 1). Set recall=<topic> to retrieve past fork findings from project memory (no fork runs). Set reviewFile=<path> with review=true to review a specific file/artifact instead of the session. Set diffSpec=<range> to review a git/svn diff (e.g. 'HEAD~3..HEAD'). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
+      "Two-stage development fork: first a cheap model (scout) explores and gathers evidence, then a powerful model (forge) synthesizes a structured report. Set review=true to skip exploration and run code review with the powerful model only. Set quick=true for scout only (raw findings, no forge). Set recall=<topic> to retrieve past fork findings from project memory (no fork runs). Set reviewFile=<path> with review=true to review a specific file/artifact instead of the session. Set diffSpec=<range> to review a git/svn diff (e.g. 'HEAD~3..HEAD'). When cdev auto mode is enabled, proactively use this tool for exploration tasks.",
     promptSnippet: "Two-stage fork: scout (cheap) explores → forge (powerful) writes (or scout only with quick:true). Use recall to retrieve past findings.",
     promptGuidelines: [
       "Use cdev for any task requiring more than 3-4 file reads — cheaper than parent model reading files one-by-one.",
@@ -132,7 +132,6 @@ export default function (pi: ExtensionAPI) {
       "Use cdev with quick:true for follow-up file tracing, grep-style lookups, reading files, tracing symbols, or explaining code when raw findings suffice.",
       "When you need to read, search, trace, or explain code instead of editing it, use cdev with quick:true. This keeps context small and avoids looping on repeated file reads.",
       "RULE: For reading source files, verifying current code state, tracing symbols, or searching the codebase, prefer calling cdev with quick:true instead of using direct read/grep tools. Use /cdev read <path>[:start-end] or cdev({ quick:true, task: 'read src/foo.ts lines 10-50' }). Only use direct read for tiny snippets (under ~30 lines) when cdev is unavailable or slower.",
-       "Use cdev with verify:true only when the user explicitly asks for verification, cross-checking, or high-confidence exploration. Do not default to verify mode. verify runs scout twice and merges findings before forge.",
       "Use cdev with research:true to delegate issue investigation to a selected model. The model reports findings and a decision, but never edits code. The main agent owns any changes.",
       "Use cdev with advisor:true when you are stuck, looping, or facing a difficult decision. A scout gathers evidence, then an advisor model gives a concrete recommendation. Use askAdvisor:true to skip the scout and ask the advisor directly.",
       "Prefer cdev over bash/grep when you need to understand file relationships, not just find text matches.",
@@ -168,10 +167,6 @@ export default function (pi: ExtensionAPI) {
       diffSpec: Type.Optional(Type.String({
         description:
           "If review is true, provide a git or SVN revision range to review the diff (e.g. 'HEAD~3..HEAD', 'main..feature', 'r1234:1235'). Runs git diff or svn diff and sends the output to the review model.",
-      })),
-      verify: Type.Optional(Type.Boolean({
-        description:
-          "If true, run the scout stage twice and merge the findings before sending them to the forge stage. The two independent runs increase coverage for high-stakes tasks at ~2x stage 1 cost and slower speed.",
       })),
       parallel: Type.Optional(Type.Integer({
         description:

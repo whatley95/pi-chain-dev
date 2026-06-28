@@ -5,11 +5,6 @@ export function handleQuickSubcommand(trimmed: string, _lower: string, _ctx: Ext
   pi.sendUserMessage("Use cdev with quick=true to: " + trimmed.slice(6).trim(), { triggerTurn: true, deliverAs: "steer" });
   return true;
 }
-export function handleVerifySubcommand(trimmed: string, _lower: string, _ctx: ExtensionContext, pi: ExtensionAPI): boolean {
-  if (!_lower.startsWith("verify ")) return false;
-  pi.sendUserMessage("Use cdev with verify=true to: " + trimmed.slice(7).trim(), { triggerTurn: true, deliverAs: "steer" });
-  return true;
-}
 export function handleResearchSubcommand(trimmed: string, _lower: string, _ctx: ExtensionContext, pi: ExtensionAPI): boolean {
   if (!_lower.startsWith("research ")) return false;
   pi.sendUserMessage("Use cdev with research=true to: " + trimmed.slice(9).trim(), { triggerTurn: true, deliverAs: "steer" });

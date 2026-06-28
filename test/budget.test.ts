@@ -87,11 +87,6 @@ describe("estimateForkCost", () => {
     assert.ok(estimate.cost < 0.01); // single fork, short task — should be pennies
   });
 
-  it("doubles stage1 cost in verify mode", () => {
-    const base = estimateForkCost({ task: "explore auth", stage1Profile: stage1, stage2Profile: stage2, verify: false });
-    const verified = estimateForkCost({ task: "explore auth", stage1Profile: stage1, stage2Profile: stage2, verify: true });
-    assert.ok(verified.cost > base.cost);
-  });
 
   it("skips stage2 cost in quick mode", () => {
     const full = estimateForkCost({ task: "x", stage1Profile: stage1, stage2Profile: stage2 });

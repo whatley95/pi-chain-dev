@@ -27,7 +27,6 @@ function parseBooleanValue(raw: string): boolean | null {
 
 const CONFIG_KEYS: Record<string, { type: "boolean" | "number" | "seconds" | "profileTimeouts"; min?: number; max?: number }> = {
   auto: { type: "boolean" },
-  autoVerify: { type: "boolean" },
   autoCompactOnLimit: { type: "boolean" },
   memory: { type: "boolean" },
   memoryAutoRefresh: { type: "boolean" },

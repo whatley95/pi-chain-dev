@@ -32,12 +32,11 @@ export async function handleFullFork(
   const profiles = resolveStageProfiles(config);
 
   const quick: boolean = p.quick ?? false;
-  const verify: boolean = p.verify ?? (config.autoVerify && !p.quick);
   const auditedTask = withAuditGuard(task);
 
   const budget = checkForkBudget(config, ctx.cwd, auditedTask,
     profiles.stage1, profiles.stage2,
-    { quick, verify, snapshot });
+    { quick, snapshot });
   if (!budget.allowed) {
     return {
       content: [{ type: "text" as const, text: budget.error }],
@@ -56,11 +55,11 @@ export async function handleFullFork(
   const isPlan = p.plan === true;
   const parallel = Math.max(1, Math.min(3, Number.isFinite(p.parallel) ? (p.parallel as number) : (config.parallel ?? 1)));
   const parallelBackup = typeof p.parallelBackup === "boolean" ? p.parallelBackup : (config.parallelBackup ?? false);
-  const useParallel = parallel > 1 && !quick && !verify;
+  const useParallel = parallel > 1 && !quick ;
 
   const onProgress = (stage: string, model: string) => {
     if (stage === "scout") {
-      const icon = useParallel ? "🔀" : verify ? "🔍🔍" : "🔍";
+      const icon = useParallel ? "🔀" : "🔍";
       ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} Scout exploring…  (${model})`)]);
     } else {
       ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${isPlan ? "📋" : "⚒️"} Forge ${isPlan ? "planning" : "synthesizing"}…  (${model})`)]);
@@ -81,7 +80,6 @@ export async function handleFullFork(
     customSynthesizePrompt: config.promptsEnabled ? config.prompts?.synthesize : undefined,
     customPlanPrompt: config.promptsEnabled ? config.prompts?.plan : undefined,
     quick,
-    verify,
     plan: isPlan,
     parallel,
     parallelBackup,
@@ -169,7 +167,7 @@ export async function handleFullFork(
   return {
     content: [{ type: "text" as const, text: safeDisplayText(resultText + reportNote) }],
     details: withUiDetails(details, buildReportUiDetails(finalText, {
-      mode: isPlan ? "plan" : quick ? "quick" : verify ? "verify" : useParallel ? "parallel" : "fork",
+      mode: isPlan ? "plan" : quick ? "quick" : useParallel ? "parallel" : "fork",
       task,
       reportPath: reportRelPath || undefined,
     })),

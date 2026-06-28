@@ -170,7 +170,7 @@ export function checkForkBudget(
   task: string,
   stage1Profile: StageProfile,
   stage2Profile: StageProfile,
-  opts?: { quick?: boolean; verify?: boolean; snapshot?: string; costMultiplier?: number; costLabel?: string; unitLabel?: string },
+  opts?: { quick?: boolean; snapshot?: string; costMultiplier?: number; costLabel?: string; unitLabel?: string },
 ): { allowed: false; error: string; details: { stage1: null; stage2: null }; isError: true } | { allowed: true; estimatedCost: number } {
   // Fast-path: skip estimation when no budget limits configured (unlimited)
   if (config.maxSessionCost === 0 && config.maxForkCost === 0) {
@@ -181,7 +181,7 @@ export function checkForkBudget(
     stage1Profile,
     stage2Profile,
     quick: opts?.quick,
-    verify: opts?.verify,
+    
     forkSessionSnapshotJsonl: opts?.snapshot ?? undefined,
   });
   const multiplier = opts?.costMultiplier ?? 1;

@@ -30,7 +30,7 @@ import { handleAutoSubcommand } from "./cdev-auto.js";
 import { handleReadSubcommand, handleGrepSubcommand, handleTraceSubcommand, handleExplainSubcommand } from "./cdev-tools.js";
 import { handleReviewSubcommand } from "./cdev-review-cmd.js";
 import { handleYoloSubcommand } from "./cdev-yolo-cmd.js";
-import { handleQuickSubcommand, handleVerifySubcommand, handleResearchSubcommand, handleAdvisorSubcommand, handleAskAdvisorSubcommand, handleMultiSubcommand, handlePlanSubcommand } from "./cdev-workflow.js";
+import { handleQuickSubcommand, handleResearchSubcommand, handleAdvisorSubcommand, handleAskAdvisorSubcommand, handleMultiSubcommand, handlePlanSubcommand } from "./cdev-workflow.js";
 
 export function registerCdevCommand(
   pi: ExtensionAPI,
@@ -38,7 +38,7 @@ export function registerCdevCommand(
   updateAutoStatus: (ctx: ExtensionContext) => void,
 ): void {
   pi.registerCommand("cdev", {
-    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, read <paths>, grep <pattern>, trace <symbol>, explain <path|symbol>, verify <task>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, quality on|off, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off, todo <name>",
+    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, read <paths>, grep <pattern>, trace <symbol>, explain <path|symbol>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, quality on|off, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off, todo <name>",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
       const lower = trimmed.toLowerCase();
@@ -226,7 +226,6 @@ export function registerCdevCommand(
 
       // ── Workflow subcommands ──
       if (handleQuickSubcommand(trimmed, lower, ctx, pi)) return;
-      if (handleVerifySubcommand(trimmed, lower, ctx, pi)) return;
       if (handleResearchSubcommand(trimmed, lower, ctx, pi)) return;
       if (handleAdvisorSubcommand(trimmed, lower, ctx, pi)) return;
       if (handleAskAdvisorSubcommand(trimmed, lower, ctx, pi)) return;
@@ -288,7 +287,6 @@ export function registerCdevCommand(
         const choice = await ctx.ui.select("cdev — choose workflow", [
           "Review uncommitted changes",
           "Quick explore",
-          "Deep verify",
           "Research issue",
           "Advisor question",
           "Ask advisor directly",
@@ -348,7 +346,6 @@ export function registerCdevCommand(
         }
         const usage: Record<string, string> = {
           "Quick explore": "/cdev quick <task>",
-          "Deep verify": "/cdev verify <task>",
           "Research issue": "/cdev research <issue or question>",
           "Advisor question": "/cdev advisor <question>",
           "Ask advisor directly": "/cdev ask-advisor <question>",
@@ -361,7 +358,7 @@ export function registerCdevCommand(
       }
 
       // ── Fuzzy match ──
-       const subcommands = ["status", "quick", "fast", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-verify", "auto-compact", "config", "retry", "estimate", "help", "clear", "yolo", "verify", "plan", "multi", "research", "advisor", "ask-advisor"];
+       const subcommands = ["status", "quick", "fast", "review", "scan", "history", "recall", "view", "info", "memory", "prompts", "auto", "auto-compact", "config", "retry", "estimate", "help", "clear", "yolo", "plan", "multi", "research", "advisor", "ask-advisor"];
       const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
       const isSingleWord = !trimmed.includes(" ");
       const fuzzy = subcommands
@@ -451,7 +448,6 @@ function formatCdevStatus(ctx: ExtensionContext, config: AutoForkConfig): string
   lines.push(`  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`);
   lines.push(`  Project memory:   ${config.memory ? "ON" : "OFF"}`);
   lines.push(`  Memory auto-refresh: ${config.memoryAutoRefresh ? "ON" : "OFF"}`);
-  lines.push(`  Auto-verify:      ${config.autoVerify ? "✓ ON (scout ×2)" : "OFF (scout ×1)"}`);
   lines.push(`  Multi scouts:     ${config.parallel && config.parallel > 1 ? `${config.parallel} (backup ${config.parallelBackup ? "on" : "off"})` : "OFF"}`);
   lines.push(`  Scout timeout:    ${((config.profileTimeouts?.scout ?? config.scoutTimeoutMs ?? 600_000) / 1000).toFixed(0)}s${config.profileTimeouts?.scout ? " (profile override)" : ""}`);
   lines.push(`  Forge timeout:    ${((config.profileTimeouts?.forge ?? config.forgeTimeoutMs ?? 180_000) / 1000).toFixed(0)}s${config.profileTimeouts?.forge ? " (profile override)" : ""}`);
@@ -511,7 +507,6 @@ function parseBooleanValue(raw: string): boolean | null {
 
 const CONFIG_KEYS: Record<string, { type: "boolean" | "number" | "seconds" | "profileTimeouts"; min?: number; max?: number }> = {
   auto: { type: "boolean" },
-  autoVerify: { type: "boolean" },
   autoCompactOnLimit: { type: "boolean" },
   memory: { type: "boolean" },
   memoryAutoRefresh: { type: "boolean" },

@@ -361,11 +361,6 @@ describe("estimateForkCost (extension-context.ts)", () => {
     assert.ok(result.cost < 0.01);
   });
 
-  it("doubles stage1 cost in verify mode", () => {
-    const normal = estimateForkCost({ task: "explore", stage1Profile, stage2Profile });
-    const verify = estimateForkCost({ task: "explore", stage1Profile, stage2Profile, verify: true });
-    assert.ok(verify.cost > normal.cost);
-  });
 
   it("skips stage2 cost in quick mode", () => {
     const quick = estimateForkCost({ task: "explore", stage1Profile, stage2Profile, quick: true });

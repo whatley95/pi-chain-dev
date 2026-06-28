@@ -90,8 +90,8 @@ describe("handleYolo", () => {
 });
 
 describe("handleFullFork", () => {
-  it("validates full fork params (plan, quick, verify)", () => {
-    for (const flag of ["plan", "quick", "verify"] as const) {
+  it("validates full fork params (plan, quick)", () => {
+    for (const flag of ["plan", "quick"] as const) {
       const result = validateAutoForkParams({ [flag]: true, task: "refactor auth" });
       assert.equal(result.valid, true);
       if (result.valid) assert.equal(result.value[flag], true);
@@ -99,7 +99,7 @@ describe("handleFullFork", () => {
   });
 
   it("rejects quick, verify, plan without task", () => {
-    for (const flag of ["quick", "verify", "plan"] as const) {
+    for (const flag of ["quick", "plan"] as const) {
       const result = validateAutoForkParams({ [flag]: true }); // no task
       assert.equal(result.valid, true); // task is optional in validation
       if (result.valid) assert.equal(result.value.task, undefined);

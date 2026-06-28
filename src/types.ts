@@ -47,7 +47,7 @@ export interface ConfidenceGateConfig {
 export interface AutoForkConfig {
   /** Model profile for Stage 1 (cheap exploration). */
   stage1: StageProfile;
-  /** Optional second scout model for verify mode. Falls back to stage1 if unset. */
+
   stage1b?: StageProfile;
   /** Optional third scout model for parallel mode. Falls back to stage1 if unset. */
   stage1c?: StageProfile;
@@ -82,7 +82,6 @@ export interface AutoForkConfig {
   /** Use theme.bg() for richer TUI rendering (progress, results). Default true. */
   themed: boolean;
   /** Run scout twice automatically for higher accuracy. */
-  autoVerify: boolean;
   /** Split scout into N parallel sub-task scouts (1-3). Default 1. */
   parallel?: number;
   /** If true, a backup scout takes over failed parallel sub-tasks. Default false. */
@@ -258,7 +257,7 @@ export interface AutoForkDetails {
   ui?: AutoForkUiDetails;
 }
 
-export type CdevUiMode = "fork" | "quick" | "verify" | "plan" | "review" | "yolo" | "recall" | "parallel" | "research" | "advisor";
+export type CdevUiMode = "fork" | "quick" | "plan" | "review" | "yolo" | "recall" | "parallel" | "research" | "advisor";
 
 export interface AutoForkUiDetails {
   mode?: CdevUiMode;
@@ -414,6 +413,9 @@ export interface SourceCoverageStats {
   commandsRun: number;
   unreadLikelyFiles?: number;
 }
+
+/** Result of a review pass. */
+export type ReviewVerdict = "pass" | "needs-work" | "blocked" | "unknown";
 
 /** Contradiction between two scout findings. */
 export interface FindingContradiction {

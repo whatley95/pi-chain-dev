@@ -13,8 +13,7 @@ export function createCdevModelHandler(): (args: string, ctx: ExtensionContext) 
       const advisorProfile = config.advisor ?? config.stage2;
       const stagePick = await ctx.ui.select("Pick model:", [
         `Scout A (explore)  [${config.stage1.provider || "?"}/${config.stage1.id || "?"} • ${config.stage1.thinking || "?"}]`,
-        `Scout B (verify)   [${config.stage1b?.provider || config.stage1.provider || "?"}/${config.stage1b?.id || config.stage1.id || "?"} • ${config.stage1b?.thinking || config.stage1.thinking || "?"}]`,
-        `Scout C (parallel) [${config.stage1c?.provider || config.stage1.provider || "?"}/${config.stage1c?.id || config.stage1.id || "?"} • ${config.stage1c?.thinking || config.stage1.thinking || "?"}]`,
+                `Scout C (parallel) [${config.stage1c?.provider || config.stage1.provider || "?"}/${config.stage1c?.id || config.stage1.id || "?"} • ${config.stage1c?.thinking || config.stage1.thinking || "?"}]`,
         `Backup (parallel)  [${config.stage1Backup?.provider || config.stage1.provider || "?"}/${config.stage1Backup?.id || config.stage1.id || "?"} • ${config.stage1Backup?.thinking || config.stage1.thinking || "?"}]`,
         `Forge (synthesize)  [${config.stage2.provider || "?"}/${config.stage2.id || "?"} • ${config.stage2.thinking || "?"}]`,
         `Review  [${reviewProfile.provider || "?"}/${reviewProfile.id || "?"} • ${reviewProfile.thinking || config.stage2.thinking || "?"}]`,
