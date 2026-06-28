@@ -14,20 +14,8 @@ import { normalizeYoloConfig } from "../types.js";
 export function formatCdevStatus(ctx: ExtensionContext, config: AutoForkConfig): string {
   const resolved = resolveStageProfiles(config);
   const isConfigured = resolved.stage1.provider && resolved.stage1.id && resolved.stage2.provider && resolved.stage2.id;
-  const sessionSize = estimateSessionSize(ctx);
-  const sessionCost = getSessionForkCost(ctx.cwd);
-  const costAlert = checkSessionCostAlert(config, ctx.cwd);
-  const sessions = listSessions(ctx.cwd);
-  const now = Date.now();
-  const oneDay = 24 * 60 * 60 * 1000;
-  let todayCost = 0;
-  let totalCost = 0;
-  for (const s of sessions) {
-    const c = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
-    totalCost += c;
-    if (new Date(s.startedAt).getTime() > now - oneDay) todayCost += c;
-  }
 
+  // ── Phase 1: config-only lines (no I/O) ──
   const lines: string[] = [
     "── cdev status ─────────────────────────────────────",
     "",
@@ -64,8 +52,31 @@ export function formatCdevStatus(ctx: ExtensionContext, config: AutoForkConfig):
   lines.push(`  Quality gates:    ${strict ? `strict  (min ${gates?.minFindings ?? 3} findings, max ${Math.round((gates?.maxLowConfidenceRatio ?? 0.5) * 100)}% low, ${autoRe ? "auto re-explore" : "no re-explore"})` : "relaxed  (no coverage passes)"}`);
   const yolo = normalizeYoloConfig(config.yolo);
   lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, ${yolo.autoApply === "auto" ? "auto-edit" : yolo.autoApply === "propose" ? "propose fixes" : "main agent fixes"})` : "OFF"}`);
-  const hasMap = !!loadProjectMap(ctx.cwd);
+
+  // ── Phase 2: I/O-dependent lines (wrapped so failures don't block output) ──
+  let hasMap = false;
+  try { hasMap = !!loadProjectMap(ctx.cwd); } catch { /* keep default */ }
   lines.push(`  Project map:      ${hasMap ? "🗺️ present  /cdev map show" : "— missing  /cdev map"}`);
+  let sessionSize = 0;
+  let sessionCost = 0;
+  let costAlert: { level: string; percent: number } | null = null;
+  let todayCost = 0;
+  let totalCost = 0;
+  let sessions: ReturnType<typeof listSessions> = [];
+  try {
+    sessionSize = estimateSessionSize(ctx);
+    sessionCost = getSessionForkCost(ctx.cwd);
+    costAlert = checkSessionCostAlert(config, ctx.cwd);
+    sessions = listSessions(ctx.cwd);
+    const now = Date.now();
+    const oneDay = 24 * 60 * 60 * 1000;
+    for (const s of sessions) {
+      const c = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
+      totalCost += c;
+      if (new Date(s.startedAt).getTime() > now - oneDay) todayCost += c;
+    }
+  } catch { /* use defaults */ }
+
   const usage = ctx.getContextUsage?.();
   lines.push(`  Session size:     ${sessionSize} message${sessionSize === 1 ? "" : "s"}${sessionSize >= 40 ? "  ⚠️ consider /compact" : ""}`);
   if (usage && usage.tokens !== null) {
@@ -81,11 +92,13 @@ export function formatCdevStatus(ctx: ExtensionContext, config: AutoForkConfig):
   if (sessions.length > 0) {
     lines.push(`  Sessions:         ${sessions.length} (7-day window, ${formatCost(totalCost)} total)`);
   }
-  const topicCount = memoryTopicCount(ctx.cwd);
+  let topicCount = 0;
+  try { topicCount = memoryTopicCount(ctx.cwd); } catch { /* keep 0 */ }
   if (topicCount > 0 && config.memory) {
     lines.push(`  Project memory:   ${topicCount} topic${topicCount > 1 ? "s" : ""}  /cdev recall`);
   }
-  const errorCount = getErrorCount(ctx.cwd);
+  let errorCount = 0;
+  try { errorCount = getErrorCount(ctx.cwd); } catch { /* keep 0 */ }
   if (errorCount > 0) {
     lines.push(`  Error log:        ${errorCount} error${errorCount > 1 ? "s" : ""}  /cdev clear error to wipe`);
   }
