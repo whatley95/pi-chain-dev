@@ -271,8 +271,9 @@ function mergeMaps(base: ReturnType<typeof generateProjectMap>, generated: unkno
 
 export async function handleMap(args: string, ctx: ExtensionContext, config: AutoForkConfig): Promise<boolean> {
   const trimmed = args.trim();
+  const lower = trimmed.toLowerCase();
 
-  if (trimmed === "map" || trimmed === "map refresh") {
+  if (lower === "map" || lower === "map refresh") {
     const profiles = resolveStageProfiles(config);
     const themedBg = makeThemedBg(ctx, config.themed);
     if (profiles.warning) {
@@ -280,7 +281,7 @@ export async function handleMap(args: string, ctx: ExtensionContext, config: Aut
       return true;
     }
 
-    const isRefresh = trimmed === "map refresh";
+    const isRefresh = lower === "map refresh";
     ctx.ui.notify(isRefresh ? "Refreshing project map via scout+forge..." : "Generating project map via scout+forge...", "info");
 
     try {
@@ -346,7 +347,7 @@ export async function handleMap(args: string, ctx: ExtensionContext, config: Aut
     return true;
   }
 
-  if (trimmed === "map show" || trimmed === "map view") {
+  if (lower === "map show" || lower === "map view") {
     const map = loadProjectMap(ctx.cwd);
     if (!map) {
       ctx.ui.notify("No project map found. Run `/cdev map` to generate one.", "warn");
@@ -357,7 +358,7 @@ export async function handleMap(args: string, ctx: ExtensionContext, config: Aut
     return true;
   }
 
-  if (trimmed.startsWith("map ")) {
+  if (lower.startsWith("map ")) {
     ctx.ui.notify("Usage:\n/cdev map            Generate project map\n/cdev map refresh    Regenerate via scout+forge\n/cdev map show       View existing map", "info");
     return true;
   }

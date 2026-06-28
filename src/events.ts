@@ -643,6 +643,9 @@ export function processPiJsonLine(line: string, result: ForkResult): { handled: 
   try {
     event = JSON.parse(line) as PiEvent;
   } catch {
+    // Log malformed line to stderr instead of silently dropping the event stream
+    const preview = line.length > 120 ? line.slice(0, 120) + "…" : line;
+    result.stderr += `[cdev] malformed JSON line (dropped): ${preview}\n`;
     return { handled: false, event: null };
   }
 

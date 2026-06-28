@@ -174,11 +174,28 @@ export function extractFilePaths(text: string, cwd: string): string[] {
   return paths;
 }
 
-const _extractTopicCache = new Map();
+/** LRU cache for extractTopicFromTask. Bounded to prevent unbounded growth on long sessions. */
+const _extractTopicCache = new Map<string, string | null>();
+const _MAX_EXTRACT_CACHE = 500;
+
+function _cacheSet(key: string, value: string | null): void {
+  // Evict oldest (first) entry when at capacity
+  if (_extractTopicCache.size >= _MAX_EXTRACT_CACHE) {
+    const first = _extractTopicCache.keys().next().value;
+    if (first !== undefined) _extractTopicCache.delete(first);
+  }
+  _extractTopicCache.set(key, value);
+}
 
 export function extractTopicFromTask(task: string, filePaths: string[]): string | null {
   const _key = task + "|" + filePaths.join(",");
-  if (_extractTopicCache.has(_key)) return _extractTopicCache.get(_key);
+  if (_extractTopicCache.has(_key)) {
+    // Move to end (most recently used) by delete + re-set
+    const val = _extractTopicCache.get(_key)!;
+    _extractTopicCache.delete(_key);
+    _extractTopicCache.set(_key, val);
+    return val;
+  }
 
   // Strategy 1: find dominant directory from file paths (requires ≥3 files, >30% share)
   if (filePaths.length > 0) {
@@ -226,7 +243,7 @@ export function extractTopicFromTask(task: string, filePaths: string[]): string 
   const filtered = words.filter(w => !/^(the|a|an|is|are|was|were|that|this|for|with|about|from|into)$/i.test(w));
   const topic = filtered.slice(0, 2).join(" ").toLowerCase();
   const _r = topic.length > 2 ? topic.replace(/\s+/g, "-") : null;
-  _extractTopicCache.set(_key, _r);
+  _cacheSet(_key, _r);
   return _r;
 }
 

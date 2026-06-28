@@ -74,9 +74,10 @@ export function registerCdevCommand(
     description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, read <paths>, grep <pattern>, trace <symbol>, explain <path|symbol>, verify <task>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off, todo <name>",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
+      const lower = trimmed.toLowerCase();
 
       // ── Subcommand: auto on ──
-      if (trimmed === "auto on" || trimmed === "auto") {
+      if (lower === "auto on" || lower === "auto") {
         writeAgentSetting("auto", true);
         ctx.ui.notify("cdev auto mode ON — LLM will proactively use cdev for exploration", "info");
         resetAutoTurnCounter();
@@ -85,7 +86,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: auto off ──
-      if (trimmed === "auto off") {
+      if (lower === "auto off") {
         writeAgentSetting("auto", false);
         ctx.ui.notify("cdev auto mode OFF", "info");
         resetAutoTurnCounter();
@@ -94,23 +95,23 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: auto-verify on/off ──
-      if (trimmed === "auto-verify on" || trimmed === "auto-verify off") {
-        const enable = trimmed === "auto-verify on";
+      if (lower === "auto-verify on" || lower === "auto-verify off") {
+        const enable = lower === "auto-verify on";
         writeAgentSetting("autoVerify", enable);
         ctx.ui.notify(`cdev auto-verify ${enable ? "ON" : "OFF"} — ${enable ? "scout will run twice automatically" : "scout will run once unless /cdev verify is used"}`, "info");
         return;
       }
 
       // ── Subcommand: auto-compact on/off ──
-      if (trimmed === "auto-compact on" || trimmed === "auto-compact off") {
-        const enable = trimmed === "auto-compact on";
+      if (lower === "auto-compact on" || lower === "auto-compact off") {
+        const enable = lower === "auto-compact on";
         writeAgentSetting("autoCompactOnLimit", enable);
         ctx.ui.notify(`cdev auto-compact ${enable ? "ON" : "OFF"} — ${enable ? "will compact parent session when snapshot nears model limit" : "will only warn near model limit"}`, "info");
         return;
       }
 
       // ── Subcommand: todo <name> ──
-      const todoMatch = trimmed.match(/^todo\s+(.+)$/);
+      const todoMatch = trimmed.match(/^todo\s+(.+)$/i);
       if (todoMatch) {
         const rawName = todoMatch[1].trim();
         if (!rawName) {
@@ -122,13 +123,18 @@ export function registerCdevCommand(
           : "unknown";
         const now = new Date();
         const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
-        const safeName = sanitizeFileName(rawName);
+        const safeName = sanitizeFileName(rawName) || "task";
         const fileName = `${sessionId}_${timestamp}_${safeName}.md`;
         const todosDir = join(ctx.cwd, ".pi", "cdev", "todos");
         const filePath = join(todosDir, fileName);
-        mkdirSync(todosDir, { recursive: true });
-        const template = `# TODO: ${rawName}\n\nCreated: ${now.toISOString()}\nSession: ${sessionId}\n\n## Goal\n\n\n## Checklist\n\n- [ ] \n\n## Notes\n\n`;
-        writeFileSync(filePath, template, "utf-8");
+        try {
+          mkdirSync(todosDir, { recursive: true });
+          const template = `# TODO: ${rawName}\n\nCreated: ${now.toISOString()}\nSession: ${sessionId}\n\n## Goal\n\n\n## Checklist\n\n- [ ] \n\n## Notes\n\n`;
+          writeFileSync(filePath, template, "utf-8");
+        } catch (err) {
+          ctx.ui.notify(`Failed to create todo: ${err instanceof Error ? err.message : String(err)}`, "error");
+          return;
+        }
         const relativePath = `.pi/cdev/todos/${fileName}`;
         ctx.ui.notify(`Created todo: ${relativePath}`, "info");
         return;
@@ -137,7 +143,7 @@ export function registerCdevCommand(
       const config = loadConfig(ctx.cwd);
 
       // ── Subcommand: read <paths...> ──
-      const readMatch = trimmed.match(/^read\s+(.+)$/);
+      const readMatch = trimmed.match(/^read\s+(.+)$/i);
       if (readMatch) {
         const pathsArg = readMatch[1].trim();
         if (!pathsArg) {
@@ -156,7 +162,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: grep <pattern> [path] ──
-      const grepMatch = trimmed.match(/^grep\s+(.+)$/);
+      const grepMatch = trimmed.match(/^grep\s+(.+)$/i);
       if (grepMatch) {
         const rest = grepMatch[1].trim();
         if (!rest) {
@@ -179,7 +185,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: trace <symbol> ──
-      const traceMatch = trimmed.match(/^trace\s+(.+)$/);
+      const traceMatch = trimmed.match(/^trace\s+(.+)$/i);
       if (traceMatch) {
         const symbol = traceMatch[1].trim();
         if (!symbol) {
@@ -193,7 +199,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: explain <path|symbol> ──
-      const explainMatch = trimmed.match(/^explain\s+(.+)$/);
+      const explainMatch = trimmed.match(/^explain\s+(.+)$/i);
       if (explainMatch) {
         const target = explainMatch[1].trim();
         if (!target) {
@@ -218,7 +224,7 @@ export function registerCdevCommand(
       if (await handleMemory(trimmed, ctx, config)) return;
 
       // ── Subcommand: clear ──
-      if (trimmed === "clear") {
+      if (lower === "clear") {
         memoryClear(ctx.cwd);
         const cleared = clearReports(join(ctx.cwd, ".pi", "cdev", "reports"));
         ctx.ui.notify(`Cleared cdev project memory${cleared > 0 ? ` + ${cleared} report${cleared !== 1 ? "s" : ""}` : ""}.`, "info");
@@ -226,14 +232,14 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: clear reports ──
-      if (trimmed === "clear reports") {
+      if (lower === "clear reports") {
         const cleared = clearReports(join(ctx.cwd, ".pi", "cdev", "reports"));
         ctx.ui.notify(`Cleared ${cleared} cdev report${cleared !== 1 ? "s" : ""}.`, "info");
         return;
       }
 
       // ── Subcommand: clear error ──
-      if (trimmed === "clear error") {
+      if (lower === "clear error") {
         const count = getErrorCount(ctx.cwd);
         clearErrorLog(ctx.cwd);
         ctx.ui.notify(`Cleared ${count} error${count !== 1 ? "s" : ""} from cdev error log.`, "info");
@@ -244,7 +250,7 @@ export function registerCdevCommand(
       if (await handleConfig(trimmed, ctx, config)) return;
 
       // ── Subcommand: retry ──
-      if (trimmed === "retry") {
+      if (lower === "retry") {
         const last = getLastSession(ctx.cwd);
         if (!last) {
           ctx.ui.notify("No recent cdev session to retry. Run a cdev task first.", "warn");
@@ -259,7 +265,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: estimate <task> ──
-      const estimateMatch = trimmed.match(/^estimate\s+(.+)$/);
+      const estimateMatch = trimmed.match(/^estimate\s+(.+)$/i);
       if (estimateMatch) {
         const estimateTask = estimateMatch[1].trim();
         if (!estimateTask) {
@@ -282,8 +288,8 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: cost ──
-      if (trimmed === "cost" || trimmed === "cost reset") {
-        if (trimmed === "cost reset") {
+      if (lower === "cost" || lower === "cost reset") {
+        if (lower === "cost reset") {
           resetSessionForkCost(ctx.cwd);
           ctx.ui.notify("cdev session cost reset to $0.00.", "info");
           return;
@@ -295,8 +301,8 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: themed on/off ──
-      if (trimmed === "themed on" || trimmed === "themed off") {
-        const enable = trimmed === "themed on";
+      if (lower === "themed on" || lower === "themed off") {
+        const enable = lower === "themed on";
         writeAgentSetting("themed", enable);
         writeProjectThemed(ctx.cwd, enable);
         ctx.ui.notify(`Themed TUI rendering ${enable ? "ON" : "OFF"}`, "info");
@@ -304,8 +310,8 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: prompts on/off ──
-      if (trimmed === "prompts on" || trimmed === "prompts off") {
-        const enable = trimmed === "prompts on";
+      if (lower === "prompts on" || lower === "prompts off") {
+        const enable = lower === "prompts on";
         writeAgentSetting("promptsEnabled", enable);
         ctx.ui.notify(`Custom prompts ${enable ? "ON" : "OFF"}`, "info");
         updateAutoStatus(ctx);
@@ -313,7 +319,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: history ──
-      const historyMatch = trimmed.match(/^history(?:\s+(\d+))?$/);
+      const historyMatch = trimmed.match(/^history(?:\s+(\d+))?$/i);
       if (historyMatch) {
         const sessionNum = historyMatch[1] ? parseInt(historyMatch[1], 10) : undefined;
         if (sessionNum !== undefined) {
@@ -328,7 +334,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: replay <n> ──
-      const replayMatch = trimmed.match(/^replay\s+(\d+)$/);
+      const replayMatch = trimmed.match(/^replay\s+(\d+)$/i);
       if (replayMatch) {
         const sessionNum = parseInt(replayMatch[1], 10);
         const session = getSession(ctx.cwd, sessionNum);
@@ -346,8 +352,8 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: review [path|diff] ──
-      const reviewFileMatch = trimmed.match(/^review\s+(.+)$/);
-      if (trimmed === "review" || reviewFileMatch) {
+      const reviewFileMatch = trimmed.match(/^review\s+(.+)$/i);
+      if (lower === "review" || reviewFileMatch) {
         let cleanArg = "";
         if (reviewFileMatch) {
           cleanArg = reviewFileMatch[1].trim();
@@ -406,7 +412,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: quick / fast ──
-      if (trimmed.startsWith("quick ") || trimmed.startsWith("fast ")) {
+      if (lower.startsWith("quick ") || lower.startsWith("fast ")) {
         const quickTask = trimmed.slice(6).trim();
         if (!quickTask) {
           ctx.ui.notify("Usage: /cdev quick <task> or /cdev fast <task>", "warn");
@@ -418,7 +424,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: verify ──
-      if (trimmed.startsWith("verify ")) {
+      if (lower.startsWith("verify ")) {
         const verifyTask = trimmed.slice(7).trim();
         if (!verifyTask) {
           ctx.ui.notify("Usage: /cdev verify <task>", "warn");
@@ -430,7 +436,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: research ──
-      if (trimmed.startsWith("research ")) {
+      if (lower.startsWith("research ")) {
         const researchTask = trimmed.slice(9).trim();
         if (!researchTask) {
           ctx.ui.notify("Usage: /cdev research <issue or question>", "warn");
@@ -442,7 +448,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: advisor ──
-      if (trimmed.startsWith("advisor ")) {
+      if (lower.startsWith("advisor ")) {
         const advisorQuestion = trimmed.slice(8).trim();
         if (!advisorQuestion) {
           ctx.ui.notify("Usage: /cdev advisor <question>", "warn");
@@ -454,7 +460,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: ask-advisor ──
-      if (trimmed.startsWith("ask-advisor ")) {
+      if (lower.startsWith("ask-advisor ")) {
         const advisorQuestion = trimmed.slice(12).trim();
         if (!advisorQuestion) {
           ctx.ui.notify("Usage: /cdev ask-advisor <question>", "warn");
@@ -486,7 +492,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: plan ──
-      if (trimmed.startsWith("plan ")) {
+      if (lower.startsWith("plan ")) {
         const planTask = trimmed.slice(5).trim();
         if (!planTask) {
           ctx.ui.notify("Usage: /cdev plan <task>", "warn");
@@ -498,8 +504,8 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: yolo on|off ──
-      if (trimmed === "yolo on" || trimmed === "yolo off") {
-        const enable = trimmed === "yolo on";
+      if (lower === "yolo on" || lower === "yolo off") {
+        const enable = lower === "yolo on";
         const currentYolo = normalizeYoloConfig(config.yolo);
         writeAgentSetting("yolo", { ...currentYolo, enabled: enable });
         ctx.ui.notify(`cdev yolo mode ${enable ? "ON" : "OFF"}`, "info");
@@ -507,7 +513,7 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: yolo mode manual|propose|auto ──
-      const yoloModeMatch = trimmed.match(/^yolo\s+(manual|propose|auto)$/);
+      const yoloModeMatch = trimmed.match(/^yolo\s+(manual|propose|auto)$/i);
       if (yoloModeMatch) {
         const mode = yoloModeMatch[1] as "manual" | "propose" | "auto";
         const currentYolo = normalizeYoloConfig(config.yolo);
@@ -518,13 +524,13 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: yolo usage ──
-      if (trimmed === "yolo") {
+      if (lower === "yolo") {
         ctx.ui.notify("Usage:\n/cdev yolo <task>            Scout + forge, then review loops\n/cdev yolo on|off            Toggle yolo mode\n/cdev yolo manual|propose|auto  Set who applies fixes (manual=main agent, propose=cdev plan, auto=cdev edits)", "info");
         return;
       }
 
       // ── Subcommand: yolo <task> ──
-      if (trimmed.startsWith("yolo ")) {
+      if (lower.startsWith("yolo ")) {
         const yoloTask = trimmed.slice(5).trim();
         if (!yoloTask) {
           ctx.ui.notify("Usage: /cdev yolo <task>", "warn");
@@ -542,13 +548,13 @@ export function registerCdevCommand(
       }
 
       // ── Subcommand: status ──
-      if (trimmed === "status" || trimmed === "info") {
+      if (lower === "status" || lower === "info") {
         ctx.ui.notify(formatCdevStatus(ctx, config), "info");
         return;
       }
 
       // ── Help ──
-      if (trimmed === "help" || trimmed === "?" || trimmed === "h") {
+      if (lower === "help" || lower === "?" || lower === "h") {
         await ctx.ui.select("cdev subcommands:", CDEV_SUBCOMMAND_HELP);
         return;
       }
@@ -799,7 +805,8 @@ const CONFIG_KEYS: Record<string, { type: "boolean" | "number" | "seconds" | "pr
 };
 
 async function handleConfig(trimmed: string, ctx: ExtensionContext, config: AutoForkConfig): Promise<boolean> {
-  if (!trimmed.startsWith("config")) return false;
+  const lower = trimmed.toLowerCase();
+  if (!lower.startsWith("config")) return false;
   const rest = trimmed.slice(6).trim();
 
   if (!rest) {

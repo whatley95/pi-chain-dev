@@ -57,20 +57,23 @@ class Semaphore {
 }
 
 const stageSemaphores = new Map<string, Semaphore>();
-const DEFAULT_SEMAPHORE_MAX = 3;
+let defaultSemaphoreMaxConcurrency = 3;
 
 function getStageSemaphore(cwd: string): Semaphore {
   let sem = stageSemaphores.get(cwd);
   if (!sem) {
-    sem = new Semaphore(DEFAULT_SEMAPHORE_MAX);
+    sem = new Semaphore(defaultSemaphoreMaxConcurrency);
     stageSemaphores.set(cwd, sem);
   }
   return sem;
 }
 
 export function setStageSemaphoreMaxConcurrency(n: number): void {
-  // Kept for backward compatibility; creates a default semaphore for empty cwd.
-  getStageSemaphore('').setMaxConcurrency(Math.max(1, n));
+  defaultSemaphoreMaxConcurrency = Math.max(1, n);
+  // Update existing semaphores in place
+  for (const sem of stageSemaphores.values()) {
+    sem.setMaxConcurrency(defaultSemaphoreMaxConcurrency);
+  }
 }
 
 let testPiSpawnResolver: (() => { command: string; prefixArgs: string[] }) | null = null;
@@ -105,7 +108,7 @@ export function prepareSharedSession(sanitizedJsonl: string): PreparedSession {
     existing.refCount++;
     return existing.prepared;
   }
-  // Evict oldest unused entry when at capacity; skip entries still in use
+  // Evict oldest unused entry when at capacity
   if (sharedPreparedSessions.size >= MAX_SHARED_SESSIONS) {
     for (const [key, entry] of sharedPreparedSessions) {
       if (entry.refCount === 0) {
@@ -114,6 +117,8 @@ export function prepareSharedSession(sanitizedJsonl: string): PreparedSession {
         break;
       }
     }
+    // If no unused entry was found, allow the map to grow by one rather than
+    // evicting an in-use session (which would corrupt active forks).
   }
   const tmp = writeTempSessionJsonl(sanitizedJsonl);
   const prepared: PreparedSession = { jsonl: sanitizedJsonl, filePath: tmp.filePath, tmpDir: tmp.dir };
@@ -491,24 +496,24 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
 
     let buffer = "";
     let settled = false;
+    let killed = false;
     let abortHandler: (() => void) | undefined;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     const killProc = () => {
-      if (!settled && proc.pid) {
-        try { proc.kill("SIGTERM"); } catch { /* ignore */ }
-        setTimeout(() => {
-          if (!settled && proc.pid) {
-            if (process.platform === "win32") {
-              try {
-                spawn("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { stdio: "ignore" }).unref();
-              } catch { /* ignore */ }
-            } else {
-              try { proc.kill("SIGKILL"); } catch { /* ignore */ }
-            }
-          }
-        }, SIGKILL_TIMEOUT_MS);
-      }
+      if (killed || !proc.pid) return;
+      killed = true;
+      try { proc.kill("SIGTERM"); } catch { /* ignore */ }
+      setTimeout(() => {
+        if (settled || !proc.pid) return;
+        if (process.platform === "win32") {
+          try {
+            spawn("taskkill", ["/pid", String(proc.pid), "/f", "/t"], { stdio: "ignore" }).unref();
+          } catch { /* ignore */ }
+        } else {
+          try { proc.kill("SIGKILL"); } catch { /* ignore */ }
+        }
+      }, SIGKILL_TIMEOUT_MS);
     };
 
     const settle = (exitCode: number) => {

@@ -886,16 +886,20 @@ export async function executeCdevTool(
       }
 
       const yolo = normalizeYoloConfig(config.yolo);
-      const yoloEstimate = estimateForkCost({
+      const singleForkEstimate = estimateForkCost({
         task: p.task,
         stage1Profile: profiles.stage1,
         stage2Profile: profiles.stage2,
         forkSessionSnapshotJsonl: snapshot ?? undefined,
       });
-      const yoloBudgetCheck = checkCostBudget(config, ctx.cwd, yoloEstimate.cost);
+      // Each YOLO round runs a review (stage1-style) and a fix (full fork).
+      // Budget must cover initial fork + maxRounds × (review + fix).
+      const yoloMultiplier = 1 + yolo.maxRounds * 2;
+      const yoloCost = singleForkEstimate.cost * yoloMultiplier;
+      const yoloBudgetCheck = checkCostBudget(config, ctx.cwd, yoloCost);
       if (!yoloBudgetCheck.allowed) {
         return {
-          content: [{ type: "text" as const, text: `cdev budget error: ${yoloBudgetCheck.reason}\nEstimated initial fork: ~${formatCost(yoloEstimate.cost)}` }],
+          content: [{ type: "text" as const, text: `cdev budget error: ${yoloBudgetCheck.reason}\nEstimated YOLO loop: ~${formatCost(yoloCost)} (1 initial fork + up to ${yolo.maxRounds} review rounds + ${yolo.maxRounds} fix rounds, ~${formatCost(singleForkEstimate.cost)} each)` }],
           details: { stage1: null, stage2: null },
           isError: true,
         };
@@ -1094,11 +1098,11 @@ export async function executeCdevTool(
       indexFindingsAsync({
         task: p.task,
       resultText: finalText,
-      stage1Model: config.stage1.id,
-      stage2Model: p.quick ? undefined : config.stage2.id,
-      stage1bModel: config.stage1b?.id,
-      stage1cModel: config.stage1c?.id,
-      stage1BackupModel: config.stage1Backup?.id,
+      stage1Model: config.stage1.id || undefined,
+      stage2Model: p.quick ? undefined : (config.stage2.id || undefined),
+      stage1bModel: config.stage1b?.id || undefined,
+      stage1cModel: config.stage1c?.id || undefined,
+      stage1BackupModel: config.stage1Backup?.id || undefined,
       isReview: false,
       quick: p.quick ?? false,
       cost: result.usage?.cost ?? 0,

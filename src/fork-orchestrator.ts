@@ -581,10 +581,18 @@ function findingsOverlap(a: string, b: string): boolean {
   const na = normalizeObservation(a);
   const nb = normalizeObservation(b);
   if (na === nb) return true;
-  if (na.length > 20 && nb.length > 20) {
+  if (na.length <= 20 || nb.length <= 20) return false;
+  // Token-based Jaccard similarity to avoid false merges on shared prefixes
+  const tokensA = new Set(na.split(/\s+/).filter(t => t.length > 2));
+  const tokensB = new Set(nb.split(/\s+/).filter(t => t.length > 2));
+  // Fall back to prefix matching when token sets are too sparse for Jaccard
+  if (tokensA.size < 3 || tokensB.size < 3) {
     return na.startsWith(nb.slice(0, 40)) || nb.startsWith(na.slice(0, 40));
   }
-  return false;
+  const intersection = new Set([...tokensA].filter(t => tokensB.has(t)));
+  const union = new Set([...tokensA, ...tokensB]);
+  const jaccard = intersection.size / union.size;
+  return jaccard >= 0.75;
 }
 
 export function mergeStage1Findings(a: Stage1Findings, b: Stage1Findings): Stage1Findings {

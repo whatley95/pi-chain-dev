@@ -37,8 +37,9 @@ function savePrompts(cwd: string, prompts: { explore: string; synthesize: string
 
 export async function handleScan(args: string, ctx: ExtensionContext, config: AutoForkConfig, updateAutoStatus: (ctx: ExtensionContext) => void): Promise<boolean> {
   const trimmed = args.trim();
+  const lower = trimmed.toLowerCase();
 
-  if (trimmed === "scan deep") {
+  if (lower === "scan deep") {
     const profiles = resolveStageProfiles(config);
     const themedBg = makeThemedBg(ctx, config.themed);
     if (profiles.warning) {
@@ -117,7 +118,7 @@ export async function handleScan(args: string, ctx: ExtensionContext, config: Au
     return true;
   }
 
-  if (trimmed === "scan") {
+  if (lower === "scan") {
     ctx.ui.notify("Scanning project for stack detection...", "info");
     try {
       const result = scanProject(ctx.cwd);

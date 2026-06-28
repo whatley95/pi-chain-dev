@@ -98,8 +98,9 @@ async function refreshMemoryTopic(
 
 export async function handleMemory(args: string, ctx: ExtensionContext, config: AutoForkConfig): Promise<boolean> {
   const trimmed = args.trim();
+  const lower = trimmed.toLowerCase();
 
-  const recallMatch = trimmed.match(/^recall(?:\s+(.+))?$/);
+  const recallMatch = trimmed.match(/^recall(?:\s+(.+))?$/i);
   if (recallMatch) {
     if (!config.memory) {
       ctx.ui.notify("Project memory is disabled. /cdev memory on to enable.", "warn");
@@ -124,7 +125,7 @@ export async function handleMemory(args: string, ctx: ExtensionContext, config: 
     return true;
   }
 
-  const viewMatch = trimmed.match(/^view(?:\s+(.+))?$/);
+  const viewMatch = trimmed.match(/^view(?:\s+(.+))?$/i);
   if (viewMatch) {
     const topic = viewMatch[1]?.trim();
     if (topic) {
@@ -138,13 +139,13 @@ export async function handleMemory(args: string, ctx: ExtensionContext, config: 
     return true;
   }
 
-  if (trimmed === "memory clear") {
+  if (lower === "memory clear") {
     memoryClear(ctx.cwd);
     ctx.ui.notify("Cleared all cdev project memory.", "info");
     return true;
   }
 
-  const memoryForgetMatch = trimmed.match(/^memory forget\s+(.+)$/);
+  const memoryForgetMatch = trimmed.match(/^memory forget\s+(.+)$/i);
   if (memoryForgetMatch) {
     const topic = memoryForgetMatch[1].trim();
     const removed = memoryForget(ctx.cwd, topic);
@@ -153,7 +154,7 @@ export async function handleMemory(args: string, ctx: ExtensionContext, config: 
     return true;
   }
 
-  if (trimmed === "memory merge") {
+  if (lower === "memory merge") {
     const merged = mergeSimilarTopics(ctx.cwd);
     if (merged.length > 0) {
       ctx.ui.notify(`Merged similar topics:\n${merged.join("\n")}`, "info");
@@ -163,7 +164,7 @@ export async function handleMemory(args: string, ctx: ExtensionContext, config: 
     return true;
   }
 
-  const memoryRefreshMatch = trimmed.match(/^memory refresh\s+(.+)$/);
+  const memoryRefreshMatch = trimmed.match(/^memory refresh\s+(.+)$/i);
   if (memoryRefreshMatch) {
     if (!config.memory) {
       ctx.ui.notify("Project memory is disabled. /cdev memory on to enable.", "warn");
@@ -184,15 +185,15 @@ export async function handleMemory(args: string, ctx: ExtensionContext, config: 
     return true;
   }
 
-  if (trimmed === "memory auto-refresh on" || trimmed === "memory auto-refresh off") {
-    const enable = trimmed === "memory auto-refresh on";
+  if (lower === "memory auto-refresh on" || lower === "memory auto-refresh off") {
+    const enable = lower === "memory auto-refresh on";
     writeAgentSetting("memoryAutoRefresh", enable);
     ctx.ui.notify(`Memory auto-refresh ${enable ? "ON" : "OFF"}`, "info");
     return true;
   }
 
-  if (trimmed === "memory on" || trimmed === "memory off") {
-    const enable = trimmed === "memory on";
+  if (lower === "memory on" || lower === "memory off") {
+    const enable = lower === "memory on";
     writeAgentSetting("memory", enable);
     ctx.ui.notify(`Project memory ${enable ? "ON" : "OFF"}`, "info");
     return true;
