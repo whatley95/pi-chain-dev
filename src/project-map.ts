@@ -79,6 +79,8 @@ export interface ProjectMap {
   files: {
     tree: string[];
     keyFiles: string[];
+    fileExports: Record<string, string[]>;
+    fileImports: Record<string, string[]>;
   };
   routes?: Record<string, string[]>;
   workspaces?: { packages: string[] };
@@ -1090,6 +1092,104 @@ function inferArchitecture(framework: string[], _languages: string[]): ProjectMa
   return { patterns, layers };
 }
 
+
+function extractFileExports(cwd: string, sourceRoots: string[]): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+  // Capture keyword and name from: export [default] <keyword> <name>
+  const namedExportRe = /export\s+(?:default\s+)?((?:abstract\s+)?(?:function|class|const|type|interface|enum))\s+(\w+)/g;
+  // Capture: export default <Identifier> (standalone named default)
+  const defaultExportRe = /export\s+default\s+(?!\s*(?:abstract\s+)?(?:function|class|const|type|interface|enum))(\w+)/g;
+  // Capture: export { ... }
+  const reExportRe = /export\s*\{\s*([^}]+)\s*\}/g;
+  const typePrefix: Record<string, string> = {
+    function: 'fn',
+    class: 'cls',
+    const: 'const',
+    type: 'type',
+    interface: 'iface',
+    enum: 'enum',
+  };
+
+  for (const root of sourceRoots) {
+    const rootPath = join(cwd, root);
+    if (!existsSync(rootPath)) continue;
+    try {
+      function walk(dir: string, depth: number): void {
+        if (depth > 6) return;
+        for (const entry of readdirSync(dir)) {
+          if (entry === "node_modules" || entry === ".git" || entry === ".pi" || entry === "dist" || entry.startsWith(".")) continue;
+          const full = join(dir, entry);
+          const st = statSync(full);
+          if (st.isDirectory()) { walk(full, depth + 1); continue; }
+          if (!entry.endsWith(".ts") && !entry.endsWith(".tsx")) continue;
+          const relativePath = full.slice(cwd.length + 1).replace(/\\/g,'/');
+          const text = readFileSync(full, "utf-8");
+          const names: string[] = [];
+          let m;
+          while ((m = namedExportRe.exec(text)) !== null) {
+            const keyword = m[1].replace(/^abstract\s+/, '');
+            const prefix = typePrefix[keyword] || keyword;
+            names.push(`${prefix}:${m[2]}`);
+          }
+          reExportRe.lastIndex = 0;
+          while ((m = reExportRe.exec(text)) !== null) {
+            const inner = m[1].trim();
+            for (const item of inner.split(',')) {
+              const trimmed = item.trim();
+              if (!trimmed) continue;
+              const aliasMatch = trimmed.match(/^(\w+)\s+as\s+\w+$/);
+              if (aliasMatch) {
+                names.push(`re:${aliasMatch[1]}`);
+              } else {
+                names.push(`re:${trimmed}`);
+              }
+            }
+          }
+          defaultExportRe.lastIndex = 0;
+          while ((m = defaultExportRe.exec(text)) !== null) {
+            names.push(`def:${m[1]}`);
+          }
+          if (names.length) result[relativePath] = names;
+        }
+      }
+      walk(rootPath, 0);
+    } catch { /* ignore */ }
+  }
+  return result;
+}
+
+function extractFileImports(cwd: string, sourceRoots: string[]): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+    const importRe = /import\s+(?:type\s+)?(?:\{[^}]+\}|\*\s+as\s+\w+|\w+\s+(?:,\s*\{[^}]+\})?)\s+from\s+['"]([^'"]+)['"]/g;
+  for (const root of sourceRoots) {
+    const rootPath = join(cwd, root);
+    if (!existsSync(rootPath)) continue;
+    try {
+      function walk(dir: string, depth: number): void {
+        if (depth > 6) return;
+        for (const entry of readdirSync(dir)) {
+          if (entry === "node_modules" || entry === ".git" || entry === ".pi" || entry === "dist" || entry.startsWith(".")) continue;
+          const full = join(dir, entry);
+          const st = statSync(full);
+          if (st.isDirectory()) { walk(full, depth + 1); continue; }
+          if (!entry.endsWith(".ts") && !entry.endsWith(".tsx")) continue;
+          const relativePath = full.slice(cwd.length + 1).replace(/\\/g, '/');
+          const text = readFileSync(full, "utf-8");
+          const sources: string[] = [];
+          let m;
+          while ((m = importRe.exec(text)) !== null) {
+            if (m[1] && !sources.includes(m[1])) sources.push(m[1]);
+          }
+          if (sources.length) result[relativePath] = sources;
+        }
+      }
+      walk(rootPath, 0);
+    } catch { /* ignore */ }
+  }
+  return result;
+}
+
+
 export function generateProjectMap(cwd: string): ProjectMap {
   clearFileCache();
   const languages = detectLanguages(cwd);
@@ -1112,6 +1212,8 @@ export function generateProjectMap(cwd: string): ProjectMap {
   const generatedDirs = scan.generatedDirs;
   const tree = scan.tree;
   const keyFiles = detectKeyFiles(cwd, entryPoints, configFiles);
+  const fileExports = extractFileExports(cwd, sourceRoots);
+  const fileImports = extractFileImports(cwd, sourceRoots);
   const routes = detectRoutes(cwd, framework);
   const workspaces = detectWorkspaces(cwd);
 
@@ -1185,6 +1287,8 @@ export function generateProjectMap(cwd: string): ProjectMap {
     files: {
       tree,
       keyFiles,
+      fileExports,
+      fileImports,
     },
     routes,
     workspaces,
@@ -1268,74 +1372,147 @@ export function formatMapReport(map: ProjectMap): string {
 }
 
 export function summarizeMapForPrompt(map: ProjectMap): string {
-  const lines: string[] = [];
-  lines.push("<project_map>");
-  lines.push(`Project: ${map.project.name} (${map.project.type})`);
-  lines.push(`Languages: ${map.project.languages.join(", ")}`);
-  if (map.stack.framework.length) lines.push(`Frameworks: ${map.stack.framework.join(", ")}`);
-  if (map.stack.backend.length) lines.push(`Backend: ${map.stack.backend.join(", ")}`);
-  if (map.stack.frontend.length) lines.push(`Frontend: ${map.stack.frontend.join(", ")}`);
-  if (map.stack.mobile.length) lines.push(`Mobile: ${map.stack.mobile.join(", ")}`);
-  if (map.stack.orm.length) lines.push(`ORM: ${map.stack.orm.join(", ")}`);
-  if (map.stack.db.length) lines.push(`Database: ${map.stack.db.join(", ")}`);
-  if (map.stack.testing.length) lines.push(`Testing: ${map.stack.testing.join(", ")}`);
-  if (map.stack.stateManagement.length) lines.push(`State: ${map.stack.stateManagement.join(", ")}`);
-  if (map.structure.sourceRoots.length) lines.push(`Source roots: ${map.structure.sourceRoots.join(", ")}`);
-  if (map.project.entryPoints.length) lines.push(`Entry points: ${map.project.entryPoints.join(", ")}`);
+  const header: string[] = [];
+  header.push("<project_map>");
+  header.push(`Project: ${map.project.name} (${map.project.type})`);
+  header.push(`Languages: ${map.project.languages.join(", ")}`);
+  if (map.stack.framework.length) header.push(`Frameworks: ${map.stack.framework.join(", ")}`);
+  if (map.stack.backend.length) header.push(`Backend: ${map.stack.backend.join(", ")}`);
+  if (map.stack.frontend.length) header.push(`Frontend: ${map.stack.frontend.join(", ")}`);
+  if (map.stack.mobile.length) header.push(`Mobile: ${map.stack.mobile.join(", ")}`);
+  if (map.stack.orm.length) header.push(`ORM: ${map.stack.orm.join(", ")}`);
+  if (map.stack.db.length) header.push(`Database: ${map.stack.db.join(", ")}`);
+  if (map.stack.testing.length) header.push(`Testing: ${map.stack.testing.join(", ")}`);
+  if (map.stack.stateManagement.length) header.push(`State: ${map.stack.stateManagement.join(", ")}`);
+  if (map.structure.sourceRoots.length) header.push(`Source roots: ${map.structure.sourceRoots.join(", ")}`);
+  if (map.project.entryPoints.length) header.push(`Entry points: ${map.project.entryPoints.join(", ")}`);
   if (map.structure.modules.length) {
-    lines.push(`Modules: ${map.structure.modules.slice(0, 10).map((m) => `${m.name} (${m.path})`).join(", ")}`);
+    header.push(`Modules: ${map.structure.modules.slice(0, 10).map((m) => `${m.name} (${m.path})`).join(", ")}`);
   }
   if (map.structure.boundaries.length) {
-    lines.push("Boundaries:");
+    header.push("Boundaries:");
     for (const b of map.structure.boundaries) {
-      lines.push(`  - ${b.name}: ${b.globs.join(", ")}`);
+      header.push(`  - ${b.name}: ${b.globs.join(", ")}`);
     }
   }
-  if (map.structure.nestingDepth > 0) lines.push(`Nesting depth: ${map.structure.nestingDepth}`);
+  if (map.structure.nestingDepth > 0) header.push(`Nesting depth: ${map.structure.nestingDepth}`);
   if (Object.keys(map.structure.fileCountsByExtension).length) {
-    lines.push(`File types: ${Object.entries(map.structure.fileCountsByExtension).map(([ext, count]) => `${ext}:${count}`).join(", ")}`);
+    header.push(`File types: ${Object.entries(map.structure.fileCountsByExtension).map(([ext, count]) => `${ext}:${count}`).join(", ")}`);
   }
-  if (map.config.buildCommands.length) lines.push(`Build: ${map.config.buildCommands.join(", ")}`);
-  if (map.config.testCommands.length) lines.push(`Test: ${map.config.testCommands.join(", ")}`);
+  if (map.config.buildCommands.length) header.push(`Build: ${map.config.buildCommands.join(", ")}`);
+  if (map.config.testCommands.length) header.push(`Test: ${map.config.testCommands.join(", ")}`);
   if (Object.keys(map.conventions).length) {
-    lines.push("Conventions:");
+    header.push("Conventions:");
     for (const [key, value] of Object.entries(map.conventions)) {
-      if (value) lines.push(`  - ${key}: ${value}`);
+      if (value) header.push(`  - ${key}: ${value}`);
     }
   }
   if (map.architecture.patterns.length) {
-    lines.push(`Architecture patterns: ${map.architecture.patterns.join(", ")}`);
+    header.push(`Architecture patterns: ${map.architecture.patterns.join(", ")}`);
   }
   if (Object.keys(map.architecture.layers ?? {}).length) {
-    lines.push("Layers:");
+    header.push("Layers:");
     for (const [layer, globs] of Object.entries(map.architecture.layers ?? {})) {
-      lines.push(`  - ${layer}: ${globs.join(", ")}`);
+      header.push(`  - ${layer}: ${globs.join(", ")}`);
     }
   }
   if (Object.keys(map.dependencies).length) {
-    lines.push("Key dependencies:");
+    header.push("Key dependencies:");
     for (const [source, items] of Object.entries(map.dependencies)) {
-      if (items.length) lines.push(`  - ${source}: ${items.slice(0, 10).join(", ")}`);
+      if (items.length) header.push(`  - ${source}: ${items.slice(0, 10).join(", ")}`);
     }
   }
   if (map.files.keyFiles.length) {
-    lines.push(`Key files: ${map.files.keyFiles.slice(0, 15).join(", ")}`);
+    header.push(`Key files: ${map.files.keyFiles.slice(0, 15).join(", ")}`);
   }
   if (map.routes && Object.keys(map.routes).length) {
-    lines.push("Routes/API locations:");
+    header.push("Routes/API locations:");
     for (const [fw, paths] of Object.entries(map.routes)) {
-      if (paths.length) lines.push(`  - ${fw}: ${paths.join(", ")}`);
+      if (paths.length) header.push(`  - ${fw}: ${paths.join(", ")}`);
     }
   }
   if (map.workspaces?.packages.length) {
-    lines.push(`Workspaces: ${map.workspaces.packages.join(", ")}`);
+    header.push(`Workspaces: ${map.workspaces.packages.join(", ")}`);
   }
-  if (map.files.tree.length) {
-    lines.push("Directory skeleton:");
-    for (const line of map.files.tree.slice(0, 30)) {
-      lines.push(`  ${line}`);
+
+  // --- File exports with type categorization ---
+  const exportLines: string[] = [];
+  if (Object.keys(map.files.fileExports).length) {
+    exportLines.push("File exports:");
+    const entries = Object.entries(map.files.fileExports).slice(0, 25);
+    for (const [file, names] of entries) {
+      exportLines.push(`  - ${file}: ${names.slice(0, 8).join(", ")}`);
+    }
+    if (Object.keys(map.files.fileExports).length > 25) {
+      exportLines.push(`  ... and ${Object.keys(map.files.fileExports).length - 25} more files`);
     }
   }
-  lines.push("</project_map>");
-  return lines.join("\n");
+
+  // --- File imports (local dependencies only) ---
+  const importLines: string[] = [];
+  if (Object.keys(map.files.fileImports).length) {
+    importLines.push("File imports:");
+    const entries = Object.entries(map.files.fileImports).slice(0, 20);
+    for (const [file, sources] of entries) {
+      // Show only local imports (relative paths starting with .), shortened to filename
+      const local = sources.filter(s => s.startsWith(".")).map(s => {
+        const match = s.match(/([^/]+)$/);
+        return match ? match[1].replace(/.(js|ts|tsx)$/, "") : s;
+      });
+      if (local.length) {
+        importLines.push(`  - ${file}: ${local.slice(0, 6).join(", ")}`);
+      }
+    }
+    if (Object.keys(map.files.fileImports).length > 20) {
+      importLines.push(`  ... and ${Object.keys(map.files.fileImports).length - 20} more files`);
+    }
+  }
+
+  // --- Directory skeleton (lowest priority) ---
+  const skeletonLines: string[] = [];
+  if (map.files.tree.length) {
+    skeletonLines.push("Directory skeleton:");
+    for (const line of map.files.tree.slice(0, 30)) {
+      skeletonLines.push(`  ${line}`);
+    }
+  }
+
+  // --- Assemble in priority order: header, exports, imports, skeleton ---
+  const allLines = [...header, ...exportLines, ...importLines, ...skeletonLines, "</project_map>"];
+  let result = allLines.join("\n");
+  const maxChars = 12_000;
+
+  if (result.length > maxChars) {
+    // Priority 1: drop directory skeleton
+    const p1 = [...header, ...exportLines, ...importLines, "</project_map>"];
+    result = p1.join("\n");
+    if (result.length <= maxChars) return result;
+
+    // Priority 2: drop imports
+    const p2 = [...header, ...exportLines, "</project_map>"];
+    result = p2.join("\n");
+    if (result.length <= maxChars) return result;
+
+    // Priority 3: truncate exports to top 10 files, 6 names each
+    const truncatedExportLines: string[] = [];
+    if (Object.keys(map.files.fileExports).length) {
+      truncatedExportLines.push("File exports:");
+      const entries = Object.entries(map.files.fileExports).slice(0, 10);
+      for (const [file, names] of entries) {
+        truncatedExportLines.push(`  - ${file}: ${names.slice(0, 6).join(", ")}`);
+      }
+      if (Object.keys(map.files.fileExports).length > 10) {
+        truncatedExportLines.push(`  ... and ${Object.keys(map.files.fileExports).length - 10} more files`);
+      }
+    }
+    const p3 = [...header, ...truncatedExportLines, "</project_map>"];
+    result = p3.join("\n");
+    if (result.length <= maxChars) return result;
+
+    // Last resort: hard slice
+    return `${result.slice(0, maxChars)}
+... (project map truncated)`;
+  }
+
+  return result;
 }
