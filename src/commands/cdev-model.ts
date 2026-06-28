@@ -4,28 +4,6 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "../config.js";
 import { logError } from "../extension-context.js";
-
-export async function registerCdevModelCommand(handler: (args: string, ctx: ExtensionContext) => Promise<void> | void): Promise<void> {
-  // This is a placeholder factory that returns the handler. The actual registration happens in index.ts.
-  await handler("", {
-    cwd: process.cwd(),
-    ui: {
-      theme: { fg: (_t, text) => text, bg: (_t, text) => text },
-      notify: () => {},
-      select: async () => undefined,
-      input: async () => undefined,
-      setStatus: () => {},
-      setWidget: () => {},
-    },
-    sessionManager: { getHeader: () => ({}), getBranch: () => [], getEntries: () => [] },
-    modelRegistry: {
-      getAvailable: () => [],
-      getProviderAuthStatus: () => ({ configured: false }),
-      hasConfiguredAuth: () => false,
-    },
-  });
-}
-
 export function createCdevModelHandler(): (args: string, ctx: ExtensionContext) => Promise<void> {
   return async (_args, ctx) => {
     try {

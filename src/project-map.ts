@@ -9,6 +9,9 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSy
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { parse as parseToml } from "smol-toml";
+import {
+  DETECTION_PATTERNS,
+} from "./detection.js";
 
 export interface ProjectMap {
   project: {
@@ -202,42 +205,51 @@ function detectPackageManagers(cwd: string): string[] {
 
 function detectLanguages(cwd: string): string[] {
   const found: string[] = [];
-  if (existsSync(join(cwd, "pubspec.yaml"))) found.push("Dart");
-  if (existsSync(join(cwd, "pom.xml")) || existsSync(join(cwd, "build.gradle")) || existsSync(join(cwd, "build.gradle.kts"))) found.push("Java");
-  if (existsSync(join(cwd, "build.gradle.kts"))) found.push("Kotlin");
-  if (existsSync(join(cwd, "src")) && globCount(cwd, "*.kt") > 0) found.push("Kotlin");
-  if (existsSync(join(cwd, "requirements.txt")) || existsSync(join(cwd, "pyproject.toml"))) found.push("Python");
-  if (existsSync(join(cwd, "go.mod"))) found.push("Go");
-  if (existsSync(join(cwd, "Cargo.toml"))) found.push("Rust");
-  if (existsSync(join(cwd, "Gemfile"))) found.push("Ruby");
-  if (existsSync(join(cwd, "composer.json"))) found.push("PHP");
-  if (existsSync(join(cwd, "tsconfig.json"))) found.push("TypeScript");
-  else if (globCount(cwd, "*.js") > 0 || existsSync(join(cwd, "package.json"))) found.push("JavaScript");
-  if (globCount(cwd, "*.swift") > 0) found.push("Swift");
-  if (globCount(cwd, "*.cs") > 0 || globCount(cwd, "*.csproj") > 0) found.push("C#");
-  if (globCount(cwd, "*.cpp") > 0 || globCount(cwd, "*.hpp") > 0) found.push("C++");
-  if (globCount(cwd, "*.c") > 0 && !found.includes("C++")) found.push("C");
+  if (existsSync(join(cwd, 'pubspec.yaml'))) found.push('Dart');
+  if (existsSync(join(cwd, 'pom.xml')) || existsSync(join(cwd, 'build.gradle')) || existsSync(join(cwd, 'build.gradle.kts'))) found.push('Java');
+  if (existsSync(join(cwd, 'build.gradle.kts'))) found.push('Kotlin');
+  const extCounts = countExtensions(cwd);
+  if (existsSync(join(cwd, 'src')) && extCounts.kt > 0) found.push('Kotlin');
+  if (existsSync(join(cwd, 'requirements.txt')) || existsSync(join(cwd, 'pyproject.toml'))) found.push('Python');
+  if (existsSync(join(cwd, 'go.mod'))) found.push('Go');
+  if (existsSync(join(cwd, 'Cargo.toml'))) found.push('Rust');
+  if (existsSync(join(cwd, 'Gemfile'))) found.push('Ruby');
+  if (existsSync(join(cwd, 'composer.json'))) found.push('PHP');
+  if (existsSync(join(cwd, 'tsconfig.json'))) found.push('TypeScript');
+  else if (existsSync(join(cwd, 'package.json'))) found.push('JavaScript');
+  if (extCounts.kt > 0 && !found.includes('Kotlin')) found.push('Kotlin');
+  if (extCounts.js > 0 && !found.includes('TypeScript') && !found.includes('JavaScript')) found.push('JavaScript');
+  if (extCounts.swift > 0) found.push('Swift');
+  if (extCounts.cs > 0 || extCounts.csproj > 0) found.push('C#');
+  if (extCounts.cpp > 0 || extCounts.hpp > 0) found.push('C++');
+  if (extCounts.c > 0 && !found.includes('C++')) found.push('C');
   return Array.from(new Set(found));
 }
 
-function globCount(cwd: string, pattern: string): number {
+/** Single-pass tree walk to count file extensions. Avoids re-walking for each extension. */
+function countExtensions(cwd: string): Record<string, number> {
+  const counts: Record<string, number> = { kt: 0, js: 0, swift: 0, cs: 0, csproj: 0, cpp: 0, hpp: 0, c: 0 };
   try {
-    let count = 0;
     function walk(dir: string, depth: number): void {
       if (depth > 5) return;
       for (const entry of readdirSync(dir)) {
-        if (entry === "node_modules" || entry === ".git" || entry === ".pi" || entry === "dist" || entry === "build") continue;
+        if (entry === 'node_modules' || entry === '.git' || entry === '.pi' || entry === 'dist' || entry === 'build') continue;
         const full = join(dir, entry);
         const st = statSync(full);
         if (st.isDirectory()) walk(full, depth + 1);
-        else if (entry.endsWith(pattern.replace("*.", "."))) count++;
+        else if (entry.endsWith('.kt')) counts.kt++;
+        else if (entry.endsWith('.js')) counts.js++;
+        else if (entry.endsWith('.swift')) counts.swift++;
+        else if (entry.endsWith('.cs')) counts.cs++;
+        else if (entry.endsWith('.csproj')) counts.csproj++;
+        else if (entry.endsWith('.cpp')) counts.cpp++;
+        else if (entry.endsWith('.hpp')) counts.hpp++;
+        else if (entry.endsWith('.c')) counts.c++;
       }
     }
     walk(cwd, 0);
-    return count;
-  } catch {
-    return 0;
-  }
+  } catch { /* ignore */ }
+  return counts;
 }
 
 function detectEntryPoints(cwd: string, languages: string[]): string[] {
@@ -493,47 +505,15 @@ function detectFromPackageJson(cwd: string): {
   };
 
   return {
-    orm: detect({
-      "@prisma/client": "Prisma", "prisma": "Prisma", "typeorm": "TypeORM",
-      "drizzle-orm": "Drizzle", "mongoose": "Mongoose", "sequelize": "Sequelize",
-      "knex": "Knex", "mikro-orm": "MikroORM",
-    }),
-    auth: detect({
-      "@nestjs/jwt": "JWT (NestJS)", "@nestjs/passport": "Passport (NestJS)",
-      "passport": "Passport", "jsonwebtoken": "JWT", "next-auth": "NextAuth",
-      "@clerk/nextjs": "Clerk", "lucia-auth": "Lucia", "bcrypt": "Password hashing",
-      "argon2": "Password hashing",
-    }),
-    testing: detect({
-      "jest": "Jest", "vitest": "Vitest", "mocha": "Mocha", "cypress": "Cypress",
-      "playwright": "Playwright", "@playwright/test": "Playwright", "puppeteer": "Puppeteer",
-      "supertest": "Supertest", "@testing-library/react": "Testing Library",
-    }),
-    validation: detect({
-      "zod": "Zod", "class-validator": "class-validator", "class-transformer": "class-transformer",
-      "joi": "Joi", "yup": "Yup", "valibot": "Valibot",
-    }),
-    styling: detect({
-      "tailwindcss": "Tailwind CSS", "styled-components": "styled-components",
-      "@emotion/react": "Emotion", "sass": "Sass", "less": "Less",
-      "@stitches/react": "Stitches", "daisyui": "DaisyUI", "shadcn-ui": "Shadcn/ui",
-      "@radix-ui/react": "Radix UI", "@mantine/core": "Mantine",
-      "@chakra-ui/react": "Chakra UI", "antd": "Ant Design",
-    }),
-    build: detect({
-      "vite": "Vite", "webpack": "Webpack", "tsup": "tsup", "esbuild": "esbuild",
-      "rollup": "Rollup", "parcel": "Parcel", "turbopack": "Turbopack",
-    }),
-    stateManagement: detect({
-      "zustand": "Zustand", "redux": "Redux", "@reduxjs/toolkit": "Redux Toolkit",
-      "jotai": "Jotai", "valtio": "Valtio", "mobx": "MobX", "pinia": "Pinia",
-      "vuex": "Vuex", "recoil": "Recoil", "@tanstack/react-query": "TanStack Query",
-    }),
+    orm: detect(DETECTION_PATTERNS.orm),
+    auth: detect(DETECTION_PATTERNS.auth),
+    testing: detect(DETECTION_PATTERNS.testing),
+    validation: detect(DETECTION_PATTERNS.validation),
+    styling: detect(DETECTION_PATTERNS.styling),
+    build: detect(DETECTION_PATTERNS.build),
+    stateManagement: detect(DETECTION_PATTERNS.stateManagement),
     db: [],
-    monorepo: detect({
-      "turbo": "Turborepo", "nx": "Nx", "lerna": "Lerna", "rush": "Rush",
-      "@changesets/cli": "Changesets",
-    }),
+    monorepo: detect(DETECTION_PATTERNS.monorepo),
   };
 }
 

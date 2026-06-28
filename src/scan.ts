@@ -6,9 +6,17 @@
  * focused on the right patterns, risks, and conventions.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { PromptsConfig } from "./types.js";
+import {
+  DETECTION_PATTERNS,
+  FRAMEWORK_PATTERNS,
+  readJsonSafe,
+  detectFromDeps,
+  detectDatabasesFromDockerCompose,
+  detectDatabasesFromPrismaSchema,
+} from "./detection.js";
 
 // ── Detectors ────────────────────────────────────────────
 
@@ -34,26 +42,6 @@ function detectPackageManager(cwd: string): string {
   return "npm";
 }
 
-function readJsonSafe(path: string): Record<string, unknown> | null {
-  try {
-    if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
-    return null;
-  }
-}
-
-function detectFromDeps(deps: Record<string, string> | undefined, patterns: Record<string, string>): string[] {
-  const found: string[] = [];
-  if (!deps) return found;
-  for (const [pkg, label] of Object.entries(patterns)) {
-    if (deps[pkg] || deps[`@types/${pkg}`]) {
-      found.push(label);
-    }
-  }
-  return found;
-}
-
 function detectStack(cwd: string): DetectedStack {
   const pkgJson = readJsonSafe(join(cwd, "package.json"));
   const allDeps: Record<string, string> = {
@@ -76,148 +64,23 @@ function detectStack(cwd: string): DetectedStack {
     language: existsSync(join(cwd, "tsconfig.json")) ? "TypeScript" : "JavaScript",
   };
 
-  // Framework detection
-  result.framework = detectFromDeps(allDeps, {
-    "@nestjs/core": "NestJS",
-    "@nestjs/common": "NestJS",
-    "next": "Next.js",
-    "@angular/core": "Angular",
-    "vue": "Vue",
-    "react": "React",
-    "express": "Express",
-    "fastify": "Fastify",
-    "koa": "Koa",
-    "hono": "Hono",
-    "@sveltejs/kit": "SvelteKit",
-    "nuxt": "Nuxt",
-    "remix": "Remix",
-    "astro": "Astro",
-  });
+  result.framework = detectFromDeps(allDeps, FRAMEWORK_PATTERNS);
+  result.orm = detectFromDeps(allDeps, DETECTION_PATTERNS.orm);
 
-  // ORM
-  result.orm = detectFromDeps(allDeps, {
-    "@prisma/client": "Prisma",
-    "prisma": "Prisma",
-    "typeorm": "TypeORM",
-    "drizzle-orm": "Drizzle",
-    "mongoose": "Mongoose",
-    "sequelize": "Sequelize",
-    "knex": "Knex",
-    "mikro-orm": "MikroORM",
-  });
+  result.auth = detectFromDeps(allDeps, DETECTION_PATTERNS.auth);
+  result.testing = detectFromDeps(allDeps, DETECTION_PATTERNS.testing);
 
-  // Auth
-  result.auth = detectFromDeps(allDeps, {
-    "@nestjs/jwt": "JWT (NestJS)",
-    "@nestjs/passport": "Passport (NestJS)",
-    "passport": "Passport",
-    "jsonwebtoken": "JWT",
-    "next-auth": "NextAuth",
-    "@clerk/nextjs": "Clerk",
-    "lucia-auth": "Lucia",
-    "bcrypt": "Password hashing",
-    "argon2": "Password hashing",
-  });
+  result.validation = detectFromDeps(allDeps, DETECTION_PATTERNS.validation);
+  result.styling = detectFromDeps(allDeps, DETECTION_PATTERNS.styling);
 
-  // Testing
-  result.testing = detectFromDeps(allDeps, {
-    "jest": "Jest",
-    "vitest": "Vitest",
-    "mocha": "Mocha",
-    "cypress": "Cypress",
-    "playwright": "Playwright",
-    "@playwright/test": "Playwright",
-    "puppeteer": "Puppeteer",
-    "supertest": "Supertest",
-    "@testing-library/react": "Testing Library",
-  });
+  result.build = detectFromDeps(allDeps, DETECTION_PATTERNS.build);
+  result.stateManagement = detectFromDeps(allDeps, DETECTION_PATTERNS.stateManagement);
 
-  // Validation
-  result.validation = detectFromDeps(allDeps, {
-    "zod": "Zod",
-    "class-validator": "class-validator",
-    "class-transformer": "class-transformer",
-    "joi": "Joi",
-    "yup": "Yup",
-    "valibot": "Valibot",
-  });
-
-  // Styling
-  result.styling = detectFromDeps(allDeps, {
-    "tailwindcss": "Tailwind CSS",
-    "styled-components": "styled-components",
-    "@emotion/react": "Emotion",
-    "sass": "Sass",
-    "less": "Less",
-    "@stitches/react": "Stitches",
-    "daisyui": "DaisyUI",
-    "shadcn-ui": "Shadcn/ui",
-    "@radix-ui/react": "Radix UI",
-    "@mantine/core": "Mantine",
-    "@chakra-ui/react": "Chakra UI",
-    "antd": "Ant Design",
-  });
-
-  // Build
-  result.build = detectFromDeps(allDeps, {
-    "vite": "Vite",
-    "webpack": "Webpack",
-    "tsup": "tsup",
-    "esbuild": "esbuild",
-    "rollup": "Rollup",
-    "parcel": "Parcel",
-    "turbopack": "Turbopack",
-  });
-
-  // State management
-  result.stateManagement = detectFromDeps(allDeps, {
-    "zustand": "Zustand",
-    "redux": "Redux",
-    "@reduxjs/toolkit": "Redux Toolkit",
-    "jotai": "Jotai",
-    "valtio": "Valtio",
-    "mobx": "MobX",
-    "pinia": "Pinia",
-    "vuex": "Vuex",
-    "recoil": "Recoil",
-    "@tanstack/react-query": "TanStack Query",
-  });
-
-  // Database (from Docker/compose files + ORM configs)
-  if (existsSync(join(cwd, "docker-compose.yml")) || existsSync(join(cwd, "docker-compose.yaml"))) {
-    try {
-      const dc = readFileSync(
-        existsSync(join(cwd, "docker-compose.yml"))
-          ? join(cwd, "docker-compose.yml")
-          : join(cwd, "docker-compose.yaml"),
-        "utf-8"
-      );
-      if (dc.includes("postgres") || dc.includes("postgresql")) result.db.push("PostgreSQL");
-      if (dc.includes("mysql") || dc.includes("mariadb")) result.db.push("MySQL");
-      if (dc.includes("mongo")) result.db.push("MongoDB");
-      if (dc.includes("redis")) result.db.push("Redis");
-      if (dc.includes("sqlite")) result.db.push("SQLite");
-    } catch { /* ignore */ }
-  }
-  if (existsSync(join(cwd, "prisma", "schema.prisma"))) {
-    try {
-      const schema = readFileSync(join(cwd, "prisma", "schema.prisma"), "utf-8");
-      if (schema.includes("postgresql")) result.db.push("PostgreSQL");
-      if (schema.includes("mysql")) result.db.push("MySQL");
-      if (schema.includes("sqlite")) result.db.push("SQLite");
-      if (schema.includes("mongodb")) result.db.push("MongoDB");
-    } catch { /* ignore */ }
-  }
-
-  // Monorepo
-  result.monorepo = detectFromDeps(allDeps, {
-    "turbo": "Turborepo",
-    "@nx/nx-linux-x64-gnu": "Nx",
-    "nx": "Nx",
-    "lerna": "Lerna",
-    "rush": "Rush",
-    "@changesets/cli": "Changesets",
-  });
+  result.db = [
+    ...detectDatabasesFromDockerCompose(cwd),
+    ...detectDatabasesFromPrismaSchema(cwd),
+  ];
+  result.monorepo = detectFromDeps(allDeps, DETECTION_PATTERNS.monorepo);
 
   return result;
 }

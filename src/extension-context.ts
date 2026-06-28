@@ -143,13 +143,28 @@ const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   "deepseek-v4-flash": { input: 0.10, output: 0.30 },
   "deepseek-v4-pro": { input: 3.00, output: 8.00 },
   "kimi-k2-thinking": { input: 0.60, output: 2.40 },
+  "kimi-k2": { input: 0.30, output: 1.20 },
   "kimi-for-coding": { input: 0.30, output: 1.20 },
   "gpt-5-mini": { input: 0.15, output: 0.60 },
   "gpt-5": { input: 2.50, output: 10.00 },
+  "gpt-5.1-mini": { input: 0.15, output: 0.60 },
+  "gpt-5.1": { input: 2.50, output: 10.00 },
+  "o4-mini": { input: 1.10, output: 4.40 },
+  "o3": { input: 10.00, output: 40.00 },
   "claude-sonnet-4-5": { input: 3.00, output: 15.00 },
+  "claude-sonnet-4": { input: 3.00, output: 15.00 },
+  "claude-4-sonnet": { input: 3.00, output: 15.00 },
   "claude-opus-4-5": { input: 15.00, output: 75.00 },
+  "claude-opus-4": { input: 15.00, output: 75.00 },
+  "claude-4-opus": { input: 15.00, output: 75.00 },
+  "claude-3-5-sonnet": { input: 3.00, output: 15.00 },
+  "claude-3-5-haiku": { input: 0.80, output: 4.00 },
   "gemini-2.0-flash": { input: 0.075, output: 0.30 },
+  "gemini-2.0-flash-lite": { input: 0.03, output: 0.15 },
+  "gemini-2.5-flash": { input: 0.075, output: 0.30 },
+  "gemini-2.5-flash-preview": { input: 0.075, output: 0.30 },
   "gemini-2.5-pro": { input: 1.25, output: 10.00 },
+  "gemini-2.5-pro-exp": { input: 1.25, output: 10.00 },
 };
 
 function lookupModelPrice(modelId: string): { input: number; output: number } | undefined {
@@ -191,19 +206,20 @@ export function estimateForkCost(input: ForkCostEstimateInput): ForkCostEstimate
   // Estimated output tokens scales with task complexity
   const outputTokens = Math.min(4000, Math.max(500, Math.ceil(taskChars / charsPerToken) + 500));
 
-  const stage1Price = lookupModelPrice(stage1Profile.id);
-  const stage2Price = lookupModelPrice(stage2Profile.id);
+  const DEFAULT_MODEL_PRICE = { input: 0.15, output: 0.60 };
+  const stage1Price = lookupModelPrice(stage1Profile.id) ?? DEFAULT_MODEL_PRICE;
+  const stage2Price = lookupModelPrice(stage2Profile.id) ?? DEFAULT_MODEL_PRICE;
 
   const stage1Runs = verify ? 2 : 1;
-  const stage1InputCost = stage1Price ? (inputTokens / 1_000_000) * stage1Price.input * stage1Runs : 0;
-  const stage1OutputCost = stage1Price ? (outputTokens / 1_000_000) * stage1Price.output * stage1Runs : 0;
+  const stage1InputCost = (inputTokens / 1_000_000) * stage1Price.input * stage1Runs;
+  const stage1OutputCost = (outputTokens / 1_000_000) * stage1Price.output * stage1Runs;
 
   let stage2InputCost = 0;
   let stage2OutputCost = 0;
   if (!quick) {
     const stage2InputTokens = inputTokens + outputTokens; // stage 2 sees stage 1 output too
-    stage2InputCost = stage2Price ? (stage2InputTokens / 1_000_000) * stage2Price.input : 0;
-    stage2OutputCost = stage2Price ? ((outputTokens * 1.5) / 1_000_000) * stage2Price.output : 0;
+    stage2InputCost = (stage2InputTokens / 1_000_000) * stage2Price.input;
+    stage2OutputCost = ((outputTokens * 1.5) / 1_000_000) * stage2Price.output;
   }
 
   const totalCost = stage1InputCost + stage1OutputCost + stage2InputCost + stage2OutputCost;

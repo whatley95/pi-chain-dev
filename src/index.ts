@@ -64,7 +64,9 @@ export default function (pi: ExtensionAPI) {
   pi.on("turn_end", async (_event, ctx) => {
     try {
       updateForkCostStatus(ctx);
-    } catch { /* best effort */ }
+    } catch {
+      logError(ctx.cwd, "turn_end", new Error("updateForkCostStatus failed in turn_end"));
+    }
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -72,7 +74,9 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus(FORK_COST_STATUS_KEY, undefined);
       ctx.ui.setStatus("cdev-memory", undefined);
       ctx.ui.setWidget("cdev-progress", undefined);
-    } catch { /* best effort */ }
+    } catch (err) {
+      logError(ctx.cwd, "session_shutdown", err);
+    }
   });
 
   pi.on("turn_start", async (_event, ctx) => {
@@ -86,8 +90,8 @@ export default function (pi: ExtensionAPI) {
       if (Array.isArray(entries)) {
         refreshFromSessionEntries(loopState, entries);
       }
-    } catch {
-      // best-effort refresh
+    } catch (err) {
+      logError(ctx.cwd, "turn_start_refresh", err);
     }
     checkAndSendLoopSteer(loopState, (message, options) => pi.sendUserMessage(message, options));
 

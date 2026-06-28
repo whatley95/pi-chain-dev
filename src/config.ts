@@ -153,6 +153,9 @@ export function loadConfig(cwd: string): AutoForkConfig {
   const projectMtime = getFileMtime(projectPath);
   const cached = _configCache.get(cwd);
   if (cached && cached.globalMtime === globalMtime && cached.projectMtime === projectMtime) {
+    // LRU: move to end by delete+re-set
+    _configCache.delete(cwd);
+    _configCache.set(cwd, cached);
     return cached.config;
   }
 
@@ -231,7 +234,10 @@ export function loadConfig(cwd: string): AutoForkConfig {
     }
   }
 
-  if (_configCache.size >= MAX_CONFIG_CACHE_SIZE) {
+  // Cache miss: evict oldest if at capacity, then store
+  if (_configCache.has(cwd)) {
+    _configCache.delete(cwd);
+  } else if (_configCache.size >= MAX_CONFIG_CACHE_SIZE) {
     const firstKey = _configCache.keys().next().value;
     if (firstKey !== undefined) _configCache.delete(firstKey);
   }

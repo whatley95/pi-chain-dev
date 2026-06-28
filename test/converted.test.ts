@@ -280,13 +280,85 @@ describe("estimateForkCost (extension-context.ts)", () => {
     setTokenEstimationRatio(4);
   });
 
-  it("returns zero when prices are unknown", () => {
+  it("uses default prices when model prices are unknown", () => {
     const result = estimateForkCost({
       task: "explore",
       stage1Profile: { provider: "x", id: "unknown-model", thinking: "minimal" as const },
       stage2Profile: { provider: "x", id: "other-unknown", thinking: "xhigh" as const },
     });
-    assert.strictEqual(result.cost, 0);
+    // Falls back to default price instead of $0
+    assert.ok(result.cost > 0);
+    assert.ok(result.cost < 0.01);
+  });
+  it("uses default prices when model prices are unknown", () => {
+    const result = estimateForkCost({
+      task: "explore",
+      stage1Profile: { provider: "x", id: "unknown-model", thinking: "minimal" as const },
+      stage2Profile: { provider: "x", id: "other-unknown", thinking: "xhigh" as const },
+    });
+    // Falls back to default price instead of $0
+    assert.ok(result.cost > 0);
+    assert.ok(result.cost < 0.01);
+  });
+  it("uses default prices when model prices are unknown", () => {
+    const result = estimateForkCost({
+      task: "explore",
+      stage1Profile: { provider: "x", id: "unknown-model", thinking: "minimal" as const },
+      stage2Profile: { provider: "x", id: "other-unknown", thinking: "xhigh" as const },
+    });
+    // Falls back to default price instead of $0
+    assert.ok(result.cost > 0);
+    assert.ok(result.cost < 0.01);
+  });
+  it("uses default prices when model prices are unknown", () => {
+    const result = estimateForkCost({
+      task: "explore",
+      stage1Profile: { provider: "x", id: "unknown-model", thinking: "minimal" as const },
+      stage2Profile: { provider: "x", id: "other-unknown", thinking: "xhigh" as const },
+    });
+    // Falls back to default price instead of $0
+    assert.ok(result.cost > 0);
+    assert.ok(result.cost < 0.01);
+  });
+  it("uses default prices when model prices are unknown", () => {
+    const result = estimateForkCost({
+      task: "explore",
+      stage1Profile: { provider: "x", id: "unknown-model", thinking: "minimal" as const },
+      stage2Profile: { provider: "x", id: "other-unknown", thinking: "xhigh" as const },
+    });
+    // Falls back to default price instead of $0
+    assert.ok(result.cost > 0);
+    assert.ok(result.cost < 0.01);
+  });
+  it("uses default prices when model prices are unknown", () => {
+    const result = estimateForkCost({
+      task: "explore",
+      stage1Profile: { provider: "x", id: "unknown-model", thinking: "minimal" as const },
+      stage2Profile: { provider: "x", id: "other-unknown", thinking: "xhigh" as const },
+    });
+    // Falls back to default price instead of $0
+    assert.ok(result.cost > 0);
+    assert.ok(result.cost < 0.01);
+  });
+  it("uses default prices when model prices are unknown", () => {
+    const result = estimateForkCost({
+      task: "explore",
+      stage1Profile: { provider: "x", id: "unknown-model", thinking: "minimal" as const },
+      stage2Profile: { provider: "x", id: "other-unknown", thinking: "xhigh" as const },
+    });
+    // Falls back to default price instead of $0
+    assert.ok(result.cost > 0);
+    assert.ok(result.cost < 0.01);
+  });
+  it("uses default prices when model prices are unknown", () => {
+    const result = estimateForkCost({
+      task: "explore",
+      stage1Profile: { provider: "x", id: "unknown-model", thinking: "minimal" as const },
+      stage2Profile: { provider: "x", id: "other-unknown", thinking: "xhigh" as const },
+    });
+    // Falls back to default price instead of $0
+    assert.ok(result.cost > 0);
+    assert.ok(result.cost < 0.01);
   });
 
   it("doubles stage1 cost in verify mode", () => {

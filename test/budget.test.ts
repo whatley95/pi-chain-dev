@@ -79,10 +79,12 @@ describe("checkCostBudget", () => {
 });
 
 describe("estimateForkCost", () => {
-  it("returns zero when prices are unknown", () => {
+  it("uses default prices when model prices are unknown", () => {
     const unknownStage: StageProfile = { provider: "x", id: "unknown-model", thinking: "minimal" };
     const estimate = estimateForkCost({ task: "x", stage1Profile: unknownStage, stage2Profile: unknownStage });
-    assert.strictEqual(estimate.cost, 0);
+    // Falls back to default price ($0.15/$0.60 per 1M tokens) instead of $0
+    assert.ok(estimate.cost > 0);
+    assert.ok(estimate.cost < 0.01); // single fork, short task — should be pennies
   });
 
   it("doubles stage1 cost in verify mode", () => {
