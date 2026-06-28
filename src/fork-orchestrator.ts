@@ -108,7 +108,6 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
     const stage1Text = getFinalAssistantText(stage1Result.messages) || "";
     stage1Findings = parseStage1Findings(stage1Text);
-    const validation = stage1Findings ? validateStage1Findings(stage1Findings, "exploration") : { valid: false, reason: "output was not valid JSON findings" };
     const stage1Usage: UsageStats = stage1Result.usage ? { ...stage1Result.usage } : emptyUsage();
 
     const reExploreCheck = shouldReExplore(stage1Findings);
@@ -120,56 +119,12 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       stage1Result.stderr += `\n[cdev] confidence gate failed but autoReExplore is off: ${gateCheck.reasons.join("; ")}\n`;
     }
 
-    // Fire validation retry and/or coverage pass concurrently where possible.
-    // They are independent, so parallelism saves wall-clock time without reducing accuracy.
-    let retryResult: ForkResult | undefined;
     let secondRun: ForkResult | undefined;
 
-    if (!validation.valid || needsMoreExploration) {
-      const promises: Promise<ForkResult>[] = [];
-      const labels: string[] = [];
-
-      if (!validation.valid) {
-        stage1Result.stderr += `\n[cdev] ${validation.reason}; retrying stage 1 with stricter prompt\n`;
-        promises.push(runStage1Run("exploration (validation retry)", task));
-        labels.push("validation retry");
-      }
-
-      if (needsMoreExploration) {
-        const reason = gateCheck.passed ? reExploreCheck.reason : `confidence gate failed: ${gateCheck.reasons.join("; ")}`;
-        stage1Result.stderr += `\n[cdev] ${reason}; running a second exploration pass\n`;
-        promises.push(runStage1Run("exploration (coverage pass)", task));
-        labels.push("coverage pass");
-      }
-
-      const results = await Promise.all(promises);
-      if (labels.includes("validation retry")) {
-        retryResult = results[labels.indexOf("validation retry")];
-      }
-      if (labels.includes("coverage pass")) {
-        secondRun = results[labels.indexOf("coverage pass")];
-      }
-    }
-
-    if (retryResult) {
-      addUsage(stage1Usage, retryResult.usage);
-      details.stage1 = retryResult;
-      const retryText = getFinalAssistantText(retryResult.messages) || "";
-      const retryFindings = parseStage1Findings(retryText);
-      const retryValidation = retryFindings ? validateStage1Findings(retryFindings, "exploration retry") : { valid: false, reason: "retry output was not valid JSON findings" };
-
-      if (retryValidation.valid) {
-        stage1Findings = retryFindings;
-        stage1Result = {
-          ...retryResult,
-          usage: stage1Usage,
-          stderr: [stage1Result.stderr, retryResult.stderr].filter(Boolean).join("\n"),
-        };
-      } else {
-        stage1Result.stderr += `\n[cdev] ${retryValidation.reason}; proceeding with raw text`;
-        stage1Findings = null;
-        stage1Result.usage = stage1Usage;
-      }
+    if (needsMoreExploration) {
+      const reason = gateCheck.passed ? reExploreCheck.reason : `confidence gate failed: ${gateCheck.reasons.join("; ")}`;
+      stage1Result.stderr += `\n[cdev] ${reason}; running a second exploration pass\n`;
+      secondRun = await runStage1Run("exploration (coverage pass)", task);
     }
 
     if (secondRun && stage1Findings) {

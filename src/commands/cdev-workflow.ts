@@ -21,7 +21,7 @@ export function handleAskAdvisorSubcommand(trimmed: string, _lower: string, _ctx
   return true;
 }
 export function handleMultiSubcommand(trimmed: string, _ctx: ExtensionContext, pi: ExtensionAPI): boolean {
-  const m = trimmed.match(/^multis+(d{1,2})(?:s+(backup|no-backup))?s+(.+)$/i);
+  const m = trimmed.match(/^multi\s+(\d{1,2})(?:\s+(backup|no-backup))?\s+(.+)$/i);
   if (!m || parseInt(m[1]) < 1 || parseInt(m[1]) > 3 || !m[3].trim()) return false;
   pi.sendUserMessage("Use cdev with parallel=" + m[1] + " to: " + m[3], { triggerTurn: true, deliverAs: "steer" });
   return true;
