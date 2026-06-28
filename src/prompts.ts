@@ -44,6 +44,7 @@ ${jsonSchema}
 Efficiency rules:
 - Batch reads: use \`bash\`, \`cat\`, \`grep\`, \`find\`, \`ls\`, or globs instead of many individual \`read\` calls.
 - Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
+- **Parallel tool calls**: You can issue multiple \`read\`, \`bash\`, \`grep\`, or \`find\` calls in a single response. Pi executes them simultaneously — use this to read many files at once.
 - Read a file individually only when you need the full content of a specific, named file.${guard}${quickGuard}`;
   }
   return `${focusTask}${mapContext}${scopeHint}
@@ -59,6 +60,7 @@ ${jsonSchema}
 Efficiency rules:
 - Batch reads: use \`bash\`, \`cat\`, \`grep\`, \`find\`, \`ls\`, or globs instead of many individual \`read\` calls.
 - Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
+- **Parallel tool calls**: You can issue multiple \`read\`, \`bash\`, \`grep\`, or \`find\` calls in a single response. Pi executes them simultaneously — use this to read many files at once.
 - Read a file individually only when you need the full content of a specific, named file.
 - Stop exploring once you have enough evidence to answer the task.
 
@@ -221,6 +223,7 @@ ${jsonSchema}
 Efficiency rules:
 - Batch reads: use \`bash\`, \`cat\`, \`grep\`, \`find\`, \`ls\`, or globs instead of many individual \`read\` calls.
 - Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
+- **Parallel tool calls**: You can issue multiple \`read\`, \`bash\`, \`grep\`, or \`find\` calls in a single response. Pi executes them simultaneously — use this to read many files at once.
 - Read a file individually only when you need the full content of a specific, named file.
 
 Rules:

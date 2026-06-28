@@ -243,6 +243,46 @@ interface CostCache {
 
 const _costCache = new Map<string, CostCache>();
 
+
+// ── Session snapshot cache ──
+// Speeds up repeated cdev calls by caching buildSessionSnapshotJsonl
+// output keyed by a content hash of the session entries.
+
+interface SnapshotCacheEntry {
+  hash: string;
+  snapshot: string | null;
+}
+
+const _snapshotCache = new Map<string, SnapshotCacheEntry>();
+
+export function cachedBuildSessionSnapshot(
+  sessionManager: SessionSnapshotSource,
+  maxTokens: number | undefined,
+  cwd: string,
+): string | null {
+  try {
+    const branchEntries = sessionManager.getBranch();
+    if (!Array.isArray(branchEntries)) return null;
+    const hash = hashSessionEntries(branchEntries);
+    const cached = _snapshotCache.get(cwd);
+    if (cached && cached.hash === hash) return cached.snapshot;
+    const snapshot = buildMinimalSessionSnapshot
+      ? buildMinimalSessionSnapshot(sessionManager, 10)
+      : buildSessionSnapshotJsonl(sessionManager, maxTokens);
+    if (maxTokens !== undefined) {
+      _snapshotCache.set(cwd, { hash, snapshot });
+    }
+    return snapshot;
+  } catch {
+    return buildSessionSnapshotJsonl(sessionManager, maxTokens);
+  }
+}
+
+export function clearSnapshotCache(cwd?: string): void {
+  if (cwd) _snapshotCache.delete(cwd);
+  else _snapshotCache.clear();
+}
+
 function hashSessionEntries(entries: unknown[]): string {
   try {
     const sample = entries.slice(-50);
@@ -335,6 +375,22 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / avgCharsPerToken);
 }
 
+
+/** Build a minimal snapshot for scout runs - header + last N entries only. */
+export function buildMinimalSessionSnapshot(sessionManager: SessionSnapshotSource, maxEntries = 5): string | null {
+  try {
+    const header = sessionManager.getHeader();
+    if (!header || typeof header !== "object") return null;
+    const branchEntries = sessionManager.getBranch();
+    if (!Array.isArray(branchEntries)) return null;
+    const headerLine = JSON.stringify(header);
+    const tail = branchEntries.slice(-maxEntries);
+    const ls = [headerLine, ...tail.map((e) => JSON.stringify(e))];
+    return ls.join("\n") + "\n";
+  } catch {
+    return null;
+  }
+}
 export function buildSessionSnapshotJsonl(sessionManager: SessionSnapshotSource, maxTokens?: number): string | null {
   try {
     const header = sessionManager.getHeader();

@@ -10,13 +10,12 @@ import { getFinalAssistantText } from "../runner-events.js";
 import { saveSession, findPreviousSession } from "../history.js";
 import {
   logError, recordForkCost, maybeNotifyCostAlert, maybeWarnSessionSize,
-  formatForkResultOutput, estimateForkCost, checkCostBudget, formatCost,
-  makeThemedBg,
+  formatForkResultOutput, formatCost, makeThemedBg,
   withAuditGuard, resolveStageProfiles, getSessionForkCost,
 } from "../extension-context.js";
 import { indexFindingsAsync } from "../memory.js";
 import { clearProgress, withUiDetails, buildReportUiDetails,
-  formatProgressDetail, modelLabel,
+  formatProgressDetail, modelLabel, checkForkBudget,
 } from "./shared-helpers.js";
 import { computeReportDiff, formatReportDiff } from "../json-extract.js";
 import { safeDisplayText } from "../text-width.js";
@@ -29,32 +28,28 @@ export async function handleFullFork(
   themedBg: ReturnType<typeof makeThemedBg>,
   snapshot: string,
 ): Promise<{ content: Array<{ type: string; text: string }>; details: unknown; isError?: boolean }> {
+  const task = p.task!; // validated by dispatcher
   const profiles = resolveStageProfiles(config);
 
   const quick: boolean = p.quick ?? false;
   const verify: boolean = p.verify ?? (config.autoVerify && !p.quick);
+  const auditedTask = withAuditGuard(task);
 
-  const estimate = estimateForkCost({
-    task: withAuditGuard(p.task!),
-    stage1Profile: profiles.stage1,
-    stage2Profile: profiles.stage2,
-    quick,
-    verify,
-    forkSessionSnapshotJsonl: snapshot ?? undefined,
-  });
-  const budgetCheck = checkCostBudget(config, ctx.cwd, estimate.cost);
-  if (!budgetCheck.allowed) {
+  const budget = checkForkBudget(config, ctx.cwd, auditedTask,
+    profiles.stage1, profiles.stage2,
+    { quick, verify, snapshot });
+  if (!budget.allowed) {
     return {
-      content: [{ type: "text" as const, text: `cdev budget error: ${budgetCheck.reason}\nEstimated: ~${formatCost(estimate.cost)} (${estimate.inputTokens} input / ${estimate.outputTokens} output tokens)` }],
-      details: { stage1: null, stage2: null },
-      isError: true,
+      content: [{ type: "text" as const, text: budget.error }],
+      details: budget.details,
+      isError: budget.isError,
     };
   }
 
   if (config.maxSessionCost && config.maxSessionCost > 0) {
     const remaining = config.maxSessionCost - getSessionForkCost(ctx.cwd);
-    if (remaining > 0 && estimate.cost > remaining * 0.5) {
-      ctx.ui.notify(`This cdev fork is estimated at ${formatCost(estimate.cost)}, which is more than 50% of the remaining session budget (${formatCost(remaining)}).`, "warn");
+    if (remaining > 0 && budget.estimatedCost > remaining * 0.5) {
+      ctx.ui.notify(`This cdev fork is estimated at ${formatCost(budget.estimatedCost)}, which is more than 50% of the remaining session budget (${formatCost(remaining)}).`, "warn");
     }
   }
 
@@ -75,7 +70,7 @@ export async function handleFullFork(
   const startTime = Date.now();
   const { result, details } = await runAutoFork({
     cwd: ctx.cwd,
-    task: withAuditGuard(p.task!),
+    task: auditedTask,
     forkSessionSnapshotJsonl: snapshot,
     stage1Profile: profiles.stage1,
     stage1bProfile: config.stage1b,
@@ -107,14 +102,14 @@ export async function handleFullFork(
   });
   clearProgress(ctx);
 
-  const current = saveSession(ctx.cwd, p.task!, false, startTime, details, result);
+  const current = saveSession(ctx.cwd, task, false, startTime, details, result);
   const finalText = getFinalAssistantText(result.messages) || "";
 
   let reportRelPath = "";
   if (!quick && details.stage2 && !result.errorMessage) {
     const reportText = finalText;
     if (reportText) {
-      const slugBase = p.task!
+      const slugBase = task
         .replace(/[^a-zA-Z0-9]+/g, "-")
         .replace(/^-|-$/g, "")
         .toLowerCase()
@@ -135,10 +130,10 @@ export async function handleFullFork(
   maybeNotifyCostAlert(ctx, config);
   if (config.memory) {
     indexFindingsAsync({
-      task: p.task!,
+      task,
       resultText: finalText,
-      stage1Model: config.stage1.id || undefined,
-      stage2Model: p.quick ? undefined : (config.stage2.id || undefined),
+      stage1Model: config.stage1.id,
+      stage2Model: p.quick ? undefined : config.stage2.id,
       stage1bModel: config.stage1b?.id || undefined,
       stage1cModel: config.stage1c?.id || undefined,
       stage1BackupModel: config.stage1Backup?.id || undefined,
@@ -157,7 +152,7 @@ export async function handleFullFork(
   }
 
   // Compare to previous report on same task, if available
-  const previous = findPreviousSession(ctx.cwd, p.task!);
+  const previous = findPreviousSession(ctx.cwd, task);
   if (previous?.resultText && previous.id !== current.id) {
     const diff = computeReportDiff(previous.resultText, finalText);
     if (diff.added.length > 0 || diff.removed.length > 0) {
@@ -175,7 +170,7 @@ export async function handleFullFork(
     content: [{ type: "text" as const, text: safeDisplayText(resultText + reportNote) }],
     details: withUiDetails(details, buildReportUiDetails(finalText, {
       mode: isPlan ? "plan" : quick ? "quick" : verify ? "verify" : useParallel ? "parallel" : "fork",
-      task: p.task!,
+      task,
       reportPath: reportRelPath || undefined,
     })),
     isError,

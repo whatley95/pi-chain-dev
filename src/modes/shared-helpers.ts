@@ -7,11 +7,10 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "../config.js";
 import { parsePlanReport, parseStage2Report } from "../json-extract.js";
 import {
-  buildSessionSnapshotJsonl,
+  cachedBuildSessionSnapshot, estimateForkCost, checkCostBudget, formatCost,
   estimateTokens,
-  formatCost,
 } from "../extension-context.js";
-import type { AutoForkDetails, AutoForkUiDetails } from "../types.js";
+import type { AutoForkDetails, AutoForkUiDetails, StageProfile } from "../types.js";
 
 // ── Snapshot types ──
 
@@ -65,7 +64,7 @@ export function checkSessionSnapshot(
     return { autoCompact: { tokens, limit } };
   }
 
-  const snapshot = buildSessionSnapshotJsonl(ctx.sessionManager, limit);
+  const snapshot = cachedBuildSessionSnapshot(ctx.sessionManager, limit, ctx.cwd);
   if (!snapshot) return null;
   const snapshotTokens = resolveSnapshotTokens(snapshot, ctx);
   if (snapshotTokens > limit * 0.95) {
@@ -161,4 +160,43 @@ export function runDiff(cwd: string, diffSpec: string, vcs: "git" | "svn"): { st
   }
   const result = spawnSync("svn", ["diff", "-r", diffSpec], { cwd, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8" });
   return { stdout: result.stdout || "", stderr: result.stderr || "", status: result.status };
+}
+
+// ── Budget check helper (shared by advisor, research, yolo, full-fork) ──
+
+export function checkForkBudget(
+  config: Awaited<ReturnType<typeof import("../config.js").loadConfig>>,
+  cwd: string,
+  task: string,
+  stage1Profile: StageProfile,
+  stage2Profile: StageProfile,
+  opts?: { quick?: boolean; verify?: boolean; snapshot?: string; costMultiplier?: number; costLabel?: string; unitLabel?: string },
+): { allowed: false; error: string; details: { stage1: null; stage2: null }; isError: true } | { allowed: true; estimatedCost: number } {
+  // Fast-path: skip estimation when no budget limits configured (unlimited)
+  if (config.maxSessionCost === 0 && config.maxForkCost === 0) {
+    return { allowed: true, estimatedCost: 0 };
+  }
+  const estimate = estimateForkCost({
+    task,
+    stage1Profile,
+    stage2Profile,
+    quick: opts?.quick,
+    verify: opts?.verify,
+    forkSessionSnapshotJsonl: opts?.snapshot ?? undefined,
+  });
+  const multiplier = opts?.costMultiplier ?? 1;
+  const cost = estimate.cost * multiplier;
+  const budgetCheck = checkCostBudget(config, cwd, cost);
+  if (!budgetCheck.allowed) {
+    const label = opts?.costLabel ?? "";
+    const unit = opts?.unitLabel ? ` ${opts.unitLabel}` : "";
+    return {
+      allowed: false,
+      error: `cdev budget error: ${budgetCheck.reason}
+Estimated${label}: ~${formatCost(cost)} (${estimate.inputTokens} input / ${estimate.outputTokens} output tokens)${unit}`,
+      details: { stage1: null, stage2: null },
+      isError: true,
+    };
+  }
+  return { allowed: true, estimatedCost: cost };
 }

@@ -7,14 +7,14 @@ import type { AutoForkParamsType } from "../tool.js";
 import { runYoloLoop } from "../runner.js";
 import { getFinalAssistantText } from "../runner-events.js";
 import {
-  recordForkCost, maybeNotifyCostAlert, maybeWarnSessionSize,
-  estimateForkCost, checkCostBudget, formatCost,
-  makeThemedBg, resolveStageProfiles,
+  logError, recordForkCost, maybeNotifyCostAlert, maybeWarnSessionSize,
+  formatCost, makeThemedBg, resolveStageProfiles,
 } from "../extension-context.js";
+import { saveSession } from "../history.js";
 import { indexFindingsAsync } from "../memory.js";
 import {
   clearProgress, withUiDetails,
-  formatProgressDetail,
+  formatProgressDetail, checkForkBudget,
 } from "./shared-helpers.js";
 import { normalizeYoloConfig } from "../types.js";
 import { safeDisplayText } from "../text-width.js";
@@ -27,22 +27,17 @@ export async function handleYolo(
   themedBg: ReturnType<typeof makeThemedBg>,
   snapshot: string,
 ): Promise<{ content: Array<{ type: string; text: string }>; details: unknown; isError?: boolean }> {
+  const task = p.task!; // validated by dispatcher
   const yolo = normalizeYoloConfig(config.yolo);
   const profiles = resolveStageProfiles(config);
-  const singleForkEstimate = estimateForkCost({
-    task: p.task!,
-    stage1Profile: profiles.stage1,
-    stage2Profile: profiles.stage2,
-    forkSessionSnapshotJsonl: snapshot ?? undefined,
-  });
-  const yoloMultiplier = 1 + yolo.maxRounds * 2;
-  const yoloCost = singleForkEstimate.cost * yoloMultiplier;
-  const yoloBudgetCheck = checkCostBudget(config, ctx.cwd, yoloCost);
-  if (!yoloBudgetCheck.allowed) {
+  const budget = checkForkBudget(config, ctx.cwd, task,
+    profiles.stage1, profiles.stage2,
+    { snapshot, costMultiplier: 1 + yolo.maxRounds * 2, costLabel: " YOLO loop", unitLabel: `(1 initial fork + up to ${yolo.maxRounds} review rounds + ${yolo.maxRounds} fix rounds)` });
+  if (!budget.allowed) {
     return {
-      content: [{ type: "text" as const, text: `cdev budget error: ${yoloBudgetCheck.reason}\nEstimated YOLO loop: ~${formatCost(yoloCost)} (1 initial fork + up to ${yolo.maxRounds} review rounds + ${yolo.maxRounds} fix rounds, ~${formatCost(singleForkEstimate.cost)} each)` }],
-      details: { stage1: null, stage2: null },
-      isError: true,
+      content: [{ type: "text" as const, text: budget.error }],
+      details: budget.details,
+      isError: budget.isError,
     };
   }
 
@@ -69,9 +64,10 @@ export async function handleYolo(
     }
   };
 
+  const startTime = Date.now();
   const yoloResult = await runYoloLoop({
     cwd: ctx.cwd,
-    task: p.task!,
+    task,
     forkSessionSnapshotJsonl: snapshot,
     stage1Profile: profiles.stage1,
     stage1bProfile: config.stage1b,
@@ -99,12 +95,23 @@ export async function handleYolo(
   });
   clearProgress(ctx);
 
+  saveSession(ctx.cwd, task, false, startTime, yoloResult.initial.details, yoloResult.initial.result);
+
+  if (yoloResult.initial.result.errorMessage) {
+    logError(ctx.cwd, "yolo-initial", new Error(yoloResult.initial.result.errorMessage));
+  }
+  for (const round of yoloResult.rounds) {
+    if (round.review.result.errorMessage) {
+      logError(ctx.cwd, "yolo-review", new Error(round.review.result.errorMessage));
+    }
+  }
+
   recordForkCost(ctx.cwd, yoloResult.totalCost);
   maybeNotifyCostAlert(ctx, config);
   maybeWarnSessionSize(ctx);
   if (config.memory) {
     indexFindingsAsync({
-      task: p.task!,
+      task,
       resultText: getFinalAssistantText(yoloResult.initial.result.messages) || "",
       stage1Model: config.stage1.id,
       stage2Model: config.stage2.id,
@@ -127,7 +134,7 @@ export async function handleYolo(
       yoloResult.rounds.length > 0 ? yoloResult.rounds[yoloResult.rounds.length - 1].review.details : yoloResult.initial.details,
       {
         mode: "yolo",
-        task: p.task!,
+        task,
         reportPath: yoloResult.finalReportPath,
         status: yoloResult.finalVerdict === "pass" ? "ok" : yoloResult.finalVerdict === "blocked" ? "blocked" : "needs-work",
       },

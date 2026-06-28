@@ -55,7 +55,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
   const scoutTimeoutMs = Number.isFinite(opts.scoutTimeoutMs) && (opts.scoutTimeoutMs as number) > 0
     ? (opts.scoutTimeoutMs as number)
     : 600_000;
-  const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeoutMs as number) > 0
+  const MIN_SCOUT_ENTRIES = 6; // header+5 entries for scout
+const forgeTimeoutMs = Number.isFinite(opts.forgeTimeoutMs) && (opts.forgeTimeoutMs as number) > 0
     ? (opts.forgeTimeoutMs as number)
     : 180_000;
 
@@ -73,18 +74,22 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   async function runStage1Run(label: string, stageTask: string, profile?: StageProfile, subTask?: ParallelSubTask): Promise<ForkResult> {
     const prompt = buildStage1Prompt(stageTask, customExplorePrompt, editMode, cwd, subTask, quick);
+    // Scouts read files independently - trim snapshot to header+last 5 entries
+    const sl = forkSessionSnapshotJsonl.trim().split("\n");
+    const trimmedSnapshot = sl.length > MIN_SCOUT_ENTRIES
+      ? sl.slice(0, 1).concat(sl.slice(-(MIN_SCOUT_ENTRIES - 1))).join('\n') + '\n'
+      : forkSessionSnapshotJsonl;
     return runStageWithRetry({
       cwd,
       task: prompt,
       stageLabel: label,
-      forkSessionJsonl: forkSessionSnapshotJsonl,
+      forkSessionJsonl: trimmedSnapshot,
       stageProfile: profile || stage1Profile,
       extensions,
       environment,
       offline,
       signal,
       stageTimeoutMs: scoutTimeoutMs,
-      sanitizedSessionJsonl: sanitizedSnapshot,
       retries: 1,
       toolMode: "scout",
       onUpdate,

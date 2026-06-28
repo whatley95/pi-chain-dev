@@ -829,7 +829,16 @@ If scout/forge aren't configured, pi-chain-dev falls back to `pi-fork`'s effort 
 pi-chain-dev/
 ├── src/
 │   ├── index.ts              # Extension entry point — registers cdev tool + commands
-│   ├── tool.ts               # cdev tool execution (recall/review/fork)
+│   ├── tool.ts               # cdev tool dispatcher — validates params, routes to mode handlers
+│   ├── detection.ts           # Shared stack detection — framework/ORM/auth/testing/etc patterns
+│   ├── modes/
+│   │   ├── recall.ts          # Recall mode handler (memory lookup)
+│   │   ├── review.ts          # Review mode handler (file, diff, session)
+│   │   ├── advisor.ts         # Advisor mode handler
+│   │   ├── research.ts        # Research mode handler
+│   │   ├── yolo.ts            # YOLO review-fix loop handler
+│   │   ├── full-fork.ts       # Full two-stage fork handler (default)
+│   │   └── shared-helpers.ts  # Snapshot, UI, and diff helpers shared across modes
 │   ├── format.ts             # Shared utilities (fmtDuration, slugFromTask)
 │   ├── usage.ts              # Usage aggregation helpers (addUsage, mergeUsage)
 │   ├── commands/

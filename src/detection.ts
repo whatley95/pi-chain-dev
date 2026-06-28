@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 // ── Package-to-label mapping patterns ───────────────────
 
-export interface DetectionMappings {
+interface DetectionMappings {
   orm: Record<string, string>;
   auth: Record<string, string>;
   testing: Record<string, string>;

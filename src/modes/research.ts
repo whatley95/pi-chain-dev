@@ -10,13 +10,12 @@ import { getFinalAssistantText } from "../runner-events.js";
 import { saveSession, findPreviousSession } from "../history.js";
 import {
   logError, recordForkCost, maybeNotifyCostAlert, maybeWarnSessionSize,
-  formatForkResultOutput, estimateForkCost, checkCostBudget, formatCost,
-  makeThemedBg, withAuditGuard, resolveStageProfiles,
+  formatForkResultOutput, makeThemedBg, withAuditGuard, resolveStageProfiles,
 } from "../extension-context.js";
 import { indexFindingsAsync } from "../memory.js";
 import {
   clearProgress, withUiDetails, buildReportUiDetails,
-  formatProgressDetail,
+  formatProgressDetail, checkForkBudget,
 } from "./shared-helpers.js";
 import { computeReportDiff, formatReportDiff } from "../json-extract.js";
 
@@ -28,6 +27,8 @@ export async function handleResearch(
   themedBg: ReturnType<typeof makeThemedBg>,
   snapshot: string,
 ): Promise<{ content: Array<{ type: string; text: string }>; details: unknown; isError?: boolean }> {
+  const task = p.task!; // validated by dispatcher
+  const auditedTask = withAuditGuard(task);
   const profiles = resolveStageProfiles(config);
   const researchProfile = config.research ?? profiles.stage1;
   if (!researchProfile.provider || !researchProfile.id) {
@@ -38,20 +39,14 @@ export async function handleResearch(
     };
   }
 
-  const estimate = estimateForkCost({
-    task: withAuditGuard(p.task!),
-    stage1Profile: researchProfile,
-    stage2Profile: researchProfile,
-    quick: true,
-    forkSessionSnapshotJsonl: snapshot ?? undefined,
-  });
-  const budgetCheck = checkCostBudget(config, ctx.cwd, estimate.cost);
-  if (!budgetCheck.allowed) {
-    const msg = `cdev budget error: ${budgetCheck.reason}\nEstimated: ~${formatCost(estimate.cost)} (${estimate.inputTokens} input / ${estimate.outputTokens} output tokens)`;
+  const budget = checkForkBudget(config, ctx.cwd, auditedTask,
+    researchProfile, researchProfile,
+    { quick: true, snapshot });
+  if (!budget.allowed) {
     return {
-      content: [{ type: "text" as const, text: msg }],
-      details: { stage1: null, stage2: null },
-      isError: true,
+      content: [{ type: "text" as const, text: budget.error }],
+      details: budget.details,
+      isError: budget.isError,
     };
   }
 
@@ -64,11 +59,11 @@ export async function handleResearch(
   const startTime = Date.now();
   const { result, details } = await runCdevResearch({
     cwd: ctx.cwd,
-    task: withAuditGuard(p.task!),
+    task: auditedTask,
     forkSessionSnapshotJsonl: snapshot,
     stageProfile: researchProfile,
     customPrompt: config.promptsEnabled ? config.prompts?.research : undefined,
-    stageTimeoutMs: config.profileTimeouts?.forge ?? config.forgeTimeoutMs,
+    stageTimeoutMs: config.profileTimeouts?.research ?? config.scoutTimeoutMs,
     onProgress,
     onUpdate: (update) => {
       ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `📚 Research ${update.stage}… ${formatProgressDetail(update)}`)]);
@@ -80,7 +75,7 @@ export async function handleResearch(
   });
   clearProgress(ctx);
 
-  const current = saveSession(ctx.cwd, p.task!, false, startTime, details, result);
+  const current = saveSession(ctx.cwd, task, false, startTime, details, result);
   const researchText = getFinalAssistantText(result.messages) || "";
   const researchCost = result.usage?.cost ?? 0;
   recordForkCost(ctx.cwd, researchCost);
@@ -89,7 +84,7 @@ export async function handleResearch(
 
   let researchReportPath = "";
   if (researchText && !result.errorMessage) {
-    const slug = p.task!
+    const slug = task
       .replace(/[^a-zA-Z0-9]+/g, "-")
       .replace(/^-|-$/g, "")
       .toLowerCase()
@@ -97,7 +92,7 @@ export async function handleResearch(
     const { reportRelPath: savedPath } = writeReportFile({
       cwd: ctx.cwd,
       fileName: `research-${slug}-${Date.now().toString(36)}.md`,
-      title: `Research: ${p.task!.slice(0, 80)}`,
+      title: `Research: ${task.slice(0, 80)}`,
       reviewer: researchProfile.id,
       body: researchText,
     });
@@ -105,12 +100,11 @@ export async function handleResearch(
   }
 
   if (result.errorMessage) {
-    
-    logError(ctx.cwd, "research-stage2", new Error(result.errorMessage));
+    logError(ctx.cwd, "research", new Error(result.errorMessage));
   }
   if (config.memory && researchText) {
     indexFindingsAsync({
-      task: p.task!,
+      task,
       resultText: researchText,
       stage1Model: profiles.stage1.id,
       stage2Model: researchProfile.id,
@@ -127,7 +121,7 @@ export async function handleResearch(
     resultText += `\n\n---\n📄 Research report saved: ${researchReportPath}`;
   }
 
-  const previous = findPreviousSession(ctx.cwd, p.task!);
+  const previous = findPreviousSession(ctx.cwd, task);
   if (previous?.resultText && previous.id !== current.id) {
     const diff = computeReportDiff(previous.resultText, getFinalAssistantText(result.messages) || "");
     if (diff.added.length > 0 || diff.removed.length > 0) {
@@ -139,7 +133,7 @@ export async function handleResearch(
     content: [{ type: "text" as const, text: resultText }],
     details: withUiDetails(details, buildReportUiDetails(researchText, {
       mode: "research",
-      task: p.task!,
+      task,
       reportPath: researchReportPath || undefined,
     })),
     isError,

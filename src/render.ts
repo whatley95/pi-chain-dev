@@ -12,6 +12,7 @@ import { keyHint, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { bg as themeBg } from "./theme-utils.js";
+import type { AutoForkDetails, AutoForkUiDetails } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -71,25 +72,26 @@ function bg(token: string, text: string, theme: Theme, themed: boolean): string 
 // renderCall
 // ---------------------------------------------------------------------------
 
-export function renderCall(args: any, theme: Theme, _context?: { cwd?: string }): Component {
+export function renderCall(args: unknown, theme: Theme, _context?: { cwd?: string }): Component {
+  const a = args as Record<string, unknown>;
   const fg = theme.fg.bind(theme);
   const themed = isThemed(_context?.cwd);
-  const task = typeof args?.task === "string" && args.task.trim()
-    ? trunc(args.task.replace(/\s+/g, " ").trim(), MAX_TASK_CHARS)
+  const task = typeof a?.task === "string" && (a.task as string).trim()
+    ? trunc((a.task as string).replace(/\s+/g, " ").trim(), MAX_TASK_CHARS)
     : "";
 
   let label: string;
-  if (typeof args?.recall === "string") {
-    label = args.recall ? `cdev-recall "${args.recall}"` : "cdev-recall (list)";
-  } else if (args?.review) {
+  if (typeof a?.recall === "string") {
+    label = a.recall ? `cdev-recall "${a.recall}"` : "cdev-recall (list)";
+  } else if (a?.review) {
     label = "cdev-review";
-  } else if (args?.plan) {
+  } else if (a?.plan) {
     label = task ? `cdev-plan "${task}"` : "cdev-plan";
-  } else if (args?.yolo) {
+  } else if (a?.yolo) {
     label = task ? `cdev-yolo "${task}"` : "cdev-yolo";
-  } else if (args?.quick) {
+  } else if (a?.quick) {
     label = task ? `cdev-quick "${task}"` : "cdev-quick";
-  } else if (args?.verify) {
+  } else if (a?.verify) {
     label = task ? `cdev-verify "${task}"` : "cdev-verify";
   } else {
     label = task ? `cdev "${task}"` : "cdev";
@@ -103,20 +105,20 @@ export function renderCall(args: any, theme: Theme, _context?: { cwd?: string })
 // ---------------------------------------------------------------------------
 
 export function renderResult(
-  toolResult: any,
+  toolResult: unknown,
   opts: { expanded: boolean },
   theme: Theme,
   _context?: { cwd?: string },
 ): Component {
   const fg = theme.fg.bind(theme);
   const themed = isThemed(_context?.cwd);
-  const result = toolResult;
+  const result = toolResult as { isError?: boolean; content?: Array<{ type: string; text: string }>; details?: AutoForkDetails };
   const isErr = Boolean(result?.isError);
   const content = result?.content;
   const details = result?.details;
   const ui = details?.ui ?? {};
   const textOut = Array.isArray(content)
-    ? content.map((p: any) => p?.text ?? "").join("\n").trim()
+    ? content.map((p: { type: string; text: string }) => p?.text ?? "").join("\n").trim()
     : "";
 
   const taskText = ui?.task
@@ -230,7 +232,7 @@ class SimpleText implements Component {
   dispose(): void {}
 }
 
-function formatModeLabel(mode: unknown, details: any): string {
+function formatModeLabel(mode: unknown, details: AutoForkDetails | undefined): string {
   if (typeof mode === "string" && mode) return mode;
   if (details?.research) return "research";
   if (details?.stage1 && !details?.stage2) return "quick";
@@ -244,7 +246,7 @@ function formatScore(score: unknown): string | null {
   return `${Math.round(score * 10)}/10`;
 }
 
-function formatUiMetrics(ui: any): string {
+function formatUiMetrics(ui: AutoForkUiDetails | undefined): string {
   const parts: string[] = [];
   if (typeof ui?.status === "string") parts.push(ui.status);
   const quality = formatScore(ui?.qualityScore);

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { join, isAbsolute } from "node:path";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type AutoForkConfig } from "../config.js";
 import { listSessions, getSession, formatHistory, formatSessionRecord, purgeOldSessions, getLastSession } from "../history.js";
@@ -24,46 +24,13 @@ import { handleMap, loadProjectMap } from "./cdev-map.js";
 import { CDEV_SUBCOMMAND_HELP } from "./cdev-help.js";
 import { readAgentSettings, readProjectSettings, writeAgentSetting, writeProjectSetting } from "../settings-helpers.js";
 import { normalizeYoloConfig } from "../types.js";
-
-function sanitizeFileName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_").replace(/(^_+|_+$)/g, "");
-}
-
-function levenshtein(a: string, b: string): number {
-  if (a.length < b.length) return levenshtein(b, a);
-  if (b.length === 0) return a.length;
-  const prev: number[] = new Array(b.length + 1).fill(0).map((_, i) => i);
-  const curr: number[] = new Array(b.length + 1);
-  for (let i = 0; i < a.length; i++) {
-    curr[0] = i + 1;
-    for (let j = 0; j < b.length; j++) {
-      const cost = a[i] === b[j] ? 0 : 1;
-      curr[j + 1] = Math.min(
-        curr[j] + 1,
-        prev[j + 1] + 1,
-        prev[j] + cost
-      );
-    }
-    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
-  }
-  return prev[b.length];
-}
-
-function clearReports(reportsDir: string): number {
-  if (!existsSync(reportsDir)) return 0;
-  let cleared = 0;
-  for (const entry of readdirSync(reportsDir)) {
-    if (entry.endsWith(".md")) {
-      unlinkSync(join(reportsDir, entry));
-      cleared++;
-    }
-  }
-  return cleared;
-}
-
-function writeProjectThemed(cwd: string, enable: boolean): void {
-  writeProjectSetting(cwd, "themed", enable);
-}
+import { sanitizeFileName, levenshtein } from "./cdev-helpers.js";
+import { clearReports, writeProjectThemed } from "./cdev-lifecycle.js";
+import { handleAutoSubcommand } from "./cdev-auto.js";
+import { handleReadSubcommand, handleGrepSubcommand, handleTraceSubcommand, handleExplainSubcommand } from "./cdev-tools.js";
+import { handleReviewSubcommand } from "./cdev-review-cmd.js";
+import { handleYoloSubcommand } from "./cdev-yolo-cmd.js";
+import { handleQuickSubcommand, handleVerifySubcommand, handleResearchSubcommand, handleAdvisorSubcommand, handleAskAdvisorSubcommand, handleMultiSubcommand, handlePlanSubcommand } from "./cdev-workflow.js";
 
 export function registerCdevCommand(
   pi: ExtensionAPI,
@@ -76,39 +43,8 @@ export function registerCdevCommand(
       const trimmed = (args || "").trim();
       const lower = trimmed.toLowerCase();
 
-      // ── Subcommand: auto on ──
-      if (lower === "auto on" || lower === "auto") {
-        writeAgentSetting("auto", true);
-        ctx.ui.notify("cdev auto mode ON — LLM will proactively use cdev for exploration", "info");
-        resetAutoTurnCounter();
-        updateAutoStatus(ctx);
-        return;
-      }
-
-      // ── Subcommand: auto off ──
-      if (lower === "auto off") {
-        writeAgentSetting("auto", false);
-        ctx.ui.notify("cdev auto mode OFF", "info");
-        resetAutoTurnCounter();
-        updateAutoStatus(ctx);
-        return;
-      }
-
-      // ── Subcommand: auto-verify on/off ──
-      if (lower === "auto-verify on" || lower === "auto-verify off") {
-        const enable = lower === "auto-verify on";
-        writeAgentSetting("autoVerify", enable);
-        ctx.ui.notify(`cdev auto-verify ${enable ? "ON" : "OFF"} — ${enable ? "scout will run twice automatically" : "scout will run once unless /cdev verify is used"}`, "info");
-        return;
-      }
-
-      // ── Subcommand: auto-compact on/off ──
-      if (lower === "auto-compact on" || lower === "auto-compact off") {
-        const enable = lower === "auto-compact on";
-        writeAgentSetting("autoCompactOnLimit", enable);
-        ctx.ui.notify(`cdev auto-compact ${enable ? "ON" : "OFF"} — ${enable ? "will compact parent session when snapshot nears model limit" : "will only warn near model limit"}`, "info");
-        return;
-      }
+      // ── Auto subcommands ──
+      if (handleAutoSubcommand(lower, ctx, resetAutoTurnCounter, updateAutoStatus)) return;
 
       // ── Subcommand: todo <name> ──
       const todoMatch = trimmed.match(/^todo\s+(.+)$/i);
@@ -142,79 +78,13 @@ export function registerCdevCommand(
 
       const config = loadConfig(ctx.cwd);
 
-      // ── Subcommand: read <paths...> ──
-      const readMatch = trimmed.match(/^read\s+(.+)$/i);
-      if (readMatch) {
-        const pathsArg = readMatch[1].trim();
-        if (!pathsArg) {
-          ctx.ui.notify("Usage: /cdev read <path1> [path2] ...", "warn");
-          return;
-        }
-        const paths = pathsArg.split(/\s+/).map((p) => p.trim()).filter(Boolean);
-        if (paths.length === 0) {
-          ctx.ui.notify("Usage: /cdev read <path1> [path2] ...", "warn");
-          return;
-        }
-        ctx.ui.notify(`Scout-reading ${paths.length} file${paths.length === 1 ? "" : "s"}...`, "info");
-        const task = `Read the following file(s) carefully and return a concise but complete summary for the main agent. Include relevant file paths, function/class names, and line numbers where appropriate. Do not edit any files.\n\n${paths.map((p) => `- ${p}`).join("\n")}`;
-        pi.sendUserMessage(`Use cdev with quick=true to: ${task}`, { triggerTurn: true, deliverAs: "steer" });
-        return;
-      }
+      // ── Tool subcommands: read, grep, trace, explain ──
+      if (handleReadSubcommand(trimmed, ctx, pi)) return;
+      if (handleGrepSubcommand(trimmed, ctx, pi)) return;
+      if (handleTraceSubcommand(trimmed, ctx, pi)) return;
+      if (handleExplainSubcommand(trimmed, ctx, pi)) return;
 
-      // ── Subcommand: grep <pattern> [path] ──
-      const grepMatch = trimmed.match(/^grep\s+(.+)$/i);
-      if (grepMatch) {
-        const rest = grepMatch[1].trim();
-        if (!rest) {
-          ctx.ui.notify("Usage: /cdev grep <pattern> [path]", "warn");
-          return;
-        }
-        const tokens = rest.split(/\s+/);
-        const lastToken = tokens[tokens.length - 1];
-        const hasPath = lastToken && (lastToken.includes("/") || lastToken.includes("\\") || lastToken === "." || lastToken.endsWith("/"));
-        const pattern = hasPath ? tokens.slice(0, -1).join(" ") : rest;
-        const searchPath = hasPath ? lastToken : ".";
-        if (!pattern) {
-          ctx.ui.notify("Usage: /cdev grep <pattern> [path]", "warn");
-          return;
-        }
-        ctx.ui.notify(`Scout-grepping for "${pattern}"...`, "info");
-        const task = `Search the codebase for occurrences of "${pattern}" under ${searchPath}. Return a concise list of matching file paths, line numbers, and a short snippet for each match. Do not edit any files.`;
-        pi.sendUserMessage(`Use cdev with quick=true to: ${task}`, { triggerTurn: true, deliverAs: "steer" });
-        return;
-      }
-
-      // ── Subcommand: trace <symbol> ──
-      const traceMatch = trimmed.match(/^trace\s+(.+)$/i);
-      if (traceMatch) {
-        const symbol = traceMatch[1].trim();
-        if (!symbol) {
-          ctx.ui.notify("Usage: /cdev trace <symbol>", "warn");
-          return;
-        }
-        ctx.ui.notify(`Scout-tracing "${symbol}"...`, "info");
-        const task = `Trace the symbol "${symbol}" in the codebase. Find its definition(s), declarations, and key call sites/usages. Return file paths, line numbers, and a brief explanation of what it does. Do not edit any files.`;
-        pi.sendUserMessage(`Use cdev with quick=true to: ${task}`, { triggerTurn: true, deliverAs: "steer" });
-        return;
-      }
-
-      // ── Subcommand: explain <path|symbol> ──
-      const explainMatch = trimmed.match(/^explain\s+(.+)$/i);
-      if (explainMatch) {
-        const target = explainMatch[1].trim();
-        if (!target) {
-          ctx.ui.notify("Usage: /cdev explain <file-path-or-symbol>", "warn");
-          return;
-        }
-        ctx.ui.notify(`Scout-explaining "${target}"...`, "info");
-        const task = target.includes("/") || target.includes("\\") || target.endsWith(".ts") || target.endsWith(".js") || target.endsWith(".java") || target.endsWith(".py")
-          ? `Explain the file "${target}" in detail. Include its purpose, key functions/classes, important logic, and how it fits into the project. Do not edit any files.`
-          : `Explain what "${target}" is in this codebase. Find its definition and main usages, then describe its purpose and behavior. Do not edit any files.`;
-        pi.sendUserMessage(`Use cdev with quick=true to: ${task}`, { triggerTurn: true, deliverAs: "steer" });
-        return;
-      }
-
-      // ── Subcommands: scan, scan deep ──
+      // ── Subcommands: scan, scan deep ──// ── Subcommands: scan, scan deep ──
       if (await handleScan(trimmed, ctx, config, updateAutoStatus)) return;
 
       // ── Subcommands: map, map refresh, map show ──
@@ -351,201 +221,20 @@ export function registerCdevCommand(
         return;
       }
 
-      // ── Subcommand: review [path|diff] ──
-      const reviewFileMatch = trimmed.match(/^review\s+(.+)$/i);
-      if (lower === "review" || reviewFileMatch) {
-        let cleanArg = "";
-        if (reviewFileMatch) {
-          cleanArg = reviewFileMatch[1].trim();
-          if (cleanArg === "--audit" || cleanArg === "-a") {
-            ctx.ui.notify(`Queuing code review…`, "info");
-            pi.sendUserMessage(`Run a code review using the cdev tool with review=true.`, { triggerTurn: true, deliverAs: "steer" });
-            return;
-          }
-          cleanArg = cleanArg.replace(/\s*(--audit|-a)\b/gi, "").trim();
-        }
-        const reviewProfile = config.review ?? config.stage2;
-        if (!reviewProfile.provider || !reviewProfile.id) {
-          ctx.ui.notify("Review model not configured. Use /cdev-model to set models.", "warn");
-          return;
-        }
-        if (cleanArg) {
-          if (/^(changes|change|uncommitted|uncommitted changes|working tree|worktree)$/i.test(cleanArg)) {
-            const vcs = spawnSync("git", ["rev-parse", "--git-dir"], { cwd: ctx.cwd, encoding: "utf-8" }).status === 0
-              ? "git"
-              : spawnSync("svn", ["info"], { cwd: ctx.cwd, encoding: "utf-8" }).status === 0
-                ? "svn"
-                : null;
-            if (!vcs) {
-              ctx.ui.notify("This directory is not inside a git or svn repository. Review a file with /cdev review <path> instead.", "warn");
-              return;
-            }
-            ctx.ui.notify("Reviewing uncommitted changes…", "info");
-            pi.sendUserMessage(`Review uncommitted changes using cdev with review=true, diffSpec="HEAD".`, { triggerTurn: true, deliverAs: "steer" });
-            return;
-          }
-          // Diff specs look like "HEAD~3..HEAD", "main..feature", "r1234:1235", or "r1234-1235".
-          // A plain relative path such as "../src/foo.ts" should not match.
-          const isDiff = (/^[^/\\]+\.\.[^/\\]*$/.test(cleanArg) || /^r\d+[-:]\d+$/.test(cleanArg)) &&
-                         !/[\\/]/.test(cleanArg);
-          const looksLikePath = /[\\/]/.test(cleanArg) || /\.[a-z]{2,6}$/i.test(cleanArg);
-          if (isDiff) {
-            ctx.ui.notify(`Reviewing diff ${cleanArg}…`, "info");
-            pi.sendUserMessage(`Review the diff ${cleanArg} using cdev with review=true, diffSpec="${cleanArg}".`, { triggerTurn: true, deliverAs: "steer" });
-          } else if (looksLikePath) {
-            const fullPath = isAbsolute(cleanArg) ? cleanArg : join(ctx.cwd, cleanArg);
-            if (!existsSync(fullPath)) {
-              ctx.ui.notify(`File not found: ${fullPath}`, "error");
-              return;
-            }
-            ctx.ui.notify(`Reviewing ${cleanArg}…`, "info");
-            pi.sendUserMessage(`Review the file ${cleanArg} using cdev with review=true, reviewFile="${cleanArg}".`, { triggerTurn: true, deliverAs: "steer" });
-          } else {
-            ctx.ui.notify(`Queuing code review…`, "info");
-            pi.sendUserMessage(`Run a code review using the cdev tool with review=true. Focus on: ${cleanArg}`, { triggerTurn: true, deliverAs: "steer" });
-          }
-        } else {
-          ctx.ui.notify(`Queuing code review (forge only)…`, "info");
-          pi.sendUserMessage(`Run a code review using the cdev tool with review=true. Review the recent changes in this session for bugs, edge cases, and improvements.`, { triggerTurn: true, deliverAs: "steer" });
-        }
-        return;
-      }
+      // ── Subcommand: review ──
+      if (handleReviewSubcommand(trimmed, lower, ctx, pi)) return;
 
-      // ── Subcommand: quick / fast ──
-      if (lower.startsWith("quick ") || lower.startsWith("fast ")) {
-        const quickTask = trimmed.slice(6).trim();
-        if (!quickTask) {
-          ctx.ui.notify("Usage: /cdev quick <task> or /cdev fast <task>", "warn");
-          return;
-        }
-        ctx.ui.notify(`Queuing quick exploration (stage 1 only)...`, "info");
-        pi.sendUserMessage(`Use cdev with quick=true to: ${quickTask}`, { triggerTurn: true, deliverAs: "steer" });
-        return;
-      }
+      // ── Workflow subcommands ──
+      if (handleQuickSubcommand(trimmed, lower, ctx, pi)) return;
+      if (handleVerifySubcommand(trimmed, lower, ctx, pi)) return;
+      if (handleResearchSubcommand(trimmed, lower, ctx, pi)) return;
+      if (handleAdvisorSubcommand(trimmed, lower, ctx, pi)) return;
+      if (handleAskAdvisorSubcommand(trimmed, lower, ctx, pi)) return;
+      if (handleMultiSubcommand(trimmed, ctx, pi)) return;
+      if (handlePlanSubcommand(trimmed, lower, ctx, pi)) return;
 
-      // ── Subcommand: verify ──
-      if (lower.startsWith("verify ")) {
-        const verifyTask = trimmed.slice(7).trim();
-        if (!verifyTask) {
-          ctx.ui.notify("Usage: /cdev verify <task>", "warn");
-          return;
-        }
-        ctx.ui.notify(`Queuing verified exploration (scout ×2 + forge)...`, "info");
-        pi.sendUserMessage(`Use cdev with verify=true to: ${verifyTask}`, { triggerTurn: true, deliverAs: "steer" });
-        return;
-      }
-
-      // ── Subcommand: research ──
-      if (lower.startsWith("research ")) {
-        const researchTask = trimmed.slice(9).trim();
-        if (!researchTask) {
-          ctx.ui.notify("Usage: /cdev research <issue or question>", "warn");
-          return;
-        }
-        ctx.ui.notify(`Queuing research investigation (agent-driven, no edits)...`, "info");
-        pi.sendUserMessage(`Use cdev with research=true to: ${researchTask}`, { triggerTurn: true, deliverAs: "steer" });
-        return;
-      }
-
-      // ── Subcommand: advisor ──
-      if (lower.startsWith("advisor ")) {
-        const advisorQuestion = trimmed.slice(8).trim();
-        if (!advisorQuestion) {
-          ctx.ui.notify("Usage: /cdev advisor <question>", "warn");
-          return;
-        }
-        ctx.ui.notify(`Queuing advisor (scout + advisor)...`, "info");
-        pi.sendUserMessage(`Use cdev with advisor=true to: ${advisorQuestion}`, { triggerTurn: true, deliverAs: "steer" });
-        return;
-      }
-
-      // ── Subcommand: ask-advisor ──
-      if (lower.startsWith("ask-advisor ")) {
-        const advisorQuestion = trimmed.slice(12).trim();
-        if (!advisorQuestion) {
-          ctx.ui.notify("Usage: /cdev ask-advisor <question>", "warn");
-          return;
-        }
-        ctx.ui.notify(`Queuing ask-advisor (advisor only)...`, "info");
-        pi.sendUserMessage(`Use cdev with advisor=true, askAdvisor=true to: ${advisorQuestion}`, { triggerTurn: true, deliverAs: "steer" });
-        return;
-      }
-
-      // ── Subcommand: multi n [no-backup] task ──
-      const multiMatch = trimmed.match(/^multi\s+(\d{1,2})(?:\s+(backup|no-backup))?\s+(.+)$/i);
-      if (multiMatch) {
-        const n = parseInt(multiMatch[1], 10);
-        const backupFlag = multiMatch[2]?.toLowerCase();
-        const useBackup = backupFlag === "backup" || (backupFlag === undefined && (config.parallelBackup ?? false));
-        const multiTask = multiMatch[3].trim();
-        if (n < 1 || n > 3 || !multiTask) {
-          ctx.ui.notify("Usage: /cdev multi <1-3> [backup|no-backup] <task>", "warn");
-          return;
-        }
-        if (!loadProjectMap(ctx.cwd)) {
-          ctx.ui.notify("Project map missing. Run /cdev map first to enable multi scouting.", "warn");
-          return;
-        }
-        ctx.ui.notify(`Queuing multi exploration (${n} scout${n > 1 ? "s" : ""}${useBackup ? ", backup on" : ", backup off"})...`, "info");
-        pi.sendUserMessage(`Use cdev with parallel=${n}, parallelBackup=${useBackup} to: ${multiTask}`, { triggerTurn: true, deliverAs: "steer" });
-        return;
-      }
-
-      // ── Subcommand: plan ──
-      if (lower.startsWith("plan ")) {
-        const planTask = trimmed.slice(5).trim();
-        if (!planTask) {
-          ctx.ui.notify("Usage: /cdev plan <task>", "warn");
-          return;
-        }
-        ctx.ui.notify(`Queuing implementation plan (scout + planner)...`, "info");
-        pi.sendUserMessage(`Use cdev with plan=true to: ${planTask}`, { triggerTurn: true, deliverAs: "steer" });
-        return;
-      }
-
-      // ── Subcommand: yolo on|off ──
-      if (lower === "yolo on" || lower === "yolo off") {
-        const enable = lower === "yolo on";
-        const currentYolo = normalizeYoloConfig(config.yolo);
-        writeAgentSetting("yolo", { ...currentYolo, enabled: enable });
-        ctx.ui.notify(`cdev yolo mode ${enable ? "ON" : "OFF"}`, "info");
-        return;
-      }
-
-      // ── Subcommand: yolo mode manual|propose|auto ──
-      const yoloModeMatch = trimmed.match(/^yolo\s+(manual|propose|auto)$/i);
-      if (yoloModeMatch) {
-        const mode = yoloModeMatch[1] as "manual" | "propose" | "auto";
-        const currentYolo = normalizeYoloConfig(config.yolo);
-        writeAgentSetting("yolo", { ...currentYolo, autoApply: mode });
-        const note = mode === "auto" ? " ⚠️ cdev will edit files automatically" : "";
-        ctx.ui.notify(`cdev yolo auto-apply set to ${mode}${note}`, "info");
-        return;
-      }
-
-      // ── Subcommand: yolo usage ──
-      if (lower === "yolo") {
-        ctx.ui.notify("Usage:\n/cdev yolo <task>            Scout + forge, then review loops\n/cdev yolo on|off            Toggle yolo mode\n/cdev yolo manual|propose|auto  Set who applies fixes (manual=main agent, propose=cdev plan, auto=cdev edits)", "info");
-        return;
-      }
-
-      // ── Subcommand: yolo <task> ──
-      if (lower.startsWith("yolo ")) {
-        const yoloTask = trimmed.slice(5).trim();
-        if (!yoloTask) {
-          ctx.ui.notify("Usage: /cdev yolo <task>", "warn");
-          return;
-        }
-        const yolo = normalizeYoloConfig(config.yolo);
-        if (!yolo.enabled) {
-          ctx.ui.notify("YOLO mode is disabled. Enable with /cdev yolo on", "warn");
-          return;
-        }
-        const autoApplyNote = yolo.autoApply === "auto" ? " [AUTO-EDIT]" : yolo.autoApply === "propose" ? " [propose fixes]" : " [main agent fixes]";
-        ctx.ui.notify(`Queuing YOLO task (max ${yolo.maxRounds} rounds${autoApplyNote})...`, "info");
-        pi.sendUserMessage(`Use cdev with yolo=true to: ${yoloTask}`, { triggerTurn: true, deliverAs: "steer" });
-        return;
-      }
+      // ── Subcommand: yolo ──
+      if (handleYoloSubcommand(trimmed, lower, ctx, pi)) return;
 
       // ── Subcommand: status ──
       if (lower === "status" || lower === "info") {
