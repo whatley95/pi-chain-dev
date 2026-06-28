@@ -224,22 +224,6 @@ export function getResultSummaryText(result: ForkResult): string {
 export function summarizePiEvent(event: { type: string; [key: string]: unknown }): string | undefined {
   if (!event || typeof event !== "object" || Array.isArray(event)) return undefined;
   switch (event.type) {
-    case "thinking": {
-      const status = (event.status as string) || "";
-      return status ? `thinking: ${status}` : "thinking";
-    }
-    case "activity": {
-      const label = (event.label as string) || (event.type as string) || "";
-      const status = (event.status as string) || "";
-      if (label && status) return `${label}: ${status}`;
-      return label || undefined;
-    }
-    case "toolExecution": {
-      const toolName = (event.toolName as string) || "";
-      const status = (event.status as string) || "";
-      if (toolName) return `${toolName}: ${status || "running"}`;
-      return undefined;
-    }
     case "tool_execution_start":
     case "tool_execution_update":
     case "tool_execution_end": {
@@ -248,27 +232,41 @@ export function summarizePiEvent(event: { type: string; [key: string]: unknown }
       if (toolName) return `${toolName}: ${status || "running"}`;
       return undefined;
     }
-    case "message": {
-      const msg = event.message as { role?: string; content?: unknown } | undefined;
-      if (msg?.role === "assistant") return "assistant responded";
-      if (msg?.role === "toolResult") return "tool result received";
-      return undefined;
-    }
     case "message_update": {
       const msg = event.message as { role?: string; content?: unknown } | undefined;
       if (msg?.role === "assistant") return "assistant responding...";
       return undefined;
     }
-    case "usage": {
+    case "message_end": {
+      const msg = event.message as { role?: string; content?: unknown; usage?: { totalTokens?: number; cost?: number } } | undefined;
+      if (msg?.role === "assistant") return "assistant responded";
+      if (msg?.role === "toolResult") return "tool result received";
+      return undefined;
+    }
+    case "turn_end": {
       const cost = (event.cost as number) ?? undefined;
       const tokens = (event.totalTokens as number) ?? (event.tokens as number) ?? undefined;
       if (cost !== undefined || tokens !== undefined) {
         const parts: string[] = [];
         if (tokens !== undefined) parts.push(`${tokens} tokens`);
         if (cost !== undefined) parts.push(formatCost(cost));
-        return `usage: ${parts.join(", ")}`;
+        return `turn: ${parts.join(", ")}`;
       }
-      return undefined;
+      return "turn completed";
+    }
+    case "agent_end":
+      return "agent finished";
+    case "auto_retry_start": {
+      const attempt = event.attempt as number | undefined;
+      const maxAttempts = event.maxAttempts as number | undefined;
+      const label = attempt !== undefined && maxAttempts !== undefined
+        ? `auto-retry ${attempt}/${maxAttempts}`
+        : "auto-retrying";
+      return label;
+    }
+    case "auto_retry_end": {
+      const success = event.success as boolean | undefined;
+      return success ? "auto-retry succeeded" : "auto-retry failed";
     }
     default:
       return undefined;

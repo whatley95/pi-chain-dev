@@ -297,6 +297,8 @@ export interface CdevTopic {
   name: string;
   /** All findings for this topic, newest first. */
   findings: CdevFindingRecord[];
+  /** Stale findings (files changed since stored), moved here by auto-prune. */
+  staleFindings?: CdevFindingRecord[];
   /** Total number of forks on this topic. */
   forkCount: number;
   /** Timestamp when this topic was first explored. */
@@ -308,7 +310,7 @@ export interface CdevTopic {
 }
 
 export interface CdevFindingRecord {
-  /** One-line finding text. */
+  /** One-line finding text (may contain newlines for readability). */
   text: string;
   /** Timestamp when the fork ran. */
   timestamp: number;
@@ -322,6 +324,10 @@ export interface CdevFindingRecord {
   promptVersion?: string;
   /** SHA256 hashes of files that support this finding (path → hash). */
   fileFingerprints?: Record<string, string>;
+  /** Grounding/quality confidence (0-1) from the forge report. Higher = more trustworthy. */
+  confidence?: number;
+  /** Whether this finding's files have changed since it was stored. */
+  stale?: boolean;
 }
 
 /** Structured output expected from Stage 1 exploration. */

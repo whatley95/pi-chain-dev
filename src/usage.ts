@@ -41,10 +41,22 @@ export function mergeUsage(a: UsageStats, b: UsageStats): UsageStats {
 }
 
 export function addNestedForkUsage(result: ForkResult, message: { role?: unknown; toolName?: unknown; toolCallId?: unknown; details?: { results?: unknown } }): boolean {
-  if (message.role !== "toolResult" || message.toolName !== "cdev") return false;
-
+  // Accept both event-stream (toolResult) and session-JSONL (tool) roles.
+  // turn_end / agent_end event payloads may nest cdev fork results under
+  // toolResults / messages arrays where role is absent or "tool".
   const results = message.details?.results;
   if (!Array.isArray(results)) return false;
+
+  const role = message.role;
+  const isToolResult = role === "toolResult" || role === "tool";
+  if (!isToolResult && message.toolName !== "cdev") {
+    // For aggregate events, only process if nested results contain usage data
+    const hasUsage = results.some(r => {
+      const u = (r as { usage?: unknown }).usage;
+      return u && typeof u === "object";
+    });
+    if (!hasUsage) return false;
+  }
 
   let changed = false;
   for (const forkResult of results) {

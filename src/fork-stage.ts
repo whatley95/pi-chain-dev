@@ -25,7 +25,7 @@ class Semaphore {
   acquire(): Promise<() => void> {
     return new Promise((resolve) => {
       const release = () => {
-        this.count++;
+        this.count = Math.min(this.count + 1, this.maxConcurrency);
         this.drain();
       };
       if (this.count > 0) {
@@ -521,6 +521,8 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
       if (abortHandler && signal) {
         signal.removeEventListener("abort", abortHandler);
       }
+      proc.stdout.off("data", onStdoutData);
+      proc.stderr.removeAllListeners("data");
       if (buffer.trim()) flushLine(buffer);
       if (!settled) { settled = true; resolve(exitCode); }
     };

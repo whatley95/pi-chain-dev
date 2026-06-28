@@ -42,6 +42,8 @@ function isValidFinding(value: unknown): value is CdevFindingRecord {
   if (typeof f.models !== "string") return false;
   if (typeof f.cost !== "number") return false;
   if (f.promptVersion !== undefined && typeof f.promptVersion !== "string") return false;
+  if (f.confidence !== undefined && (typeof f.confidence !== "number" || !Number.isFinite(f.confidence) || f.confidence < 0 || f.confidence > 1)) return false;
+  if (f.stale !== undefined && typeof f.stale !== "boolean") return false;
   if (f.fileFingerprints !== undefined) {
     if (typeof f.fileFingerprints !== "object" || f.fileFingerprints === null) return false;
     for (const v of Object.values(f.fileFingerprints)) {
@@ -58,6 +60,12 @@ function isValidTopic(value: unknown): value is CdevTopic {
   if (!Array.isArray(t.findings)) return false;
   for (const f of t.findings) {
     if (!isValidFinding(f)) return false;
+  }
+  if (t.staleFindings !== undefined) {
+    if (!Array.isArray(t.staleFindings)) return false;
+    for (const f of t.staleFindings) {
+      if (!isValidFinding(f)) return false;
+    }
   }
   if (typeof t.forkCount !== "number") return false;
   if (typeof t.firstSeen !== "number") return false;
@@ -217,26 +225,27 @@ export function extractTopicFromTask(task: string, filePaths: string[]): string 
       if (count > bestCount) { bestDir = dir; bestCount = count; }
     }
     // Use directory only if we have ≥3 files and it accounts for >30% of paths
-    if (filePaths.length >= 3 && bestDir && bestCount / filePaths.length > 0.3) return bestDir;
+    if (filePaths.length >= 3 && bestDir && bestCount / filePaths.length > 0.3) { _cacheSet(_key, bestDir); return bestDir; }
 
     // If 1-2 files, skip Strategy 1 entirely — fall through to Strategy 2
   }
 
-  // Strategy 2: extract from task text — first noun after common verbs
+  // Strategy 2: extract from task text — noun phrase after the LAST matching verb
+  // (using the last verb captures the actual subject, e.g. "debug why login failed after oauth changes" → "oauth-changes")
   const taskVerbs = ["explore", "trace", "review", "check", "audit", "scan", "analyze", "investigate", "refactor", "fix", "debug", "test", "document", "migrate", "upgrade"];
   const lower = task.toLowerCase();
+  let bestTopic: string | null = null;
   for (const verb of taskVerbs) {
     const idx = lower.indexOf(verb);
     if (idx >= 0) {
       const after = task.slice(idx + verb.length).trim();
-      // Try to capture multi-word noun phrase (auth flow, payment gateway, etc.)
-      // Skip leading articles (the, a, an)
       const phraseMatch = after.match(/^(?:the |a |an )?([\w-]+(?:\s+[\w-]+)?)/);
       if (phraseMatch && phraseMatch[1].length > 1) {
-        return phraseMatch[1].toLowerCase().replace(/\s+/g, "-");
+        bestTopic = phraseMatch[1].toLowerCase().replace(/\s+/g, "-");
       }
     }
   }
+  if (bestTopic) { _cacheSet(_key, bestTopic); return bestTopic; }
 
   // Strategy 3: first 2 words of task, skip articles
   const words = task.split(/\s+/);
@@ -283,6 +292,34 @@ export function indexFindingsAsync(input: IndexFindingsInput): Promise<string | 
   });
 }
 
+function extractConfidenceFromText(text: string): number | undefined {
+  // Try structured JSON report first
+  const match = text.match(/"groundingScore"\s*:\s*(0?\.\d+|1\.?0?|0)/);
+  if (match) {
+    const val = parseFloat(match[1]);
+    if (Number.isFinite(val) && val >= 0 && val <= 1) return val;
+  }
+  // Fallback: "Grounding ✅ 95%" style
+  const pctMatch = text.match(/[Gg]rounding\s*[✅⚠]*\s*(\d+)%/);
+  if (pctMatch) {
+    const val = parseInt(pctMatch[1], 10) / 100;
+    if (Number.isFinite(val) && val >= 0 && val <= 1) return val;
+  }
+  return undefined;
+}
+
+function findingTextOverlap(a: string, b: string): number {
+  const na = a.toLowerCase().replace(/\s+/g, " ").trim();
+  const nb = b.toLowerCase().replace(/\s+/g, " ").trim();
+  if (na === nb) return 1;
+  const tokensA = new Set(na.split(/\s+/).filter(t => t.length > 2));
+  const tokensB = new Set(nb.split(/\s+/).filter(t => t.length > 2));
+  if (tokensA.size === 0 || tokensB.size === 0) return 0;
+  const intersection = new Set([...tokensA].filter(t => tokensB.has(t)));
+  const union = new Set([...tokensA, ...tokensB]);
+  return intersection.size / union.size;
+}
+
 function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
   const { task, resultText, stage1Model, stage2Model, stage1bModel, stage1cModel, isReview, quick, cost, cwd, promptVersion } = input;
 
@@ -316,14 +353,17 @@ function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
     models = scoutParts && stage2Model ? `${scoutParts}→${stage2Model}` : (stage2Model ?? "?");
   }
 
+  const confidence = stage !== "stage1" ? extractConfidenceFromText(resultText) : undefined;
+
   const finding: CdevFindingRecord = {
-    text: resultText.slice(0, 2000).replace(/\n/g, " "), // one-line-ish; cap keeps fallback path extraction useful
+    text: resultText.slice(0, 4000), // preserve newlines for readability
     timestamp: Date.now(),
     stage,
     models,
     cost,
     promptVersion: promptVersion ?? PROMPT_VERSION,
     fileFingerprints: Object.keys(fingerprints).length > 0 ? fingerprints : undefined,
+    confidence,
   };
 
   let topicEntry = memory.topics[topic];
@@ -339,7 +379,15 @@ function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
     memory.topics[topic] = topicEntry;
   }
 
-  topicEntry.findings.unshift(finding);
+  // Dedup: skip if near-duplicate of the latest finding (≥70% token overlap)
+  const latest = topicEntry.findings[0];
+  if (latest && findingTextOverlap(latest.text, finding.text) >= 0.7) {
+    // Update the existing finding's timestamp and confidence instead of adding a duplicate
+    latest.timestamp = finding.timestamp;
+    if (finding.confidence !== undefined) latest.confidence = finding.confidence;
+  } else {
+    topicEntry.findings.unshift(finding);
+  }
   topicEntry.forkCount++;
   topicEntry.lastSeen = Date.now();
 
@@ -348,9 +396,54 @@ function buildFindingAndUpdateMemory(input: IndexFindingsInput): string | null {
   for (const fp of filePaths) { existingFiles.add(fp); }
   topicEntry.files = Array.from(existingFiles).sort();
 
-  // Cap findings per topic at 20
+  // Cap findings per topic at 20 (move overflow to staleFindings if they're stale)
   if (topicEntry.findings.length > 20) {
+    const overflow = topicEntry.findings.slice(20);
     topicEntry.findings = topicEntry.findings.slice(0, 20);
+    // Check if overflow findings are stale; if so, add to staleFindings
+    for (const f of overflow) {
+      const fresh = checkFreshness(f, cwd);
+      if (fresh.hasSnapshot && !fresh.allFresh) {
+        f.stale = true;
+        if (!topicEntry.staleFindings) topicEntry.staleFindings = [];
+        topicEntry.staleFindings.unshift(f);
+      }
+    }
+  }
+
+  // Auto-prune: move stale findings from active list to staleFindings
+  const activeFindings: CdevFindingRecord[] = [];
+  for (const f of topicEntry.findings) {
+    const fresh = checkFreshness(f, cwd);
+    if (fresh.hasSnapshot && !fresh.allFresh) {
+      f.stale = true;
+      if (!topicEntry.staleFindings) topicEntry.staleFindings = [];
+      topicEntry.staleFindings.push(f);
+    } else {
+      if (fresh.hasSnapshot && fresh.allFresh) f.stale = false;
+      activeFindings.push(f);
+    }
+  }
+  topicEntry.findings = activeFindings;
+
+  // Re-check staleFindings: if files reverted, move back to active
+  if (topicEntry.staleFindings && topicEntry.staleFindings.length > 0) {
+    const revived: CdevFindingRecord[] = [];
+    topicEntry.staleFindings = topicEntry.staleFindings.filter(f => {
+      const fresh = checkFreshness(f, cwd);
+      if (fresh.hasSnapshot && fresh.allFresh) {
+        f.stale = false;
+        revived.push(f);
+        return false;
+      }
+      return true;
+    });
+    for (const r of revived) topicEntry.findings.push(r);
+    if (topicEntry.staleFindings.length === 0) delete topicEntry.staleFindings;
+    // Cap staleFindings at 30
+    if (topicEntry.staleFindings && topicEntry.staleFindings.length > 30) {
+      topicEntry.staleFindings = topicEntry.staleFindings.slice(0, 30);
+    }
   }
 
   saveMemory(cwd, memory);
@@ -487,9 +580,12 @@ export function formatTopicDetail(topic: CdevTopic, cwd: string): string {
     }
 
     const costStr = f.cost > 0 ? formatCost(f.cost) : "";
-    const text = f.text.slice(0, 100);
+    const confidenceStr = f.confidence !== undefined
+      ? `  conf:${(f.confidence * 100).toFixed(0)}%`
+      : "";
+    const text = f.text.replace(/\n/g, " ").slice(0, 100);
 
-    lines.push(`  ${icon} ${date}  ${f.stage}  ${f.models.padEnd(15)} ${costStr}`);
+    lines.push(`  #${i + 1} ${icon} ${date}  ${f.stage}  ${f.models.padEnd(15)} ${costStr}${confidenceStr}`);
     lines.push(`     ${text}`);
     if (freshness.staleFiles.length > 0) {
       for (const sf of freshness.staleFiles.slice(0, 3)) {
@@ -500,6 +596,38 @@ export function formatTopicDetail(topic: CdevTopic, cwd: string): string {
       }
     }
     if (i < topic.findings.length - 1) lines.push("");
+  }
+
+  // Stale findings section
+  if (topic.staleFindings && topic.staleFindings.length > 0) {
+    lines.push("");
+    lines.push("  ── Stale findings (files changed since stored) ──");
+    for (let i = 0; i < topic.staleFindings.length; i++) {
+      const f = topic.staleFindings[i];
+      const date = new Date(f.timestamp).toLocaleDateString("en-US", {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+      });
+      const text = f.text.replace(/\n/g, " ").slice(0, 80);
+      lines.push(`  ⚠️ ${date}  ${f.stage}  ${text}`);
+    }
+  }
+
+  // Cross-topic file index
+  const fileIndex = buildFileTopicIndex(cwd);
+  const relatedFiles = topic.files.filter(f => {
+    const topics = fileIndex.get(f);
+    return topics && topics.length > 1;
+  });
+  if (relatedFiles.length > 0) {
+    lines.push("");
+    lines.push("  ── Shared files (other topics) ──");
+    for (const file of relatedFiles.slice(0, 8)) {
+      const topics = fileIndex.get(file)!.filter(t => t !== topic.name);
+      lines.push(`  ${file}  → also in: ${topics.join(", ")}`);
+    }
+    if (relatedFiles.length > 8) {
+      lines.push(`  ...and ${relatedFiles.length - 8} more shared files`);
+    }
   }
 
   lines.push("");
@@ -539,6 +667,68 @@ export function memoryForget(cwd: string, topic: string): boolean {
   saveMemory(cwd, memory);
   _topicCountCache = null;
   return true;
+}
+
+export function memoryRename(cwd: string, oldName: string, newName: string): boolean {
+  const memory = loadMemory(cwd);
+  if (!memory.topics[oldName]) return false;
+  if (memory.topics[newName]) {
+    // Merge into existing target topic
+    const source = memory.topics[oldName];
+    const target = memory.topics[newName];
+    if (source && target) {
+      const combinedFindings = [...source.findings, ...target.findings]
+        .sort((x, y) => y.timestamp - x.timestamp)
+        .slice(0, 20);
+      target.findings = combinedFindings;
+      target.forkCount += source.forkCount;
+      target.lastSeen = Math.max(target.lastSeen, source.lastSeen);
+      const fileSet = new Set([...target.files, ...source.files]);
+      target.files = Array.from(fileSet).sort();
+      if (source.staleFindings) {
+        if (!target.staleFindings) target.staleFindings = [];
+        target.staleFindings = [...source.staleFindings, ...target.staleFindings]
+          .sort((x, y) => y.timestamp - x.timestamp)
+          .slice(0, 30);
+      }
+    }
+    delete memory.topics[oldName];
+  } else {
+    memory.topics[newName] = { ...memory.topics[oldName], name: newName };
+    delete memory.topics[oldName];
+  }
+  saveMemory(cwd, memory);
+  _topicCountCache = null;
+  return true;
+}
+
+export function memoryDeleteFinding(cwd: string, topic: string, index: number): boolean {
+  const memory = loadMemory(cwd);
+  const entry = memory.topics[topic];
+  if (!entry) return false;
+  // index is 1-based as displayed to user
+  if (index < 1 || index > entry.findings.length) return false;
+  entry.findings.splice(index - 1, 1);
+  saveMemory(cwd, memory);
+  _topicCountCache = null;
+  return true;
+}
+
+/** Build a cross-topic file index: file path → list of topic names that reference it. */
+export function buildFileTopicIndex(cwd: string): Map<string, string[]> {
+  const memory = loadMemory(cwd);
+  const index = new Map<string, string[]>();
+  for (const [topicName, topic] of Object.entries(memory.topics)) {
+    for (const file of topic.files) {
+      const topics = index.get(file);
+      if (topics) {
+        if (!topics.includes(topicName)) topics.push(topicName);
+      } else {
+        index.set(file, [topicName]);
+      }
+    }
+  }
+  return index;
 }
 
 // ── Topic auto-merge ───────────────────────────────────────
@@ -584,6 +774,14 @@ export function mergeSimilarTopics(cwd: string, threshold = 0.6): string[] {
         // Merge file list
         const fileSet = new Set([...target.files, ...source.files]);
         target.files = Array.from(fileSet).sort();
+
+        // Merge stale findings
+        if (source.staleFindings && source.staleFindings.length > 0) {
+          if (!target.staleFindings) target.staleFindings = [];
+          target.staleFindings = [...source.staleFindings, ...target.staleFindings]
+            .sort((x, y) => y.timestamp - x.timestamp)
+            .slice(0, 30);
+        }
 
         delete memory.topics[b];
         visited.add(b);

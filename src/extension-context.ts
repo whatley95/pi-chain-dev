@@ -531,6 +531,6 @@ export function updateForkCostStatus(ctx: ExtensionContext): void {
   }
 }
 
-export function logError(cwd: string, context: string, err: unknown): void {
-  logErrorToFile(cwd, context, err);
+export function logError(cwd: string, context: string, err: unknown, meta?: Record<string, unknown>): void {
+  logErrorToFile(cwd, context, err, meta);
 }

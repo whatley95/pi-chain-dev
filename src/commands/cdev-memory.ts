@@ -11,6 +11,8 @@ import {
   formatTopicDetail,
   memoryClear,
   memoryForget,
+  memoryRename,
+  memoryDeleteFinding,
   memoryGetTopic,
   memoryTopicCount,
   mergeSimilarTopics,
@@ -196,6 +198,36 @@ export async function handleMemory(args: string, ctx: ExtensionContext, config: 
     const enable = lower === "memory on";
     writeAgentSetting("memory", enable);
     ctx.ui.notify(`Project memory ${enable ? "ON" : "OFF"}`, "info");
+    return true;
+  }
+
+  // ── Subcommand: memory rename <old> <new> ──
+  const renameMatch = trimmed.match(/^memory rename\s+(\S+)\s+(\S+)$/i);
+  if (renameMatch) {
+    const oldName = renameMatch[1].trim();
+    const newName = renameMatch[2].trim();
+    if (!oldName || !newName) {
+      ctx.ui.notify("Usage: /cdev memory rename <old-topic> <new-topic>", "warn");
+      return true;
+    }
+    const ok = memoryRename(ctx.cwd, oldName, newName);
+    if (ok) ctx.ui.notify(`Renamed topic "${oldName}" → "${newName}".`, "info");
+    else ctx.ui.notify(`Topic "${oldName}" not found.`, "warn");
+    return true;
+  }
+
+  // ── Subcommand: memory delete <topic> <index> ──
+  const deleteMatch = trimmed.match(/^memory delete\s+(\S+)\s+(\d+)$/i);
+  if (deleteMatch) {
+    const topic = deleteMatch[1].trim();
+    const index = parseInt(deleteMatch[2], 10);
+    if (!topic || index < 1) {
+      ctx.ui.notify("Usage: /cdev memory delete <topic> <#n>", "warn");
+      return true;
+    }
+    const ok = memoryDeleteFinding(ctx.cwd, topic, index);
+    if (ok) ctx.ui.notify(`Deleted finding #${index} from topic "${topic}".`, "info");
+    else ctx.ui.notify(`Topic "${topic}" has no finding #${index}.`, "warn");
     return true;
   }
 

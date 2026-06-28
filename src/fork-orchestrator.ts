@@ -420,7 +420,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
     const finalResult: ForkResult = {
       task,
-      exitCode: planResult.exitCode > 0 ? planResult.exitCode : 0,
+      exitCode: planResult.exitCode !== 0 ? planResult.exitCode : 0,
       messages: planResult.messages,
       stderr: [stage1Result.stderr, planResult.stderr].filter(Boolean).join("\n"),
       usage: combinedUsage,
@@ -467,7 +467,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   const finalResult: ForkResult = {
     task,
-    exitCode: stage2Result.exitCode > 0 ? stage2Result.exitCode : 0,
+    exitCode: stage2Result.exitCode !== 0 ? stage2Result.exitCode : 0,
     messages: stage2Result.messages,
     stderr: [stage1Result.stderr, stage2Result.stderr].filter(Boolean).join("\n"),
     usage: combinedUsage,
