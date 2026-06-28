@@ -84,8 +84,11 @@ function parseStageProfile(raw: unknown): StageProfile | undefined {
   const profile = raw as Record<string, unknown>;
   const provider = typeof profile.provider === "string" ? profile.provider.trim() : "";
   const id = typeof profile.id === "string" ? profile.id.trim() : "";
-  if (!provider || !id || !isThinkingLevel(profile.thinking)) return undefined;
-  return { provider, id, thinking: profile.thinking as ForkThinkingLevel };
+  if (!provider || !id) return undefined;
+  const thinking = isThinkingLevel(profile.thinking)
+    ? (profile.thinking as ForkThinkingLevel)
+    : "minimal";
+  return { provider, id, thinking };
 }
 
 function resolveEffortProfilesFromPiFork(

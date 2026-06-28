@@ -213,6 +213,8 @@ function validateAutoForkParams(params: Record<string, unknown>): { valid: true;
   if (params.parallel !== undefined) {
     if (typeof params.parallel !== "number" || !Number.isFinite(params.parallel)) {
       errors.push("parallel must be a number");
+    } else if (params.parallel < 1 || params.parallel > 3) {
+      errors.push("parallel must be between 1 and 3");
     } else {
       out.parallel = params.parallel;
     }

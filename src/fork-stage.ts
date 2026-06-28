@@ -56,10 +56,21 @@ class Semaphore {
   }
 }
 
-const stageSemaphore = new Semaphore(3);
+const stageSemaphores = new Map<string, Semaphore>();
+const DEFAULT_SEMAPHORE_MAX = 3;
+
+function getStageSemaphore(cwd: string): Semaphore {
+  let sem = stageSemaphores.get(cwd);
+  if (!sem) {
+    sem = new Semaphore(DEFAULT_SEMAPHORE_MAX);
+    stageSemaphores.set(cwd, sem);
+  }
+  return sem;
+}
 
 export function setStageSemaphoreMaxConcurrency(n: number): void {
-  stageSemaphore.setMaxConcurrency(Math.max(1, n));
+  // Kept for backward compatibility; creates a default semaphore for empty cwd.
+  getStageSemaphore('').setMaxConcurrency(Math.max(1, n));
 }
 
 let testPiSpawnResolver: (() => { command: string; prefixArgs: string[] }) | null = null;
@@ -94,13 +105,14 @@ export function prepareSharedSession(sanitizedJsonl: string): PreparedSession {
     existing.refCount++;
     return existing.prepared;
   }
-  // Evict oldest entry when at capacity
+  // Evict oldest unused entry when at capacity; skip entries still in use
   if (sharedPreparedSessions.size >= MAX_SHARED_SESSIONS) {
-    const firstKey = sharedPreparedSessions.keys().next().value;
-    if (firstKey !== undefined) {
-      const entry = sharedPreparedSessions.get(firstKey);
-      if (entry) cleanupTempDir("", entry.prepared.tmpDir);
-      sharedPreparedSessions.delete(firstKey);
+    for (const [key, entry] of sharedPreparedSessions) {
+      if (entry.refCount === 0) {
+        cleanupTempDir("", entry.prepared.tmpDir);
+        sharedPreparedSessions.delete(key);
+        break;
+      }
     }
   }
   const tmp = writeTempSessionJsonl(sanitizedJsonl);
@@ -391,7 +403,7 @@ export async function runStageWithRetry(opts: RunStageOptions): Promise<ForkResu
   const stageStart = Date.now();
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (opts.signal?.aborted) break;
-    const release = await stageSemaphore.acquire();
+    const release = await getStageSemaphore(opts.cwd).acquire();
     try {
       const result = await runStageCore({ ...opts, stageLabel: attempt > 0 ? `${opts.stageLabel} (retry ${attempt})` : opts.stageLabel });
       result.durationMs = Date.now() - stageStart;

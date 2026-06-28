@@ -224,7 +224,7 @@ function globCount(cwd: string, pattern: string): number {
   try {
     let count = 0;
     function walk(dir: string, depth: number): void {
-      if (depth > 3) return;
+      if (depth > 5) return;
       for (const entry of readdirSync(dir)) {
         if (entry === "node_modules" || entry === ".git" || entry === ".pi" || entry === "dist" || entry === "build") continue;
         const full = join(dir, entry);

@@ -233,12 +233,16 @@ function hashSessionEntries(entries: unknown[]): string {
     const hash = createHash("sha256").update(String(entries.length)).update(stableStringify(sample)).digest("hex").slice(0, 16);
     return hash;
   } catch (err) {
-    // Fall back to length + timestamp if entries contain non-serializable values.
-    // Use timestamp to avoid collisions between different sessions with the same entry count.
-    logWarn("", "hashSessionEntries", "stableStringify failed, falling back to length+timestamp hash", { error: String(err) });
+    // Fall back to content-based hash from individual entry serialization.
+    logWarn("", "hashSessionEntries", "stableStringify failed, falling back to content-based hash", { error: String(err) });
+    // Use a deterministic fallback (not Date.now()) so cache stays stable across calls
+    const fallbackContent = entries.slice(-50).map((e, i) => {
+      try { return String(i) + JSON.stringify(e, (_k, v) => typeof v === "function" ? "[Function]" : v).slice(0, 200); }
+      catch { return String(i) + "[unserializable]"; }
+    }).join("|");
     const hash = createHash("sha256")
       .update(String(entries.length))
-      .update(String(Date.now()))
+      .update(fallbackContent)
       .digest("hex").slice(0, 16);
     return hash;
   }
@@ -406,7 +410,7 @@ export function resolveStageProfiles(
     return {
       stage1: { provider: "", id: "", thinking: "minimal" },
       stage2: { provider: "", id: "", thinking: "xhigh" },
-      warning: "cdev is not configured. Add 'pi-chain-dev' to settings.json with stage1 and stage2 profiles.\n\nExample:\n{\n  \"pi-chain-dev\": {\n    \"stage1\": { \"provider\": \"openai-codex\", \"id\": \"gpt-5-mini\", \"thinking\": \"minimal\" },\n    \"stage2\": { \"provider\": \"opencode-go\", \"id\": \"deepseek-v4-flash\", \"thinking\": \"xhigh\" }\n  }\n}",
+      warning: "cdev is not configured. Add 'pi-chain-dev' to settings.json with stage1 and stage2 profiles.\n\nExample:\n{\n  \"pi-chain-dev\": {\n    \"stage1\": { \"provider\": \"openai\", \"id\": \"gpt-5-mini\", \"thinking\": \"minimal\" },\n    \"stage2\": { \"provider\": \"openai\", \"id\": \"deepseek-v4-flash\", \"thinking\": \"xhigh\" }\n  }\n}",
     };
   }
 

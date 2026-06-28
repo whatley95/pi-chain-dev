@@ -111,7 +111,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
     const failedRuns = workerRuns.filter((w) => w.result.exitCode !== 0 || !getFinalAssistantText(w.result.messages));
     const backupProfile = stage1BackupProfile && stage1BackupProfile.provider && stage1BackupProfile.id ? stage1BackupProfile : stage1Profile;
-    const useBackup = opts.parallelBackup !== false && failedRuns.length > 0 && backupProfile;
+    const useBackup = opts.parallelBackup === true && failedRuns.length > 0 && backupProfile;
     let backupRuns: { result: ForkResult; subTask: ParallelSubTask; index: number }[] | undefined;
 
     if (useBackup) {
@@ -547,7 +547,9 @@ export function shouldReExplore(findings: Stage1Findings | null, verify: boolean
   if (findings.findings.length === 0) return { should: true, reason: "stage 1 returned zero findings" };
   if (findings.findings.length < 3 && !verify) return { should: true, reason: `only ${findings.findings.length} finding(s); likely insufficient coverage` };
   const lowConfidenceCount = countLowConfidenceFindings(findings);
-  if (lowConfidenceCount / findings.findings.length > 0.5) return { should: true, reason: `${Math.round((lowConfidenceCount / findings.findings.length) * 100)}% of findings are low confidence` };
+  const meaningfulFindings = findings.findings.filter(f => f.observation && f.observation.trim().length > 0);
+  const denominator = Math.max(1, meaningfulFindings.length || findings.findings.length);
+  if (lowConfidenceCount / denominator > 0.5) return { should: true, reason: `${Math.round((lowConfidenceCount / denominator) * 100)}% of findings are low confidence` };
   if (findings.openQuestions?.some((q) => /critical|blocker|unknown/i.test(q))) return { should: true, reason: "open questions contain critical/blocker unknowns" };
   return { should: false };
 }
@@ -562,6 +564,11 @@ export function validateStage1Findings(findings: Stage1Findings, source: string)
   const withObservations = findings.findings.filter(f => f.observation && f.observation.trim().length > 0);
   if (withObservations.length === 0) {
     return { valid: false, reason: `${source}: findings lack observations` };
+  }
+  // Reject if all findings are low-confidence -- not actionable regardless of count
+  const allLowConfidence = findings.findings.every(f => f.confidence === 'low');
+  if (allLowConfidence) {
+    return { valid: false, reason: `${source}: all ${findings.findings.length} findings are low confidence; insufficient quality` };
   }
   return { valid: true };
 }

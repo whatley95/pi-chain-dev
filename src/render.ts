@@ -38,7 +38,7 @@ function readJsonSafe(p: string): Record<string, unknown> | null {
 
 /** TTL cache for isThemed() to avoid disk reads on every render call. */
 let _themedCache: { cwd: string; result: boolean; ts: number } | null = null;
-const THEMED_CACHE_TTL_MS = 5000; // 5 seconds
+const THEMED_CACHE_TTL_MS = 300000; // 5 minutes (was 5s — settings rarely change mid-session)
 
 function isThemed(cwd?: string): boolean {
   const cacheKey = cwd ?? "";

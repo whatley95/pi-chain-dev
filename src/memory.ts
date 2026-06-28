@@ -174,7 +174,12 @@ export function extractFilePaths(text: string, cwd: string): string[] {
   return paths;
 }
 
+const _extractTopicCache = new Map();
+
 export function extractTopicFromTask(task: string, filePaths: string[]): string | null {
+  const _key = task + "|" + filePaths.join(",");
+  if (_extractTopicCache.has(_key)) return _extractTopicCache.get(_key);
+
   // Strategy 1: find dominant directory from file paths (requires ≥3 files, >30% share)
   if (filePaths.length > 0) {
     const dirCounts = new Map<string, number>();
@@ -220,7 +225,9 @@ export function extractTopicFromTask(task: string, filePaths: string[]): string 
   const words = task.split(/\s+/);
   const filtered = words.filter(w => !/^(the|a|an|is|are|was|were|that|this|for|with|about|from|into)$/i.test(w));
   const topic = filtered.slice(0, 2).join(" ").toLowerCase();
-  return topic.length > 2 ? topic.replace(/\s+/g, "-") : null;
+  const _r = topic.length > 2 ? topic.replace(/\s+/g, "-") : null;
+  _extractTopicCache.set(_key, _r);
+  return _r;
 }
 
 // ── Index findings after a fork ──────────────────────────
@@ -602,7 +609,7 @@ export function memoryTopicCount(cwd: string): number {
     try {
       if (existsSync(memoryPath)) {
         const mtime = statSync(memoryPath).mtimeMs;
-        if (Math.floor(mtime) === Math.floor(_topicCountCache.mtime)) return _topicCountCache.count;
+        if (mtime === _topicCountCache.mtime) return _topicCountCache.count;
       } else if (_topicCountCache.count === 0) {
         return 0;
       }
@@ -613,7 +620,7 @@ export function memoryTopicCount(cwd: string): number {
   const memory = loadMemory(cwd);
   const count = Object.keys(memory.topics).length;
   try {
-    const mtime = existsSync(memoryPath) ? Math.floor(statSync(memoryPath).mtimeMs) : 0;
+    const mtime = existsSync(memoryPath) ? statSync(memoryPath).mtimeMs : 0;
     _topicCountCache = { cwd, count, mtime };
   } catch (err) {
     logWarn(cwd, "memoryTopicCount", "failed to update topic count cache", { error: String(err) });
