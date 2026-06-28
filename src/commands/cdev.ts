@@ -1,6 +1,29 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { loadConfig, type AutoForkConfig } from "../config.js";
+import { listSessions, getSession, formatHistory, formatSessionRecord, purgeOldSessions, getLastSession } from "../history.js";
+import { memoryClear } from "../memory.js";
+import { getErrorCount, clearErrorLog } from "../logger.js";
+import {
+  getCdevVersion,
+  resolveSignature,
+  resolveStageProfiles,
+  estimateSessionSize,
+  getSessionForkCost,
+  resetSessionForkCost,
+  checkSessionCostAlert,
+  estimateForkCost,
+  formatModelPrice,
+  formatCost,
+} from "../extension-context.js";
+import { handleScan } from "./cdev-scan.js";
+import { handleMemory, memoryTopicCount } from "./cdev-memory.js";
+import { handleMap, loadProjectMap } from "./cdev-map.js";
+import { CDEV_SUBCOMMAND_HELP } from "./cdev-help.js";
+import { readAgentSettings, readProjectSettings, writeAgentSetting, writeProjectSetting } from "../settings-helpers.js";
+import { normalizeYoloConfig } from "../types.js";
 
 function sanitizeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_").replace(/(^_+|_+$)/g, "");
@@ -25,29 +48,18 @@ function levenshtein(a: string, b: string): number {
   }
   return prev[b.length];
 }
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig, type AutoForkConfig } from "../config.js";
-import { listSessions, getSession, formatHistory, formatSessionRecord, purgeOldSessions, getLastSession } from "../history.js";
-import { memoryClear } from "../memory.js";
-import { getErrorCount, clearErrorLog } from "../logger.js";
-import {
-  getCdevVersion,
-  resolveSignature,
-  resolveStageProfiles,
-  estimateSessionSize,
-  getSessionForkCost,
-  resetSessionForkCost,
-  checkSessionCostAlert,
-  estimateForkCost,
-  formatModelPrice,
-} from "../extension-context.js";
-import { handleScan } from "./cdev-scan.js";
-import { handleMemory, memoryTopicCount } from "./cdev-memory.js";
-import { handleMap, loadProjectMap } from "./cdev-map.js";
-import { CDEV_SUBCOMMAND_HELP } from "./cdev-help.js";
-import { readAgentSettings, readProjectSettings, writeAgentSetting, writeProjectSetting } from "../settings-helpers.js";
-import { formatCost } from "../extension-context.js";
-import { normalizeYoloConfig } from "../types.js";
+
+function clearReports(reportsDir: string): number {
+  if (!existsSync(reportsDir)) return 0;
+  let cleared = 0;
+  for (const entry of readdirSync(reportsDir)) {
+    if (entry.endsWith(".md")) {
+      unlinkSync(join(reportsDir, entry));
+      cleared++;
+    }
+  }
+  return cleared;
+}
 
 function writeProjectThemed(cwd: string, enable: boolean): void {
   writeProjectSetting(cwd, "themed", enable);
@@ -59,7 +71,7 @@ export function registerCdevCommand(
   updateAutoStatus: (ctx: ExtensionContext) => void,
 ): void {
   pi.registerCommand("cdev", {
-    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, read <paths>, grep <pattern>, trace <symbol>, explain <path|symbol>, verify <task>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off, read-enforcement on|off, todo <name>",
+    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, read <paths>, grep <pattern>, trace <symbol>, explain <path|symbol>, verify <task>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic>, themed on|off, todo <name>",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
 
@@ -97,15 +109,6 @@ export function registerCdevCommand(
         return;
       }
 
-      // ── Subcommand: read-enforcement on/off ──
-      const readEnforcementMatch = trimmed.match(/^read-enforcement\s+(on|off)$/);
-      if (readEnforcementMatch) {
-        const enable = readEnforcementMatch[1] === "on";
-        writeAgentSetting("enforceCdevTools", enable);
-        ctx.ui.notify(`cdev read-enforcement ${enable ? "ON" : "OFF"} — ${enable ? "direct read tool calls for source files will be blocked; use /cdev read instead" : "direct read tool calls are allowed"}`, "info");
-        return;
-      }
-
       // ── Subcommand: todo <name> ──
       const todoMatch = trimmed.match(/^todo\s+(.+)$/);
       if (todoMatch) {
@@ -117,13 +120,14 @@ export function registerCdevCommand(
         const sessionId = ctx.sessionManager?.getHeader?.()
           ? ((ctx.sessionManager.getHeader() as Record<string, unknown>)?.id as string | undefined) ?? "unknown"
           : "unknown";
-        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const now = new Date();
+        const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
         const safeName = sanitizeFileName(rawName);
         const fileName = `${sessionId}_${timestamp}_${safeName}.md`;
         const todosDir = join(ctx.cwd, ".pi", "cdev", "todos");
         const filePath = join(todosDir, fileName);
         mkdirSync(todosDir, { recursive: true });
-        const template = `# TODO: ${rawName}\n\nCreated: ${new Date().toISOString()}\nSession: ${sessionId}\n\n## Goal\n\n\n## Checklist\n\n- [ ] \n\n## Notes\n\n`;
+        const template = `# TODO: ${rawName}\n\nCreated: ${now.toISOString()}\nSession: ${sessionId}\n\n## Goal\n\n\n## Checklist\n\n- [ ] \n\n## Notes\n\n`;
         writeFileSync(filePath, template, "utf-8");
         const relativePath = `.pi/cdev/todos/${fileName}`;
         ctx.ui.notify(`Created todo: ${relativePath}`, "info");
@@ -216,32 +220,14 @@ export function registerCdevCommand(
       // ── Subcommand: clear ──
       if (trimmed === "clear") {
         memoryClear(ctx.cwd);
-        let cleared = 0;
-        const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
-        if (existsSync(reportsDir)) {
-          for (const entry of readdirSync(reportsDir)) {
-            if (entry.endsWith(".md")) {
-              unlinkSync(join(reportsDir, entry));
-              cleared++;
-            }
-          }
-        }
+        const cleared = clearReports(join(ctx.cwd, ".pi", "cdev", "reports"));
         ctx.ui.notify(`Cleared cdev project memory${cleared > 0 ? ` + ${cleared} report${cleared !== 1 ? "s" : ""}` : ""}.`, "info");
         return;
       }
 
       // ── Subcommand: clear reports ──
       if (trimmed === "clear reports") {
-        const reportsDir = join(ctx.cwd, ".pi", "cdev", "reports");
-        let cleared = 0;
-        if (existsSync(reportsDir)) {
-          for (const entry of readdirSync(reportsDir)) {
-            if (entry.endsWith(".md")) {
-              unlinkSync(join(reportsDir, entry));
-              cleared++;
-            }
-          }
-        }
+        const cleared = clearReports(join(ctx.cwd, ".pi", "cdev", "reports"));
         ctx.ui.notify(`Cleared ${cleared} cdev report${cleared !== 1 ? "s" : ""}.`, "info");
         return;
       }
@@ -557,99 +543,7 @@ export function registerCdevCommand(
 
       // ── Subcommand: status ──
       if (trimmed === "status" || trimmed === "info") {
-        const resolved = resolveStageProfiles(config);
-        const isConfigured = resolved.stage1.provider && resolved.stage1.id && resolved.stage2.provider && resolved.stage2.id;
-        const sessionSize = estimateSessionSize(ctx);
-        const sessionCost = getSessionForkCost(ctx.cwd);
-        const costAlert = checkSessionCostAlert(config, ctx.cwd);
-        const sessions = listSessions(ctx.cwd);
-        const now = Date.now();
-        const oneDay = 24 * 60 * 60 * 1000;
-        let todayCost = 0;
-        let totalCost = 0;
-        for (const s of sessions) {
-          const c = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
-          totalCost += c;
-          if (new Date(s.startedAt).getTime() > now - oneDay) {
-            todayCost += c;
-          }
-        }
-
-        const lines: string[] = [
-          "── cdev status ─────────────────────────────────────",
-          "",
-          `  👤 ${resolveSignature(config)}`,
-          `  Version:          ${getCdevVersion(ctx.cwd)}`,
-          "",
-        ];
-        if (!isConfigured) {
-          lines.push(`  ⚠️  ${resolved.warning ?? "cdev is not configured. Use /cdev-model to set scout and forge models."}`);
-          lines.push("");
-        }
-        lines.push(`  Current model:    ${ctx.model ? ctx.model.id : "none"}`);
-        lines.push(`  Scout A:          ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`);
-        if (config.stage1b?.provider && config.stage1b?.id) {
-          lines.push(`  Scout B:          ${config.stage1b.provider}:${config.stage1b.id}  •  ${config.stage1b.thinking}`);
-        } else {
-          lines.push(`  Scout B:          ↳ Scout A (${config.stage1.id})`);
-        }
-        if (config.stage1c?.provider && config.stage1c?.id) {
-          lines.push(`  Scout C:          ${config.stage1c.provider}:${config.stage1c.id}  •  ${config.stage1c.thinking}`);
-        } else {
-          lines.push(`  Scout C:          ↳ Scout A (${config.stage1.id})`);
-        }
-        if (config.stage1Backup?.provider && config.stage1Backup?.id) {
-          lines.push(`  Backup scout:     ${config.stage1Backup.provider}:${config.stage1Backup.id}  •  ${config.stage1Backup.thinking}`);
-        } else {
-          lines.push(`  Backup scout:     ↳ Scout A (${config.stage1.id})`);
-        }
-        lines.push(`  Forge:            ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`);
-        lines.push(`  Review:           ${config.review ? `${config.review.provider}:${config.review.id}  •  ${config.review.thinking}` : `↳ Forge (${config.stage2.id})`}`);
-        lines.push(`  Research:         ${config.research ? `${config.research.provider}:${config.research.id}  •  ${config.research.thinking}` : `↳ Scout A (${config.stage1.id})`}`);
-        lines.push(`  Advisor:          ${config.advisor ? `${config.advisor.provider}:${config.advisor.id}  •  ${config.advisor.thinking}` : `↳ Forge (${config.stage2.id})`}`);
-        lines.push(`  Model prices:     Scout A ${formatModelPrice(config.stage1.id)}  |  Forge ${formatModelPrice(config.stage2.id)}`);
-        lines.push(`  Auto-trigger:     ${config.auto ? "⚡ ON (sends steer every 3 turns to prompt cdev use)" : "OFF (agent uses cdev only when asked or it decides)"}`);
-        lines.push(`  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`);
-        lines.push(`  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`);
-        lines.push(`  Project memory:   ${config.memory ? "ON" : "OFF"}`);
-        lines.push(`  Memory auto-refresh: ${config.memoryAutoRefresh ? "ON" : "OFF"}`);
-        lines.push(`  Auto-verify:      ${config.autoVerify ? "✓ ON (scout ×2)" : "OFF (scout ×1)"}`);
-        lines.push(`  Multi scouts:     ${config.parallel && config.parallel > 1 ? `${config.parallel} (backup ${config.parallelBackup ? "on" : "off"})` : "OFF"}`);
-        lines.push(`  Scout timeout:    ${((config.profileTimeouts?.scout ?? config.scoutTimeoutMs ?? 600_000) / 1000).toFixed(0)}s${config.profileTimeouts?.scout ? " (profile override)" : ""}`);
-        lines.push(`  Forge timeout:    ${((config.profileTimeouts?.forge ?? config.forgeTimeoutMs ?? 180_000) / 1000).toFixed(0)}s${config.profileTimeouts?.forge ? " (profile override)" : ""}`);
-        const yolo = normalizeYoloConfig(config.yolo);
-        lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, ${yolo.autoApply === "auto" ? "auto-edit" : yolo.autoApply === "propose" ? "propose fixes" : "main agent fixes"})` : "OFF"}`);
-        const hasMap = !!loadProjectMap(ctx.cwd);
-        lines.push(`  Project map:      ${hasMap ? "🗺️ present  /cdev map show" : "— missing  /cdev map"}`);
-        const usage = ctx.getContextUsage?.();
-        const usageLine = usage
-          ? `  Context usage:    ${usage.tokens !== null ? `${usage.tokens.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens  ${usage.percent !== null ? `(${usage.percent.toFixed(1)}%)` : ""}` : "unknown"}`
-          : "";
-        lines.push(`  Session size:     ${sessionSize} message${sessionSize === 1 ? "" : "s"}${sessionSize >= 40 ? "  ⚠️ consider /compact" : ""}`);
-        if (usageLine) lines.push(usageLine);
-        lines.push(`  Context limit:    ${(usage?.contextWindow ?? config.modelContextLimit ?? 262_144).toLocaleString()} tokens  (auto-compact ${config.autoCompactOnLimit ? "ON" : "OFF"}${typeof config.tokenEstimationCharsPerToken === "number" ? ", " + config.tokenEstimationCharsPerToken + " chars/token fallback" : ""})`);
-        lines.push(`  Session cost:     ${formatCost(sessionCost)}${config.maxSessionCost ? ` / ${formatCost(config.maxSessionCost)}` : ""}${costAlert ? `  ${costAlert.level === "critical" ? "🔴" : "🟡"} ${(costAlert.percent * 100).toFixed(0)}% of budget` : ""}`);
-        lines.push(`  Today's cost:     ${formatCost(todayCost)}  (cdev forks only — excludes main agent usage)`);
-        if (config.themed) {
-          lines.push(`  Themed TUI:       🎨 ON`);
-        }
-        lines.push(`  Offline mode:     ${config.offline ? "ON" : "OFF"}`);
-        lines.push(`  Extensions:       ${config.extensions === null ? "inherit" : config.extensions.length === 0 ? "none" : config.extensions.join(", ")}`);
-        lines.push("");
-        if (sessions.length > 0) {
-          lines.push(`  Sessions:         ${sessions.length} (7-day window, ${formatCost(totalCost)} total)`);
-        }
-        const topicCount = memoryTopicCount(ctx.cwd);
-        if (topicCount > 0 && config.memory) {
-          lines.push(`  Project memory:   ${topicCount} topic${topicCount > 1 ? "s" : ""}  /cdev recall`);
-        }
-        const errorCount = getErrorCount(ctx.cwd);
-        if (errorCount > 0) {
-          lines.push(`  Error log:        ${errorCount} error${errorCount > 1 ? "s" : ""}  /cdev clear error to wipe`);
-        }
-        lines.push("");
-        lines.push("─────────────────────────────────────────────────────");
-        ctx.ui.notify(lines.join("\n"), "info");
+        ctx.ui.notify(formatCdevStatus(ctx, config), "info");
         return;
       }
 
@@ -768,6 +662,102 @@ export function registerCdevCommand(
       pi.sendUserMessage(`Use cdev to: ${trimmed}`, { triggerTurn: true, deliverAs: "steer" });
     },
   });
+}
+
+function formatCdevStatus(ctx: ExtensionContext, config: AutoForkConfig): string {
+  const resolved = resolveStageProfiles(config);
+  const isConfigured = resolved.stage1.provider && resolved.stage1.id && resolved.stage2.provider && resolved.stage2.id;
+  const sessionSize = estimateSessionSize(ctx);
+  const sessionCost = getSessionForkCost(ctx.cwd);
+  const costAlert = checkSessionCostAlert(config, ctx.cwd);
+  const sessions = listSessions(ctx.cwd);
+  const now = Date.now();
+  const oneDay = 24 * 60 * 60 * 1000;
+  let todayCost = 0;
+  let totalCost = 0;
+  for (const s of sessions) {
+    const c = (s.stage1?.cost ?? 0) + (s.stage2?.cost ?? 0);
+    totalCost += c;
+    if (new Date(s.startedAt).getTime() > now - oneDay) {
+      todayCost += c;
+    }
+  }
+
+  const lines: string[] = [
+    "── cdev status ─────────────────────────────────────",
+    "",
+    `  👤 ${resolveSignature(config)}`,
+    `  Version:          ${getCdevVersion(ctx.cwd)}`,
+    "",
+  ];
+  if (!isConfigured) {
+    lines.push(`  ⚠️  ${resolved.warning ?? "cdev is not configured. Use /cdev-model to set scout and forge models."}`);
+    lines.push("");
+  }
+  lines.push(`  Current model:    ${ctx.model ? ctx.model.id : "none"}`);
+  lines.push(`  Scout A:          ${config.stage1.provider}:${config.stage1.id}  •  ${config.stage1.thinking}`);
+  if (config.stage1b?.provider && config.stage1b?.id) {
+    lines.push(`  Scout B:          ${config.stage1b.provider}:${config.stage1b.id}  •  ${config.stage1b.thinking}`);
+  } else {
+    lines.push(`  Scout B:          ↳ Scout A (${config.stage1.id})`);
+  }
+  if (config.stage1c?.provider && config.stage1c?.id) {
+    lines.push(`  Scout C:          ${config.stage1c.provider}:${config.stage1c.id}  •  ${config.stage1c.thinking}`);
+  } else {
+    lines.push(`  Scout C:          ↳ Scout A (${config.stage1.id})`);
+  }
+  if (config.stage1Backup?.provider && config.stage1Backup?.id) {
+    lines.push(`  Backup scout:     ${config.stage1Backup.provider}:${config.stage1Backup.id}  •  ${config.stage1Backup.thinking}`);
+  } else {
+    lines.push(`  Backup scout:     ↳ Scout A (${config.stage1.id})`);
+  }
+  lines.push(`  Forge:            ${config.stage2.provider}:${config.stage2.id}  •  ${config.stage2.thinking}`);
+  lines.push(`  Review:           ${config.review ? `${config.review.provider}:${config.review.id}  •  ${config.review.thinking}` : `↳ Forge (${config.stage2.id})`}`);
+  lines.push(`  Research:         ${config.research ? `${config.research.provider}:${config.research.id}  •  ${config.research.thinking}` : `↳ Scout A (${config.stage1.id})`}`);
+  lines.push(`  Advisor:          ${config.advisor ? `${config.advisor.provider}:${config.advisor.id}  •  ${config.advisor.thinking}` : `↳ Forge (${config.stage2.id})`}`);
+  lines.push(`  Model prices:     Scout A ${formatModelPrice(config.stage1.id)}  |  Forge ${formatModelPrice(config.stage2.id)}`);
+  lines.push(`  Auto-trigger:     ${config.auto ? "⚡ ON (sends steer every 3 turns to prompt cdev use)" : "OFF (agent uses cdev only when asked or it decides)"}`);
+  lines.push(`  Custom prompts:   ${config.prompts?.explore || config.prompts?.review ? (config.promptsEnabled ? "📋 ON (custom)" : "📋✕ OFF (custom exists)") : "— (none)"}`);
+  lines.push(`  Cost footer:      ${config.costFooter ? "ON" : "OFF"}`);
+  lines.push(`  Project memory:   ${config.memory ? "ON" : "OFF"}`);
+  lines.push(`  Memory auto-refresh: ${config.memoryAutoRefresh ? "ON" : "OFF"}`);
+  lines.push(`  Auto-verify:      ${config.autoVerify ? "✓ ON (scout ×2)" : "OFF (scout ×1)"}`);
+  lines.push(`  Multi scouts:     ${config.parallel && config.parallel > 1 ? `${config.parallel} (backup ${config.parallelBackup ? "on" : "off"})` : "OFF"}`);
+  lines.push(`  Scout timeout:    ${((config.profileTimeouts?.scout ?? config.scoutTimeoutMs ?? 600_000) / 1000).toFixed(0)}s${config.profileTimeouts?.scout ? " (profile override)" : ""}`);
+  lines.push(`  Forge timeout:    ${((config.profileTimeouts?.forge ?? config.forgeTimeoutMs ?? 180_000) / 1000).toFixed(0)}s${config.profileTimeouts?.forge ? " (profile override)" : ""}`);
+  const yolo = normalizeYoloConfig(config.yolo);
+  lines.push(`  YOLO:             ${yolo.enabled ? `🚀 ON (max ${yolo.maxRounds} rounds, ${yolo.autoApply === "auto" ? "auto-edit" : yolo.autoApply === "propose" ? "propose fixes" : "main agent fixes"})` : "OFF"}`);
+  const hasMap = !!loadProjectMap(ctx.cwd);
+  lines.push(`  Project map:      ${hasMap ? "🗺️ present  /cdev map show" : "— missing  /cdev map"}`);
+  const usage = ctx.getContextUsage?.();
+  const usageLine = usage
+    ? `  Context usage:    ${usage.tokens !== null ? `${usage.tokens.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens  ${usage.percent !== null ? `(${usage.percent.toFixed(1)}%)` : ""}` : "unknown"}`
+    : "";
+  lines.push(`  Session size:     ${sessionSize} message${sessionSize === 1 ? "" : "s"}${sessionSize >= 40 ? "  ⚠️ consider /compact" : ""}`);
+  if (usageLine) lines.push(usageLine);
+  lines.push(`  Context limit:    ${(usage?.contextWindow ?? config.modelContextLimit ?? 262_144).toLocaleString()} tokens  (auto-compact ${config.autoCompactOnLimit ? "ON" : "OFF"}${typeof config.tokenEstimationCharsPerToken === "number" ? ", " + config.tokenEstimationCharsPerToken + " chars/token fallback" : ""})`);
+  lines.push(`  Session cost:     ${formatCost(sessionCost)}${config.maxSessionCost ? ` / ${formatCost(config.maxSessionCost)}` : ""}${costAlert ? `  ${costAlert.level === "critical" ? "🔴" : "🟡"} ${(costAlert.percent * 100).toFixed(0)}% of budget` : ""}`);
+  lines.push(`  Today's cost:     ${formatCost(todayCost)}  (cdev forks only — excludes main agent usage)`);
+  if (config.themed) {
+    lines.push(`  Themed TUI:       🎨 ON`);
+  }
+  lines.push(`  Offline mode:     ${config.offline ? "ON" : "OFF"}`);
+  lines.push(`  Extensions:       ${config.extensions === null ? "inherit" : config.extensions.length === 0 ? "none" : config.extensions.join(", ")}`);
+  lines.push("");
+  if (sessions.length > 0) {
+    lines.push(`  Sessions:         ${sessions.length} (7-day window, ${formatCost(totalCost)} total)`);
+  }
+  const topicCount = memoryTopicCount(ctx.cwd);
+  if (topicCount > 0 && config.memory) {
+    lines.push(`  Project memory:   ${topicCount} topic${topicCount > 1 ? "s" : ""}  /cdev recall`);
+  }
+  const errorCount = getErrorCount(ctx.cwd);
+  if (errorCount > 0) {
+    lines.push(`  Error log:        ${errorCount} error${errorCount > 1 ? "s" : ""}  /cdev clear error to wipe`);
+  }
+  lines.push("");
+  lines.push("─────────────────────────────────────────────────────");
+  return lines.join("\n");
 }
 
 function formatConfigValue(value: unknown): string {

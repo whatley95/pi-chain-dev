@@ -7,26 +7,10 @@ import { withAuditGuard, formatCost, estimateForkCost, getSessionForkCost } from
 import { saveSession } from "./history.js";
 import { writeReportFile } from "./report.js";
 import { loadProjectMap, splitTaskByMap, type ParallelSubTask } from "./project-map.js";
+import { fmtDuration, slugFromTask } from "./format.js";
+import { addUsage } from "./usage.js";
 import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, AutoForkConfig, YoloConfig, ConfidenceGateConfig } from "./types.js";
 import { emptyUsage, emptyFailedResult, evaluateConfidenceGates } from "./types.js";
-
-function fmtDuration(ms: number | undefined): string {
-  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function addUsage(into: UsageStats, usage: UsageStats | undefined | null): UsageStats {
-  if (!usage) return into;
-  into.input += usage.input || 0;
-  into.output += usage.output || 0;
-  into.cacheRead += usage.cacheRead || 0;
-  into.cacheWrite += usage.cacheWrite || 0;
-  into.cost += usage.cost || 0;
-  into.turns += usage.turns || 0;
-  into.contextTokens = Math.max(into.contextTokens, usage.contextTokens || 0);
-  return into;
-}
 
 export interface RunAutoForkOptions {
   cwd: string;
@@ -193,8 +177,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       durationMs: totalDuration,
     };
     details.stage1 = successful[0].result;
-    details.stage1b = workerRuns.find((w) => w.subTask.label === "B")?.result ?? null;
-    details.stage1c = workerRuns.find((w) => w.subTask.label === "C")?.result ?? null;
+    details.stage1b = workerRuns.length > 1 ? workerRuns[1].result : null;
+    details.stage1c = workerRuns.length > 2 ? workerRuns[2].result : null;
     details.stage1Backup = backupRuns?.[0]?.result ?? null;
     stage1Findings = mergedFindings;
     if (!stage1Findings) {
@@ -360,7 +344,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
       if (secondValidation.valid && secondFindings) {
         stage1Findings = mergeStage1Findings(stage1Findings, secondFindings);
         stage1Result = {
-          ...secondRun,
+          ...stage1Result,
           usage: stage1Usage,
           stderr: [stage1Result.stderr, secondRun.stderr].filter(Boolean).join("\n"),
         };
@@ -723,14 +707,6 @@ export interface RunYoloLoopOptions extends Omit<RunAutoForkOptions, "onProgress
   onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
 }
 
-export function yoloSlug(task: string): string {
-  return task
-    .replace(/[^a-zA-Z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .toLowerCase()
-    .slice(0, 60);
-}
-
 export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopResult> {
   const {
     cwd, task, forkSessionSnapshotJsonl, stage1Profile, stage1bProfile, stage2Profile,
@@ -739,18 +715,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
     extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate,
   } = opts;
 
-  const baseSlug = yoloSlug(task);
-
-  function addUsage(acc: UsageStats, usage: UsageStats | undefined | null): void {
-    if (!usage) return;
-    acc.input += usage.input || 0;
-    acc.output += usage.output || 0;
-    acc.cacheRead += usage.cacheRead || 0;
-    acc.cacheWrite += usage.cacheWrite || 0;
-    acc.cost += usage.cost || 0;
-    acc.turns += usage.turns || 0;
-    acc.contextTokens = Math.max(acc.contextTokens, usage.contextTokens || 0);
-  }
+  const baseSlug = slugFromTask(task);
 
   const totalUsage: UsageStats = emptyUsage();
 

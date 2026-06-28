@@ -41,7 +41,7 @@ class Semaphore {
   }
 
   private drain(): void {
-    if (this.count > 0 && this.queue.length > 0) {
+    while (this.count > 0 && this.queue.length > 0) {
       const next = this.queue.shift();
       next?.();
     }
@@ -495,20 +495,24 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
     };
 
     const flushLine = (line: string) => {
-      const parsed = processPiJsonLine(line, result);
-      if (parsed && onUpdate) {
-        let event: { type?: string; [key: string]: unknown };
-        try {
-          event = JSON.parse(line) as { type?: string; [key: string]: unknown };
-        } catch {
-          return parsed;
+      try {
+        const parsed = processPiJsonLine(line, result);
+        if (parsed && onUpdate) {
+          let event: { type?: string; [key: string]: unknown };
+          try {
+            event = JSON.parse(line) as { type?: string; [key: string]: unknown };
+          } catch {
+            return parsed;
+          }
+          const summary = summarizePiEvent(event as { type: string; [key: string]: unknown });
+          if (summary) {
+            onUpdate({ stage: stageLabel, activity: summary, cost: result.usage?.cost, tokens: result.usage?.contextTokens });
+          }
         }
-        const summary = summarizePiEvent(event as { type: string; [key: string]: unknown });
-        if (summary) {
-          onUpdate({ stage: stageLabel, activity: summary, cost: result.usage?.cost, tokens: result.usage?.contextTokens });
-        }
+        return parsed;
+      } catch {
+        return false;
       }
-      return parsed;
     };
 
     const onStdoutData = (chunk: Buffer) => {
@@ -532,8 +536,7 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
     proc.on("error", (err) => {
       if (!settled) {
         if (!result.stderr.trim()) result.stderr = err.message;
-        settled = true;
-        resolve(1);
+        settle(1);
       }
     });
 

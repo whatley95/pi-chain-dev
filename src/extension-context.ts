@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { stableStringify } from "./stable-stringify.js";
+import { fmtDuration } from "./format.js";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type AutoForkConfig } from "./config.js";
 import { getResultSummaryText, getFinalAssistantText } from "./runner-events.js";
@@ -27,8 +28,7 @@ function sessionCostFilePath(cwd: string): string {
 }
 
 export function recordForkCost(cwd: string, cost: number): void {
-  const current = getSessionForkCost(cwd);
-  const next = current + cost;
+  const next = (_sessionCostCache.get(cwd) ?? getSessionForkCost(cwd)) + cost;
   _sessionCostCache.set(cwd, next);
   try {
     const path = sessionCostFilePath(cwd);
@@ -78,6 +78,7 @@ export function formatCost(cost: number): string {
 export function checkCostBudget(config: AutoForkConfig, cwd: string, forkCost: number): { allowed: boolean; reason?: string } {
   const maxForkCost = config.maxForkCost ?? 0;
   const maxSessionCost = config.maxSessionCost ?? 0;
+  if (maxForkCost === 0 && maxSessionCost === 0) return { allowed: true };
   if (maxForkCost > 0 && forkCost > maxForkCost) {
     return { allowed: false, reason: `fork cost ${formatCost(forkCost)} exceeds maxForkCost ${formatCost(maxForkCost)}` };
   }
@@ -152,17 +153,7 @@ const MODEL_PRICES: Record<string, { input: number; output: number }> = {
 };
 
 function lookupModelPrice(modelId: string): { input: number; output: number } | undefined {
-  const normalized = modelId.toLowerCase();
-  if (MODEL_PRICES[normalized]) return MODEL_PRICES[normalized];
-  // Prefer exact matches, then prefix matches, then substring matches to avoid mis-pricing.
-  let prefixMatch: { input: number; output: number } | undefined;
-  let substringMatch: { input: number; output: number } | undefined;
-  for (const [key, price] of Object.entries(MODEL_PRICES)) {
-    if (normalized === key) return price;
-    if (!prefixMatch && key.startsWith(normalized)) prefixMatch = price;
-    if (!substringMatch && normalized.includes(key)) substringMatch = price;
-  }
-  return prefixMatch ?? substringMatch;
+  return MODEL_PRICES[modelId.toLowerCase()];
 }
 
 export function formatModelPrice(modelId: string): string {
@@ -409,12 +400,6 @@ export function resolveStageProfiles(
   }
 
   return { stage1, stage2 };
-}
-
-function fmtDuration(ms: number | undefined): string {
-  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 export function formatResultContent(result: ForkResult, details: AutoForkDetails): string {

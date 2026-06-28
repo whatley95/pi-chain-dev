@@ -46,7 +46,6 @@ export const CDEV_SUBCOMMAND_HELP = [
   "/cdev auto on|off      Toggle auto-trigger",
   "/cdev auto-verify on|off  Toggle automatic scout ×2",
   "/cdev auto-compact on|off Toggle auto-compact near model limit",
-  "/cdev read-enforcement on|off  Block direct read for source files; use /cdev read",
   "/cdev todo <name>       Create .pi/cdev/todos/<session-id>_<timestamp>_<name>.md",
   "/cdev yolo on|off      Toggle YOLO review loops",
   "/cdev yolo manual|propose|auto  Who applies fixes (auto = cdev edits files)",

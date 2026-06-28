@@ -13,7 +13,7 @@
  *   /cdev clear            — alias for memory clear
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, statSync, copyFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import type { CdevMemory, CdevTopic, CdevFindingRecord } from "./types.js";
@@ -98,44 +98,10 @@ function saveMemory(cwd: string, memory: CdevMemory): void {
   ensureDir(cwd);
   const path = getMemoryPath(cwd);
   const content = JSON.stringify(memory, null, 2) + "\n";
-  // Atomic write via temp + rename; fall back to direct write on Windows
-  // (renameSync can fail on Win32 when target has open handles)
-  if (process.platform === "win32") {
-    try {
-      writeFileSync(path, content, "utf-8");
-    } catch (err) {
-      logError(cwd, "saveMemory", err, { path });
-    }
-  } else {
-    const tmpPath = path + ".tmp";
-    try {
-      writeFileSync(tmpPath, content, "utf-8");
-      renameSync(tmpPath, path);
-    } catch (err) {
-      const code = err && typeof err === "object" ? (err as NodeJS.ErrnoException).code : undefined;
-      if (code === "EXDEV") {
-        // Cross-device temp: copy then remove temp.
-        try {
-          copyFileSync(tmpPath, path);
-          unlinkSync(tmpPath);
-        } catch (copyErr) {
-          logError(cwd, "saveMemory", copyErr, { path });
-        }
-      } else {
-        // Rename failed for another reason — fall back to direct write so we don't lose data.
-        logWarn(cwd, "saveMemory", "atomic rename failed; falling back to direct write", { path, error: String(err) });
-        try {
-          writeFileSync(path, content, "utf-8");
-        } catch (writeErr) {
-          logError(cwd, "saveMemory", writeErr, { path });
-        }
-        try {
-          unlinkSync(tmpPath);
-        } catch {
-          // tmp file may not exist; ignore
-        }
-      }
-    }
+  try {
+    writeFileSync(path, content, "utf-8");
+  } catch (err) {
+    logError(cwd, "saveMemory", err, { path });
   }
   _topicCountCache = null;
 }

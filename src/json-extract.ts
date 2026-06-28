@@ -5,18 +5,36 @@ export { isPlanReport, isStage1Findings, isStage2Report };
 
 export function extractJsonFromText(text: string): string | null {
   const trimmed = text.trim();
-  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) return fenceMatch[1].trim();
+
+  // Fast-path: raw JSON without fences (most common case)
+  if (trimmed.startsWith("{") && !trimmed.includes("```")) {
+    return extractBracedObject(trimmed);
+  }
+
+  // Prefer a json-tagged fence block; fall back to any last fenced block
+  const jsonFenceMatch = trimmed.match(/```(?:json)\s*\n([\s\S]*?)```/);
+  if (jsonFenceMatch) return jsonFenceMatch[1].trim();
+
+  const allFences = [...trimmed.matchAll(/```(?:[a-z]+)?\s*\n([\s\S]*?)```/g)];
+  if (allFences.length > 0) {
+    const last = allFences[allFences.length - 1];
+    return last[1].trim();
+  }
+
+  return extractBracedObject(trimmed);
+}
+
+function extractBracedObject(text: string): string | null {
   let start = -1;
-  for (let i = 0; i < trimmed.length; i++) {
-    if (trimmed[i] === "{") { start = i; break; }
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "{") { start = i; break; }
   }
   if (start === -1) return null;
   let depth = 0;
   let inString = false;
   let escape = false;
-  for (let i = start; i < trimmed.length; i++) {
-    const ch = trimmed[i];
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
     if (escape) {
       escape = false;
       continue;
@@ -27,7 +45,7 @@ export function extractJsonFromText(text: string): string | null {
     if (ch === "{") { depth++; continue; }
     if (ch === "}") {
       depth--;
-      if (depth === 0) return trimmed.slice(start, i + 1);
+      if (depth === 0) return text.slice(start, i + 1);
     }
   }
   return null;

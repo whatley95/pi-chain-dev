@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { logError } from "./logger.js";
+import { invalidateConfigCache } from "./config.js";
 
 export function writeAgentSetting(key: string, value: unknown): void {
   const agentDir = getAgentDir();
@@ -18,6 +19,7 @@ export function writeAgentSetting(key: string, value: unknown): void {
     logError(agentDir, "writeAgentSetting", err, { key });
     throw err;
   }
+  invalidateConfigCache();
 }
 
 export function readAgentSetting(key: string): unknown {
@@ -86,4 +88,5 @@ export function writeProjectSetting(cwd: string, key: string, value: unknown): v
     logError(cwd, "writeProjectSetting", err, { key });
     throw err;
   }
+  invalidateConfigCache(cwd);
 }

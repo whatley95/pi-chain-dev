@@ -5,7 +5,7 @@
  * under the "pi-chain-dev" key.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
 import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig, YoloConfig, ConfidenceGateConfig, ProfileTimeoutsConfig } from "./types.js";
@@ -47,9 +47,6 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   memory: true,
   memoryAutoRefresh: false,
   themed: false,
-    enforceCdevTools: true,
-    allowCdevReadEscalation: true,
-    cdevReadCooldownAfterBlocks: 2,
     autoVerify: false,
   parallel: 1,
   parallelBackup: false,
@@ -118,11 +115,43 @@ function resolveEffortProfilesFromPiFork(
   }
 }
 
+interface ConfigCacheEntry {
+  globalMtime: number;
+  projectMtime: number;
+  config: AutoForkConfig;
+}
+
+const _configCache = new Map<string, ConfigCacheEntry>();
+const MAX_CONFIG_CACHE_SIZE = 20;
+
+function getFileMtime(filePath: string): number {
+  try {
+    return statSync(filePath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+export function invalidateConfigCache(cwd?: string): void {
+  if (cwd) {
+    _configCache.delete(cwd);
+  } else {
+    _configCache.clear();
+  }
+}
+
 export function loadConfig(cwd: string): AutoForkConfig {
   const agentDir = getAgentDir();
   const globalPath = path.join(agentDir, "settings.json");
   const projectSettingsDir = path.join(cwd, ".pi");
   const projectPath = path.join(projectSettingsDir, "settings.json");
+
+  const globalMtime = getFileMtime(globalPath);
+  const projectMtime = getFileMtime(projectPath);
+  const cached = _configCache.get(cwd);
+  if (cached && cached.globalMtime === globalMtime && cached.projectMtime === projectMtime) {
+    return cached.config;
+  }
 
   // Load our namespace from global and project settings
   const globalConfig = readNamespacedConfig(cwd, globalPath);
@@ -163,9 +192,6 @@ export function loadConfig(cwd: string): AutoForkConfig {
     memory: projectConfig.memory ?? globalConfig.memory ?? DEFAULT_CONFIG.memory,
     memoryAutoRefresh: projectConfig.memoryAutoRefresh ?? globalConfig.memoryAutoRefresh ?? DEFAULT_CONFIG.memoryAutoRefresh,
     themed: projectConfig.themed ?? globalConfig.themed ?? DEFAULT_CONFIG.themed,
-    enforceCdevTools: projectConfig.enforceCdevTools ?? globalConfig.enforceCdevTools ?? DEFAULT_CONFIG.enforceCdevTools,
-    allowCdevReadEscalation: projectConfig.allowCdevReadEscalation ?? globalConfig.allowCdevReadEscalation ?? DEFAULT_CONFIG.allowCdevReadEscalation,
-    cdevReadCooldownAfterBlocks: projectConfig.cdevReadCooldownAfterBlocks ?? globalConfig.cdevReadCooldownAfterBlocks ?? DEFAULT_CONFIG.cdevReadCooldownAfterBlocks,
     autoVerify: projectConfig.autoVerify ?? globalConfig.autoVerify ?? DEFAULT_CONFIG.autoVerify,
     parallel: projectConfig.parallel ?? globalConfig.parallel ?? DEFAULT_CONFIG.parallel,
     parallelBackup: projectConfig.parallelBackup ?? globalConfig.parallelBackup ?? DEFAULT_CONFIG.parallelBackup,
@@ -201,6 +227,12 @@ export function loadConfig(cwd: string): AutoForkConfig {
       }
     }
   }
+
+  if (_configCache.size >= MAX_CONFIG_CACHE_SIZE) {
+    const firstKey = _configCache.keys().next().value;
+    if (firstKey !== undefined) _configCache.delete(firstKey);
+  }
+  _configCache.set(cwd, { globalMtime, projectMtime, config: resolved });
 
   return resolved;
 }
@@ -244,9 +276,6 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (typeof config.memory === "boolean") parsed.memory = config.memory;
     if (typeof config.memoryAutoRefresh === "boolean") parsed.memoryAutoRefresh = config.memoryAutoRefresh;
     if (typeof config.themed === "boolean") parsed.themed = config.themed;
-    if (typeof config.enforceCdevTools === "boolean") parsed.enforceCdevTools = config.enforceCdevTools;
-    if (typeof config.allowCdevReadEscalation === "boolean") parsed.allowCdevReadEscalation = config.allowCdevReadEscalation;
-    if (typeof config.cdevReadCooldownAfterBlocks === "number") parsed.cdevReadCooldownAfterBlocks = Math.max(0, Math.min(20, Number.isFinite(config.cdevReadCooldownAfterBlocks) ? config.cdevReadCooldownAfterBlocks : 3));
     if (typeof config.autoVerify === "boolean") parsed.autoVerify = config.autoVerify;
     if (typeof config.signature === "string") parsed.signature = config.signature;
     if (typeof config.parallel === "number") parsed.parallel = Math.max(1, Math.min(3, Number.isFinite(config.parallel) ? config.parallel : 1));

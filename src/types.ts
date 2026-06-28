@@ -79,12 +79,6 @@ export interface AutoForkConfig {
   memoryAutoRefresh?: boolean;
   /** Use theme.bg() for richer TUI rendering (progress, results). Default true. */
   themed: boolean;
-  /** If true, inject a system prompt rule and block direct read tool calls for source files, redirecting to /cdev read or cdev quick. Default true. */
-  enforceCdevTools: boolean;
-  /** If true (and enforceCdevTools is true), allow one direct read of an explicit project file after a cdev quick/advisor/research call returns low-confidence or incomplete findings. Default true. */
-  allowCdevReadEscalation: boolean;
-  /** Number of consecutive blocked direct reads/tools that trigger a one-time cooldown read. During cooldown, the next direct project-file read is allowed as an escape valve, then enforcement resumes. 0 disables cooldown. Default 3. */
-  cdevReadCooldownAfterBlocks: number;
   /** Run scout twice automatically for higher accuracy. */
   autoVerify: boolean;
   /** Split scout into N parallel sub-task scouts (1-3). Default 1. */

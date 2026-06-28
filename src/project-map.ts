@@ -154,21 +154,31 @@ export function getMapPath(cwd: string): string {
 }
 
 function readJsonSafe(path: string): Record<string, unknown> | null {
+  const text = tryReadText(path);
+  if (text === null) return null;
   try {
-    if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf-8"));
+    return JSON.parse(text);
   } catch {
     return null;
   }
 }
 
+const _fileTextCache = new Map<string, string | null>();
+
 function tryReadText(path: string): string | null {
+  if (_fileTextCache.has(path)) return _fileTextCache.get(path) ?? null;
+  let result: string | null = null;
   try {
-    if (!existsSync(path)) return null;
-    return readFileSync(path, "utf-8");
+    if (existsSync(path)) result = readFileSync(path, "utf-8");
   } catch {
-    return null;
+    result = null;
   }
+  _fileTextCache.set(path, result);
+  return result;
+}
+
+function clearFileCache(): void {
+  _fileTextCache.clear();
 }
 
 function detectPackageManagers(cwd: string): string[] {
@@ -774,57 +784,6 @@ function scanSourceTree(cwd: string, sourceRoots: string[], options?: {
   };
 }
 
-function buildBoundedTree(cwd: string, sourceRoots: string[], maxEntries = 40): string[] {
-  const tree: string[] = [];
-  const skipDirs = new Set(["node_modules", ".git", ".pi", "dist", "build", ".next", ".turbo", "coverage", "target"]);
-  let entriesLeft = maxEntries;
-
-  function walk(dir: string, prefix: string, depth: number): void {
-    if (entriesLeft <= 0 || depth > 2) return;
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      return;
-    }
-    const dirs: string[] = [];
-    const files: string[] = [];
-    for (const e of entries) {
-      if (e.startsWith(".") && e !== ".env") continue;
-      if (skipDirs.has(e)) continue;
-      const full = join(dir, e);
-      try {
-        if (statSync(full).isDirectory()) dirs.push(e);
-        else files.push(e);
-      } catch { /* ignore */ }
-    }
-    dirs.sort((a, b) => a.localeCompare(b));
-    files.sort((a, b) => a.localeCompare(b));
-    for (const d of dirs) {
-      if (entriesLeft <= 0) return;
-      tree.push(`${prefix}${d}/`);
-      entriesLeft--;
-      walk(join(dir, d), `${prefix}  ${d}/`, depth + 1);
-    }
-    for (const f of files.slice(0, Math.max(0, entriesLeft))) {
-      tree.push(`${prefix}${f}`);
-      entriesLeft--;
-    }
-  }
-
-  const roots = sourceRoots.length ? sourceRoots : ["."];
-  for (const root of roots) {
-    if (entriesLeft <= 0) break;
-    if (existsSync(join(cwd, root))) {
-      tree.push(`${root}/`);
-      entriesLeft--;
-      walk(join(cwd, root), `  ${root}/`, 1);
-    }
-  }
-
-  return tree;
-}
-
 function inferModulesAndBoundaries(
   cwd: string,
   sourceRoots: string[],
@@ -927,26 +886,6 @@ function inferModulesAndBoundaries(
     modules: modules.slice(0, maxModules),
     boundaries,
   };
-}
-
-function detectGeneratedDirs(cwd: string, sourceRoots: string[]): string[] {
-  const generatedDirNames = ["node_modules", ".git", ".pi", "dist", "build", ".next", ".turbo", "coverage", "target", ".dart_tool", ".gradle"];
-  const found: string[] = [];
-  const roots = sourceRoots.length ? sourceRoots : ["."];
-  for (const root of roots) {
-    const rootPath = join(cwd, root);
-    if (!existsSync(rootPath)) continue;
-    try {
-      for (const entry of readdirSync(rootPath)) {
-        if (generatedDirNames.includes(entry) && statSync(join(rootPath, entry)).isDirectory()) {
-          const rel = join(root, entry).replace(/\\/g, "/");
-          if (!found.includes(rel)) found.push(rel);
-        }
-      }
-    } catch { /* ignore */ }
-  }
-  if (existsSync(join(cwd, "node_modules")) && !found.includes("node_modules")) found.push("node_modules");
-  return found;
 }
 
 function detectKeyFiles(cwd: string, entryPoints: string[], configFiles: string[]): string[] {
@@ -1172,6 +1111,7 @@ function inferArchitecture(framework: string[], _languages: string[]): ProjectMa
 }
 
 export function generateProjectMap(cwd: string): ProjectMap {
+  clearFileCache();
   const languages = detectLanguages(cwd);
   const packageManager = detectPackageManagers(cwd);
   const { framework, backend, frontend, mobile, vite } = detectFrameworks(cwd, languages);
@@ -1189,8 +1129,8 @@ export function generateProjectMap(cwd: string): ProjectMap {
   const architecture = inferArchitecture(framework, languages);
   const scan = scanSourceTree(cwd, sourceRoots, { maxTreeEntries: 40, maxDirEntries: 80, maxDepth: 5 });
   const { modules, boundaries } = inferModulesAndBoundaries(cwd, sourceRoots, framework, languages);
-  const generatedDirs = detectGeneratedDirs(cwd, sourceRoots);
-  const tree = buildBoundedTree(cwd, sourceRoots, 40);
+  const generatedDirs = scan.generatedDirs;
+  const tree = scan.tree;
   const keyFiles = detectKeyFiles(cwd, entryPoints, configFiles);
   const routes = detectRoutes(cwd, framework);
   const workspaces = detectWorkspaces(cwd);
@@ -1293,6 +1233,7 @@ function isValidProjectMap(value: unknown): value is ProjectMap {
 }
 
 const _mapCache = new Map<string, { mtime: number; map: ProjectMap }>();
+const MAX_MAP_CACHE_SIZE = 10;
 
 export function loadProjectMap(cwd: string): ProjectMap | null {
   const path = getMapPath(cwd);
@@ -1301,6 +1242,10 @@ export function loadProjectMap(cwd: string): ProjectMap | null {
     const stats = statSync(path);
     const cached = _mapCache.get(cwd);
     if (cached && cached.mtime === stats.mtimeMs) return cached.map;
+    if (_mapCache.size >= MAX_MAP_CACHE_SIZE) {
+      const firstKey = _mapCache.keys().next().value;
+      if (firstKey !== undefined) _mapCache.delete(firstKey);
+    }
     const parsed = parseYaml(readFileSync(path, "utf-8"));
     if (!isValidProjectMap(parsed)) return null;
     _mapCache.set(cwd, { mtime: stats.mtimeMs, map: parsed });

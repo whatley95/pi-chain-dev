@@ -6,6 +6,7 @@
  */
 
 import { formatCost } from "./extension-context.js";
+import { fmtDuration } from "./format.js";
 import type { Component, Theme } from "@earendil-works/pi-tui";
 import { keyHint, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
@@ -236,12 +237,6 @@ function formatModeLabel(mode: unknown, details: any): string {
   if (!details?.stage1 && details?.stage2) return details?.ui?.mode === "advisor" ? "advisor" : "review";
   if (details?.stage1 && details?.stage2) return details?.ui?.mode === "advisor" ? "advisor" : "fork";
   return "";
-}
-
-function fmtDuration(ms: number | undefined): string {
-  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function formatScore(score: unknown): string | null {

@@ -38,7 +38,7 @@ export function buildStage1Prompt(task: string, customPrompt?: string, editMode?
 
 Task: ${focusTask}
 
-Return your findings as a single JSON object matching this schema (no markdown fences, no extra prose):
+Return your findings as a single JSON object matching this schema (fenced JSON output, no extra prose):
 ${jsonSchema}
 
 Efficiency rules:
@@ -53,7 +53,7 @@ You are in EXPLORATION MODE. Your job is to gather information, not to write a f
 Instructions:
 - Explore thoroughly using available tools (read, bash, ls, grep, find, etc.)
 - Gather concrete evidence: file contents, command outputs, config values
-- Return your findings as a single JSON object matching this schema (no markdown fences, no extra prose):
+- Return your findings as a single JSON object matching this schema (fenced JSON output, no extra prose):
 ${jsonSchema}
 
 Efficiency rules:
@@ -108,7 +108,7 @@ ${stage1Output}
 
 Your job: synthesize the findings into a concise, decision-useful report. Do NOT gather new evidence or run tools. Do NOT write code.
 
-Return a single JSON object matching this schema (no markdown fences, no extra prose):
+Return a single JSON object matching this schema (fenced JSON output, no extra prose):
 ${jsonSchema}
 
 Rules:
@@ -171,7 +171,7 @@ ${stage1Output}
 
 Your job: produce an implementation plan based on the findings above. Do NOT write code. Output only a plan.
 
-Return a single JSON object matching this schema (no markdown fences, no extra prose):
+Return a single JSON object matching this schema (fenced JSON output, no extra prose):
 ${jsonSchema}
 
 Rules:
@@ -215,7 +215,7 @@ export function buildResearchPrompt(task: string, customPrompt?: string, cwd?: s
 
 Issue: ${task}${mapContext}
 
-Return your findings as a single JSON object matching this schema (no markdown fences, no extra prose):
+Return your findings as a single JSON object matching this schema (fenced JSON output, no extra prose):
 ${jsonSchema}
 
 Efficiency rules:
@@ -244,7 +244,7 @@ export function buildAdvisorPrompt(question: string, scoutFindings?: string, cus
 
 Question: ${question}${mapContext}${scoutFindings ? `\n\n<scout_findings>\n${scoutFindings}\n</scout_findings>` : ""}
 
-Return your advice as a single JSON object matching this schema (no markdown fences, no extra prose):
+Return your advice as a single JSON object matching this schema (fenced JSON output, no extra prose):
 {
   "summary": "one-sentence summary of the situation",
   "recommendation": "your concrete recommendation or next step",

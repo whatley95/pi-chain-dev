@@ -33,15 +33,11 @@ import {
   refreshFromSessionEntries,
   checkAndSendLoopSteer,
 } from "./loop-detector-runtime.js";
-import { registerReadEnforcement } from "./read-enforcement.js";
 import { registerAdvisorPrompt } from "./advisor-prompt.js";
 
 export default function (pi: ExtensionAPI) {
   let autoTurnCounter = 0;
   const loopState = registerRealtimeLoopDetection(pi);
-
-  // Enforce /cdev read for source files unless explicitly disabled.
-  registerReadEnforcement(pi);
 
   // Prompt to use /cdev advisor when stuck or facing difficult decisions.
   registerAdvisorPrompt(pi);

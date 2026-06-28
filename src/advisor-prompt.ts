@@ -1,5 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig } from "./config.js";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const ADVISOR_INJECTION_MARKER = "<!-- pi-chain-dev:advisor-hint -->";
 
@@ -21,9 +20,7 @@ export function getAdvisorRule(): string {
 }
 
 export function registerAdvisorPrompt(pi: ExtensionAPI): void {
-  pi.on("before_agent_start", (event, ctx: ExtensionContext) => {
-    const config = loadConfig(ctx.cwd);
-    if (!config.enforceCdevTools) return undefined;
+  pi.on("before_agent_start", (event) => {
     const beforeEvent = event as BeforeAgentStartEventLike;
     if (!beforeEvent.systemPrompt.includes(ADVISOR_INJECTION_MARKER)) {
       beforeEvent.systemPrompt += `\n\n${ADVISOR_RULE}`;

@@ -51,9 +51,13 @@ export function getFinalAssistantText(messages: unknown): string {
 
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i] as AssistantMessage;
-    if (!message || message.role !== "assistant" || !Array.isArray(message.content)) {
-      continue;
+    if (!message || message.role !== "assistant") continue;
+
+    if (typeof message.content === "string" && message.content.length > 0) {
+      return message.content.trim();
     }
+
+    if (!Array.isArray(message.content)) continue;
 
     const texts: string[] = [];
     for (const part of message.content) {

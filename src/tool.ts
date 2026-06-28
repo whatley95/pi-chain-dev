@@ -1048,10 +1048,11 @@ export async function executeCdevTool(
     ctx.ui.setWidget("cdev-progress", undefined);
 
     const current = saveSession(ctx.cwd, p.task, false, startTime, details, result);
+    const finalText = getFinalAssistantText(result.messages) || "";
 
     let reportRelPath = "";
     if (!quick && details.stage2 && !result.errorMessage) {
-      const reportText = getFinalAssistantText(result.messages);
+      const reportText = finalText;
       if (reportText) {
         const slugBase = p.task
           .replace(/[^a-zA-Z0-9]+/g, "-")
@@ -1075,7 +1076,7 @@ export async function executeCdevTool(
     if (config.memory) {
       indexFindingsAsync({
         task: p.task,
-      resultText: getFinalAssistantText(result.messages) || "",
+      resultText: finalText,
       stage1Model: config.stage1.id,
       stage2Model: p.quick ? undefined : config.stage2.id,
       stage1bModel: config.stage1b?.id,
@@ -1088,7 +1089,7 @@ export async function executeCdevTool(
     });
     }
 
-    const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);
+    const isError = result.exitCode > 0 && !finalText;
     let resultText = formatForkResultOutput(result, details);
 
     if (quick) {
@@ -1098,7 +1099,7 @@ export async function executeCdevTool(
     // Compare to previous report on same task, if available
     const previous = findPreviousSession(ctx.cwd, p.task);
     if (previous?.resultText && previous.id !== current.id) {
-      const diff = computeReportDiff(previous.resultText, getFinalAssistantText(result.messages) || "");
+      const diff = computeReportDiff(previous.resultText, finalText);
       if (diff.added.length > 0 || diff.removed.length > 0) {
         resultText += "\n\n---\n📊 Changes vs previous report\n\n" + formatReportDiff(diff);
       }
@@ -1112,7 +1113,7 @@ export async function executeCdevTool(
 
     return {
       content: [{ type: "text" as const, text: safeDisplayText(resultText + reportNote) }],
-      details: withUiDetails(details, buildReportUiDetails(getFinalAssistantText(result.messages), {
+      details: withUiDetails(details, buildReportUiDetails(finalText, {
         mode: isPlan ? "plan" : quick ? "quick" : verify ? "verify" : useParallel ? "parallel" : "fork",
         task: p.task,
         reportPath: reportRelPath || undefined,

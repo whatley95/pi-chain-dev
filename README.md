@@ -20,40 +20,6 @@ Model-chained development — cheap model explores, powerful model synthesizes, 
 
 Without cdev: reads 12 files one‑by‑one via parent model at $0.002 each, re‑discovers everything, misses the broken import. 8 turns. $0.035.
 
-## Read-enforcement (prefer `/cdev read`)
-
-By default, pi-chain-dev injects a system-prompt rule that tells the agent to use `/cdev read` or `cdev({ quick:true, ... })` instead of Pi's built-in `read` tool for source/config files. Direct `read` calls for source/config files are blocked with an actionable error.
-
-This is gated by the `enforceCdevTools` config. It keeps context small and avoids the parent model burning tokens on one-by-one file reads.
-
-### Allowed exceptions
-
-- Tiny snippets (under ~30 lines) when cdev is unavailable
-- Binary/image files (`.png`, `.jpg`, `.pdf`, `.zip`, etc.)
-- External documentation or files outside the project
-- README-style docs (`README.md`, `AGENTS.md`, `LICENSE`, etc.)
-- Up to three escalation reads after a low-confidence cdev result (when `allowCdevReadEscalation` is `true`)
-- Up to two controlled bypass reads per turn with a concrete `reason`
-- A one-time cooldown read after `cdevReadCooldownAfterBlocks` consecutive blocked direct reads (default `2`) — a steer notifies the model when cooldown is armed and when it is consumed
-
-### Toggle
-
-```
-/cdev read-enforcement on   # block direct read for source files (default)
-/cdev read-enforcement off  # allow direct read tool calls
-```
-
-The setting is stored in `~/.pi/agent/settings.json` under `pi-chain-dev.enforceCdevTools`.
-
-### How the injection works
-
-The extension registers two handlers in `src/read-enforcement.ts`:
-
-1. `before_agent_start` — appends the read-preference rule to the system prompt when `enforceCdevTools` is `true`. The rule is wrapped in `<!-- pi-chain-dev:enforce-cdev-tools -->` markers so it is only added once.
-2. `tool_call` — intercepts direct `read` tool calls, checks the file path against an allowlist of source-like extensions, and returns `{ block: true, reason: "..." }` telling the agent to use `/cdev read <path>` or `cdev({ quick:true, task: "read <path>" })` instead.
-
-To add similar global tool-choice rules, use the same `before_agent_start` + `tool_call` pattern and gate them behind the `enforceCdevTools` config key (or a dedicated key in `src/types.ts`/`src/config.ts`).
-
 ## Commands
 
 | Command | What it does |
@@ -79,8 +45,6 @@ To add similar global tool-choice rules, use the same `before_agent_start` + `to
 | `/cdev auto-verify off` | Scout ×1 unless `/cdev verify` is used explicitly (default) |
 | `/cdev auto-compact on` | Auto-steer `/compact` when session snapshot nears model context limit (default) |
 | `/cdev auto-compact off` | Only warn near model context limit |
-| `/cdev read-enforcement on` | Block direct `read` for source/config files; use `/cdev read` (default) |
-| `/cdev read-enforcement off` | Allow direct `read` tool calls |
 | `/cdev todo <name>` | Create `.pi/cdev/todos/<session-id>_<timestamp>_<name>.md` with checklist |
 | `/cdev config` | Show current settings with source (agent/project/default) |
 | `/cdev config <key>` | Show the value of one config key |
@@ -642,7 +606,6 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
     "modelContextLimit": 262144,
     "autoCompactOnLimit": true,
     "tokenEstimationCharsPerToken": 4,
-    "enforceCdevTools": true,
     "costFooter": true,
     "yolo": {
       "enabled": false,
@@ -693,9 +656,6 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `modelContextLimit` | number | `262144` | Model context-window limit in tokens (used for snapshot sizing and warnings) |
 | `autoCompactOnLimit` | boolean | `true` | Auto-steer `/compact` when session snapshot exceeds 95% of `modelContextLimit` |
 | `tokenEstimationCharsPerToken` | number | `4` | Characters per token used to estimate snapshot size. Increase (e.g. `8`–`12`) if cdev estimates much higher than Pi's status bar |
-| `enforceCdevTools` | boolean | `true` | Inject system prompt rule and block direct `read`/`grep`/`glob`/`bash`/`diff`/introspection tool calls for source/config files |
-| `allowCdevReadEscalation` | boolean | `true` | Allow up to 3 direct reads after a low-confidence cdev result (only when `enforceCdevTools` is `true`) |
-| `cdevReadCooldownAfterBlocks` | integer | `2` | Consecutive blocked direct reads/tools that trigger a one-time cooldown read. Set to `0` to disable the cooldown escape valve. |
 | `promptsEnabled` | boolean | `true` | Enable/disable custom prompts |
 | `prompts.explore` | string | — | Custom scout exploration prompt |
 | `prompts.synthesize` | string | — | Custom forge synthesis prompt |
@@ -868,21 +828,46 @@ pi-chain-dev/
 ├── src/
 │   ├── index.ts              # Extension entry point — registers cdev tool + commands
 │   ├── tool.ts               # cdev tool execution (recall/review/fork)
+│   ├── format.ts             # Shared utilities (fmtDuration, slugFromTask)
+│   ├── usage.ts              # Usage aggregation helpers (addUsage, mergeUsage)
 │   ├── commands/
 │   │   ├── cdev.ts           # /cdev command dispatcher + lifecycle handlers
+│   │   ├── cdev-help.ts      # Subcommand help text
 │   │   ├── cdev-model.ts     # /cdev-model interactive model picker
 │   │   ├── cdev-scan.ts      # /cdev scan and /cdev scan deep implementation
-│   │   └── cdev-memory.ts    # /cdev recall, view, memory *, memory refresh/on/off
+│   │   ├── cdev-memory.ts    # /cdev recall, view, memory *, memory refresh/on/off
+│   │   └── cdev-map.ts       # /cdev map, map refresh, map show
 │   ├── extension-context.ts  # Shared helpers, snapshots, cost footer, profiles
-│   ├── runner.ts             # Two-stage fork runner + review mode
+│   ├── fork-orchestrator.ts  # Two-stage fork runner, YOLO loop, merge logic
+│   ├── fork-stage.ts         # Child Pi process spawning and session handling
 │   ├── history.ts            # Session telemetry — save, list, purge (7 days)
 │   ├── memory.ts             # Project memory — cross-session findings, staleness
 │   ├── scan.ts               # Project scanner — stack detection + prompts
 │   ├── types.ts              # Type definitions
-│   ├── config.ts             # Configuration loading
+│   ├── config.ts             # Configuration loading (mtime-cached)
 │   ├── env.ts                # Child environment builder
 │   ├── runner-events.ts      # JSON line parsing from child processes
-│   └── runner-cli.ts         # CLI arg inheritance
+│   ├── runner-cli.ts         # CLI arg inheritance
+│   ├── project-map.ts        # Project map generation (single filesystem walk)
+│   ├── review.ts             # Code review runner
+│   ├── research.ts           # Research mode runner
+│   ├── advisor.ts            # Advisor mode runner
+│   ├── advisor-prompt.ts     # Advisor system prompt injection
+│   ├── render.ts             # TUI renderers for call/result
+│   ├── progress.ts           # Progress widget updates
+│   ├── prompts.ts            # Stage prompt builders
+│   ├── json-extract.ts       # JSON extraction from model output
+│   ├── settings-helpers.ts   # Agent/project settings read/write
+│   ├── logger.ts             # File-based logging (debug.log + errors.jsonl)
+│   ├── loop-detector.ts      # Loop detection logic
+│   ├── loop-detector-runtime.ts  # Realtime loop detection via events
+│   ├── report.ts             # Report file writer
+│   ├── text-width.ts         # Display text wrapping and sizing
+│   ├── theme-utils.ts        # Theme helper utilities
+│   ├── path-guards.ts        # Path safety checks
+│   ├── stable-stringify.ts   # Deterministic JSON serialization
+│   ├── prompt-version.ts     # Prompt version constant
+│   └── build-date.ts         # Auto-updated build timestamp
 ├── test/                     # Unit tests
 └── README.md
 ```
