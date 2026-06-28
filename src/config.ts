@@ -46,7 +46,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   promptsEnabled: true,
   memory: true,
   memoryAutoRefresh: false,
-  themed: false,
+  themed: true,
     autoVerify: false,
   parallel: 1,
   parallelBackup: false,

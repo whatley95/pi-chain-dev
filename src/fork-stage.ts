@@ -86,12 +86,22 @@ interface PreparedSession {
 }
 
 const sharedPreparedSessions = new Map<string, { prepared: PreparedSession; refCount: number }>();
+const MAX_SHARED_SESSIONS = 50;
 
 export function prepareSharedSession(sanitizedJsonl: string): PreparedSession {
   const existing = sharedPreparedSessions.get(sanitizedJsonl);
   if (existing) {
     existing.refCount++;
     return existing.prepared;
+  }
+  // Evict oldest entry when at capacity
+  if (sharedPreparedSessions.size >= MAX_SHARED_SESSIONS) {
+    const firstKey = sharedPreparedSessions.keys().next().value;
+    if (firstKey !== undefined) {
+      const entry = sharedPreparedSessions.get(firstKey);
+      if (entry) cleanupTempDir("", entry.prepared.tmpDir);
+      sharedPreparedSessions.delete(firstKey);
+    }
   }
   const tmp = writeTempSessionJsonl(sanitizedJsonl);
   const prepared: PreparedSession = { jsonl: sanitizedJsonl, filePath: tmp.filePath, tmpDir: tmp.dir };
@@ -184,95 +194,99 @@ export function sanitizeSessionJsonl(sessionJsonl: string): { jsonl: string; str
 
   const rawLines = sessionJsonl.trim().split("\n");
 
+  // Parse lines and collect valid tool-call IDs from assistant messages.
   interface ParsedLine {
     raw: string;
     msg: Record<string, unknown> | null;
     isEnvelope: boolean;
   }
-  const parsed: ParsedLine[] = [];
-  for (const line of rawLines) {
+  const parsed: ParsedLine[] = new Array(rawLines.length);
+  const validIds = new Set<string>();
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i];
+    let msg: Record<string, unknown> | null = null;
+    let isEnvelope = false;
     try {
       const obj = JSON.parse(line);
-      const isEnvelope =
-        obj && typeof obj === "object" && !Array.isArray(obj) && "message" in obj;
-      const msg = isEnvelope
+      isEnvelope = obj && typeof obj === "object" && !Array.isArray(obj) && "message" in obj;
+      const raw = isEnvelope
         ? (obj as Record<string, unknown>).message as Record<string, unknown>
         : obj;
-      parsed.push({
-        raw: line,
-        msg: msg && typeof msg === "object" && !Array.isArray(msg) ? (msg as Record<string, unknown>) : null,
-        isEnvelope: Boolean(isEnvelope),
-      });
-    } catch {
-      parsed.push({ raw: line, msg: null, isEnvelope: false });
-    }
-  }
+      msg = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+    } catch { /* unparseable line — keep raw text */ }
+    parsed[i] = { raw: line, msg, isEnvelope };
 
-  const redacted = parsed.map((entry) => {
-    if (!entry.msg) return entry;
-    const redactedMsg = redactMessageSensitive(entry.msg);
-    if (entry.isEnvelope) {
-      try {
-        const env = JSON.parse(entry.raw);
-        env.message = redactedMsg;
-        return { raw: JSON.stringify(env), msg: redactedMsg, isEnvelope: true };
-      } catch { /* fall through */ }
-    }
-    return { raw: JSON.stringify(redactedMsg), msg: redactedMsg, isEnvelope: false };
-  });
-
-  const validIds = new Set<string>();
-  for (const entry of redacted) {
-    const msg = entry.msg;
-    if (!msg) continue;
-    if (msg.role !== "assistant") continue;
-
-    if (Array.isArray(msg.tool_calls)) {
-      for (const tc of msg.tool_calls) {
-        if (tc && typeof tc === "object") {
-          const id = (tc as Record<string, unknown>).id || (tc as Record<string, unknown>).call_id;
-          if (typeof id === "string") validIds.add(id);
+    // Collect valid tool-call IDs from assistant messages
+    if (msg && msg.role === "assistant") {
+      if (Array.isArray(msg.tool_calls)) {
+        for (const tc of msg.tool_calls) {
+          if (tc && typeof tc === "object") {
+            const id = (tc as Record<string, unknown>).id || (tc as Record<string, unknown>).call_id;
+            if (typeof id === "string") validIds.add(id);
+          }
         }
       }
-    }
-    if (Array.isArray(msg.content)) {
-      for (const block of msg.content) {
-        if (block && typeof block === "object" && !Array.isArray(block)) {
-          const b = block as Record<string, unknown>;
-          if (b.type === "tool_use" && typeof b.id === "string") {
-            validIds.add(b.id);
+      if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block && typeof block === "object" && !Array.isArray(block)) {
+            const b = block as Record<string, unknown>;
+            if (b.type === "tool_use" && typeof b.id === "string") {
+              validIds.add(b.id);
+            }
           }
         }
       }
     }
   }
 
-  let systemStripped = 0;
-  const noSystem = redacted.filter((entry) => {
-    const msg = entry.msg;
-    if (msg && msg.role === "system") { systemStripped++; return false; }
-    return true;
-  });
+  // Single pass: redact, filter system + orphan tool messages, build output.
+  const outLines: string[] = [];
+  let stripped = 0;
 
-  let orphanStripped = 0;
-  const sanitized = noSystem.filter((entry) => {
-    const msg = entry.msg;
-    if (!msg) return true;
-    if (msg.role !== "tool") return true;
+  for (const entry of parsed) {
+    // Redact sensitive content
+    let redactedMsg: Record<string, unknown> | null = null;
+    if (entry.msg) {
+      redactedMsg = redactMessageSensitive(entry.msg);
+    }
 
-    const toolCallId = msg.tool_call_id || msg.call_id;
-    if (typeof toolCallId !== "string") return true;
+    // Filter system messages
+    if (entry.msg && entry.msg.role === "system") {
+      stripped++;
+      continue;
+    }
 
-    if (validIds.has(toolCallId)) return true;
-    orphanStripped++;
-    return false;
-  });
+    // Filter orphan tool messages
+    if (entry.msg && entry.msg.role === "tool") {
+      const toolCallId = entry.msg.tool_call_id || entry.msg.call_id;
+      if (typeof toolCallId !== "string" || !validIds.has(toolCallId)) {
+        stripped++;
+        continue;
+      }
+    }
 
-  const totalStripped = systemStripped + orphanStripped;
+    // Serialize redacted line
+    if (redactedMsg) {
+      if (entry.isEnvelope) {
+        try {
+          const env = JSON.parse(entry.raw);
+          env.message = redactedMsg;
+          outLines.push(JSON.stringify(env));
+        } catch {
+          outLines.push(JSON.stringify(redactedMsg));
+        }
+      } else {
+        outLines.push(JSON.stringify(redactedMsg));
+      }
+    } else {
+      outLines.push(entry.raw);
+    }
+  }
 
   return {
-    jsonl: sanitized.map((e) => e.raw).join("\n") + "\n",
-    stripped: totalStripped,
+    jsonl: outLines.join("\n") + "\n",
+    stripped,
   };
 }
 
@@ -496,20 +510,14 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
 
     const flushLine = (line: string) => {
       try {
-        const parsed = processPiJsonLine(line, result);
-        if (parsed && onUpdate) {
-          let event: { type?: string; [key: string]: unknown };
-          try {
-            event = JSON.parse(line) as { type?: string; [key: string]: unknown };
-          } catch {
-            return parsed;
-          }
+        const { handled, event } = processPiJsonLine(line, result);
+        if (handled && onUpdate && event) {
           const summary = summarizePiEvent(event as { type: string; [key: string]: unknown });
           if (summary) {
             onUpdate({ stage: stageLabel, activity: summary, cost: result.usage?.cost, tokens: result.usage?.contextTokens });
           }
         }
-        return parsed;
+        return handled;
       } catch {
         return false;
       }

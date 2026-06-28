@@ -372,10 +372,6 @@ export function isStage1Findings(value: unknown): value is Stage1Findings {
   return true;
 }
 
-export function emptyStage1Findings(): Stage1Findings {
-  return { summary: "", findings: [] };
-}
-
 /** Structured output expected from Stage 2 synthesis. */
 export interface Stage2Report {
   /** Overall status of the task. */
@@ -537,17 +533,6 @@ export function isPlanReport(value: unknown): value is PlanReport {
   if (v.qualityScore !== undefined && (typeof v.qualityScore !== "number" || !Number.isFinite(v.qualityScore) || v.qualityScore < 0 || v.qualityScore > 1)) return false;
   if (v.qualityNotes !== undefined && typeof v.qualityNotes !== "string") return false;
   return true;
-}
-
-export function emptyStage2Report(): Stage2Report {
-  return {
-    status: "exploratory",
-    summary: "",
-    output: "",
-    evidence: "",
-    learnings: "",
-    actionItems: [],
-  };
 }
 
 /** Cost estimate for a fork before it runs. */

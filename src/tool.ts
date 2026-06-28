@@ -174,6 +174,22 @@ function withUiDetails(details: AutoForkDetails, ui: AutoForkUiDetails): AutoFor
   return { ...details, ui };
 }
 
+function modelLabel(prof: { provider: string; id: string; thinking?: string }): string {
+  return prof.thinking ? `${prof.provider}:${prof.id} • ${prof.thinking}` : `${prof.provider}:${prof.id}`;
+}
+
+function clearProgress(ctx: ExtensionContext): void {
+  ctx.ui.setWidget("cdev-progress", undefined);
+}
+
+function formatProgressDetail(update: { activity?: string; cost?: number; tokens?: number }): string {
+  const parts: string[] = [];
+  if (update.activity) parts.push(update.activity);
+  if (update.tokens && update.tokens > 0) parts.push(`${(update.tokens / 1000).toFixed(1)}k tok`);
+  if (update.cost && update.cost > 0) parts.push(formatCost(update.cost));
+  return parts.length > 0 ? parts.join(" · ") : "";
+}
+
 function validateAutoForkParams(params: Record<string, unknown>): { valid: true; value: AutoForkParamsType } | { valid: false; error: string } {
   const out: AutoForkParamsType = {};
   const errors: string[] = [];
@@ -320,14 +336,14 @@ export async function executeCdevTool(
           stageTimeoutMs: config.profileTimeouts?.review ?? config.forgeTimeoutMs,
           onProgress,
           onUpdate: (update) => {
-            ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing ${p.reviewFile}…  ${update.activity ?? ""}`)]);
+            ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing ${p.reviewFile}…  ${formatProgressDetail(update)}`)]);
           },
           extensions: config.extensions,
           environment: config.environment,
           offline: config.offline,
           signal,
         });
-        ctx.ui.setWidget("cdev-progress", undefined);
+        clearProgress(ctx);
 
         const reviewText = getFinalAssistantText(result.messages);
         const reviewSlug = `review-${p.reviewFile.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 40)}-${Date.now().toString(36)}.md`;
@@ -447,14 +463,14 @@ export async function executeCdevTool(
           stageTimeoutMs: config.profileTimeouts?.review ?? config.forgeTimeoutMs,
           onProgress,
           onUpdate: (update) => {
-            ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing diff ${diffSpec}…  ${update.activity ?? ""}`)]);
+            ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing diff ${diffSpec}…  ${formatProgressDetail(update)}`)]);
           },
           extensions: config.extensions,
           environment: config.environment,
           offline: config.offline,
           signal,
         });
-        ctx.ui.setWidget("cdev-progress", undefined);
+        clearProgress(ctx);
 
         const diffSlug = diffSpec.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 50);
         const ts = Date.now().toString(36);
@@ -533,14 +549,14 @@ export async function executeCdevTool(
         customReviewPrompt: config.promptsEnabled ? config.prompts?.review : undefined,
         onProgress,
         onUpdate: (update) => {
-          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing…  ${update.activity ?? ""}`)]);
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing…  ${formatProgressDetail(update)}`)]);
         },
         extensions: config.extensions,
         environment: config.environment,
         offline: config.offline,
         signal,
       });
-      ctx.ui.setWidget("cdev-progress", undefined);
+      clearProgress(ctx);
 
       const reviewText = getFinalAssistantText(result.messages);
       const reviewSlug = `session-review-${Date.now().toString(36)}.md`;
@@ -661,9 +677,8 @@ export async function executeCdevTool(
         const icon = stage === "scout" ? "🔍" : "🧭";
         ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${stage === "scout" ? "Scout gathering evidence" : "Advisor reasoning"}…  (${model})`)]);
       };
-      onProgress(askAdvisorOnly ? "advisor" : "scout", askAdvisorOnly
-        ? (advisorProfile.thinking ? `${advisorProfile.provider}:${advisorProfile.id} • ${advisorProfile.thinking}` : `${advisorProfile.provider}:${advisorProfile.id}`)
-        : (profiles.stage1.thinking ? `${profiles.stage1.provider}:${profiles.stage1.id} • ${profiles.stage1.thinking}` : `${profiles.stage1.provider}:${profiles.stage1.id}`));
+      onProgress(askAdvisorOnly ? "advisor" : "scout",
+        modelLabel(askAdvisorOnly ? advisorProfile : profiles.stage1));
       const startTime = Date.now();
       const { result, details: advisorDetails, scoutText } = await runCdevAdvisor({
         cwd: ctx.cwd,
@@ -677,14 +692,14 @@ export async function executeCdevTool(
         includeScout: !askAdvisorOnly,
         onProgress,
         onUpdate: (update) => {
-          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🧭 Advisor ${update.stage}… ${update.activity ?? ""}`)]);
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🧭 Advisor ${update.stage}… ${formatProgressDetail(update)}`)]);
         },
         extensions: config.extensions,
         environment: config.environment,
         offline: config.offline,
         signal,
       });
-      ctx.ui.setWidget("cdev-progress", undefined);
+      clearProgress(ctx);
 
       const current = saveSession(ctx.cwd, p.task, false, startTime, advisorDetails, result);
 
@@ -776,7 +791,7 @@ export async function executeCdevTool(
           ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔬 Researching…  (${model})`)]);
         }
       };
-      onProgress("research", researchProfile.thinking ? `${researchProfile.provider}:${researchProfile.id} • ${researchProfile.thinking}` : `${researchProfile.provider}:${researchProfile.id}`);
+      onProgress("research", modelLabel(researchProfile));
       const startTime = Date.now();
       const { result, details } = await runCdevResearch({
         cwd: ctx.cwd,
@@ -787,14 +802,14 @@ export async function executeCdevTool(
         customPrompt: config.promptsEnabled ? config.prompts?.research : undefined,
         onProgress,
         onUpdate: (update) => {
-          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔬 Researching…  ${update.activity ?? ""}`)]);
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔬 Researching…  ${formatProgressDetail(update)}`)]);
         },
         extensions: config.extensions,
         environment: config.environment,
         offline: config.offline,
         signal,
       });
-      ctx.ui.setWidget("cdev-progress", undefined);
+      clearProgress(ctx);
 
       const researchText = getFinalAssistantText(result.messages);
       let researchReportPath = "";
@@ -927,14 +942,15 @@ export async function executeCdevTool(
         yoloFixTimeoutMs: config.profileTimeouts?.yoloFix ?? config.forgeTimeoutMs,
         onProgress: onYoloProgress,
         onUpdate: (update) => {
-          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", update.activity ?? "working…")]);
+          const detail = formatProgressDetail(update) || update.activity || "working…";
+          ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", detail)]);
         },
         extensions: config.extensions,
         environment: config.environment,
         offline: config.offline,
         signal,
       });
-      ctx.ui.setWidget("cdev-progress", undefined);
+      clearProgress(ctx);
 
       recordForkCost(ctx.cwd, yoloResult.totalCost);
       maybeNotifyCostAlert(ctx, config);
@@ -1010,8 +1026,7 @@ export async function executeCdevTool(
         ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${isPlan ? "📋" : "⚒️"} Forge ${isPlan ? "planning" : "synthesizing"}…  (${model})`)]);
       }
     };
-    const modelStr = (prof: typeof profiles.stage1) => prof.thinking ? `${prof.provider}:${prof.id} • ${prof.thinking}` : `${prof.provider}:${prof.id}`;
-    onProgress("scout", modelStr(profiles.stage1));
+    onProgress("scout", modelLabel(profiles.stage1));
     const startTime = Date.now();
     const { result, details } = await runAutoFork({
       cwd: ctx.cwd,
@@ -1037,15 +1052,15 @@ export async function executeCdevTool(
       onUpdate: (update) => {
         const icon = update.stage.includes("exploration") || update.stage === "scout" ? "🔍" : isPlan ? "📋" : "⚒️";
         const label = update.stage.includes("exploration") || update.stage === "scout" ? "Scout" : isPlan ? "Planner" : "Forge";
-        const activity = update.activity ? `  ${update.activity}` : "";
-        ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${label} ${update.stage}…${activity}`)]);
+        const detail = formatProgressDetail(update);
+        ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${label} ${update.stage}…${detail ? `  ${detail}` : ""}`)]);
       },
       extensions: config.extensions,
       environment: config.environment,
       offline: config.offline,
       signal,
     });
-    ctx.ui.setWidget("cdev-progress", undefined);
+    clearProgress(ctx);
 
     const current = saveSession(ctx.cwd, p.task, false, startTime, details, result);
     const finalText = getFinalAssistantText(result.messages) || "";
@@ -1121,7 +1136,7 @@ export async function executeCdevTool(
       isError,
     };
   } catch (err) {
-    ctx.ui.setWidget("cdev-progress", undefined);
+    clearProgress(ctx);
     logError(ctx.cwd, "tool", err);
     return {
       content: [{ type: "text" as const, text: safeDisplayText(`cdev error: ${err instanceof Error ? err.message : String(err)}`) }],

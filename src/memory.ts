@@ -118,10 +118,8 @@ function fileFingerprint(filePath: string): string | null {
 }
 
 export function extractFilePaths(text: string, cwd: string): string[] {
-  // Multiple patterns to catch different path representations.
-  // Each pattern's LAST capture group must be the path; the second-to-last (if present)
-  // is an optional prefix like ./ or ../. Keep this invariant when adding patterns.
-  const MAX_MATCHES = 100;
+  const MAX_MATCHES_PER_PATTERN = 30;
+  const MAX_TOTAL_PATHS = 80;
   const patterns = [
     // Explicit paths: src/foo/bar.ts, app/models/user.rb
     /(?:^|\s|[`'"([{<])(\.{0,2}[/\\])?((?:[\w@.-]+[/\\]){1,6}[\w@.-]+\.\w{1,8})(?=[:"',)}\]><\s]|$)/gm,
@@ -143,7 +141,7 @@ export function extractFilePaths(text: string, cwd: string): string[] {
     let matchCount = 0;
     pattern.lastIndex = 0;
     while ((match = pattern.exec(text)) !== null) {
-      if (++matchCount > MAX_MATCHES) break;
+      if (++matchCount > MAX_MATCHES_PER_PATTERN) break;
       // Last capture group is the path; optional prefix is second-to-last.
       const pathGroup = match[match.length - 1];
       const prefixGroup = match.length >= 3 ? match[match.length - 2] : "";
@@ -166,13 +164,14 @@ export function extractFilePaths(text: string, cwd: string): string[] {
         seen.add(resolved);
         if (existsSync(resolved)) {
           paths.push(relative(cwd, resolved).replace(/\\/g, "/"));
+          if (paths.length >= MAX_TOTAL_PATHS) break;
         }
       }
     }
+    if (paths.length >= MAX_TOTAL_PATHS) break;
   }
 
-  // Deduplicate by relative path
-  return [...new Set(paths)];
+  return paths;
 }
 
 export function extractTopicFromTask(task: string, filePaths: string[]): string | null {

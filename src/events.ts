@@ -636,17 +636,17 @@ export function processPiEvent(event: PiEvent, result: ForkResult): boolean {
   }
 }
 
-export function processPiJsonLine(line: string, result: ForkResult): boolean {
-  if (!line.trim()) return false;
+export function processPiJsonLine(line: string, result: ForkResult): { handled: boolean; event: PiEvent | null } {
+  if (!line.trim()) return { handled: false, event: null };
 
   let event: PiEvent;
   try {
     event = JSON.parse(line) as PiEvent;
   } catch {
-    return false;
+    return { handled: false, event: null };
   }
 
-  return processPiEvent(event, result);
+  return { handled: processPiEvent(event, result), event };
 }
 
 export { getFinalAssistantText };

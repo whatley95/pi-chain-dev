@@ -41,7 +41,7 @@ interface ThinkingState {
   chars?: number;
 }
 
-function formatCount(n: number): string {
+export function formatCount(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return "0";
   if (n < 1000) return String(n);
   if (n < 10_000) return `${(n / 1000).toFixed(1)}k`;
@@ -273,4 +273,20 @@ export function summarizePiEvent(event: { type: string; [key: string]: unknown }
     default:
       return undefined;
   }
+}
+
+
+/**
+ * Update the cdev-progress widget with activity text, cost, and token count.
+ */
+export function updateProgress(
+  setWidget: (key: string, value: unknown) => void,
+  themedBg: (token: string, text: string) => string,
+  update: { activity?: string; cost?: number; tokens?: number },
+  prefix: string,
+): void {
+  const parts = [update.activity ?? ""];
+  if (update.cost && update.cost > 0) parts.push(`● ${formatCost(update.cost)}`);
+  if (update.tokens && update.tokens > 0) parts.push(`● ${formatCount(update.tokens)} tok`);
+  setWidget("cdev-progress", [themedBg("toolPendingBg", `${prefix}  ${parts.filter(Boolean).join("  ")}`)]);
 }

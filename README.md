@@ -656,6 +656,7 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `modelContextLimit` | number | `262144` | Model context-window limit in tokens (used for snapshot sizing and warnings) |
 | `autoCompactOnLimit` | boolean | `true` | Auto-steer `/compact` when session snapshot exceeds 95% of `modelContextLimit` |
 | `tokenEstimationCharsPerToken` | number | `4` | Characters per token used to estimate snapshot size. Increase (e.g. `8`–`12`) if cdev estimates much higher than Pi's status bar |
+| `themed` | boolean | `true` | Use theme.bg() for richer TUI rendering (progress bars, results) |
 | `promptsEnabled` | boolean | `true` | Enable/disable custom prompts |
 | `prompts.explore` | string | — | Custom scout exploration prompt |
 | `prompts.synthesize` | string | — | Custom forge synthesis prompt |
@@ -673,6 +674,7 @@ Set via `/cdev-model` (interactive) or directly in `~/.pi/agent/settings.json`:
 | `signature` | string | `"whatley.xyz"` | Override status signature |
 | `offline` | boolean | `true` | Force `PI_OFFLINE=1` for child processes |
 | `costFooter` | boolean | `true` | Show cdev cost in footer |
+| `themed` | boolean | `true` | Use theme.bg() for richer TUI rendering (progress bars, results) |
 | `maxForkCost` | number | `0` | Max cost (USD) for a single fork. `0` = unlimited |
 | `maxSessionCost` | number | `0` | Max total cost (USD) for cdev in the current session. `0` = unlimited |
 

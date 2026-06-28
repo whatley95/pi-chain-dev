@@ -440,15 +440,6 @@ Instructions:
 - Do NOT edit files. The main agent will apply changes.`;
 }
 
-export function buildStage2FindingsPrompt(stage1Output: string, customPrompt?: string): string {
-  if (customPrompt) return `${customPrompt}\n\n<previous_findings>\n${stage1Output}\n</previous_findings>`;
-  return `Synthesize these scout findings into a concise report:
-
-<previous_findings>
-${stage1Output}
-</previous_findings>`;
-}
-
 function loadMapContext(cwd: string): string {
   try {
     const map = loadProjectMap(cwd);

@@ -228,9 +228,20 @@ interface CostCache {
 const _costCache = new Map<string, CostCache>();
 
 function hashSessionEntries(entries: unknown[]): string {
-  const sample = entries.slice(-50);
-  const hash = createHash("sha256").update(String(entries.length)).update(stableStringify(sample)).digest("hex").slice(0, 16);
-  return hash;
+  try {
+    const sample = entries.slice(-50);
+    const hash = createHash("sha256").update(String(entries.length)).update(stableStringify(sample)).digest("hex").slice(0, 16);
+    return hash;
+  } catch (err) {
+    // Fall back to length + timestamp if entries contain non-serializable values.
+    // Use timestamp to avoid collisions between different sessions with the same entry count.
+    logWarn("", "hashSessionEntries", "stableStringify failed, falling back to length+timestamp hash", { error: String(err) });
+    const hash = createHash("sha256")
+      .update(String(entries.length))
+      .update(String(Date.now()))
+      .digest("hex").slice(0, 16);
+    return hash;
+  }
 }
 
 export function withAuditGuard(t: string): string {

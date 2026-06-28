@@ -55,8 +55,8 @@ function isThemed(cwd?: string): boolean {
     // Global agent settings (fallback)
     const global = readJsonSafe(join(getAgentDir(), "settings.json"));
     const globalCdev = global?.["pi-chain-dev"] as Record<string, unknown> | undefined;
-    // Project overrides global, default false
-    result = (projCdev?.["themed"] ?? globalCdev?.["themed"]) === true;
+    // Project overrides global, default true
+    result = (projCdev?.["themed"] ?? globalCdev?.["themed"]) !== false;
   } catch { /* result stays false */ }
   _themedCache = { cwd: cacheKey, result, ts: Date.now() };
   return result;

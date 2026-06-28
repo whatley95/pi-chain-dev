@@ -38,6 +38,9 @@ export function refreshFromSessionEntries(state: LoopDetectionState, entries: un
   const calls = extractToolCallsFromEntries(entries);
   state.recentToolCalls.length = 0;
   state.recentToolCalls.push(...calls.slice(-MAX_HISTORY));
+  // Reset cooldown so a previously-detected loop doesn't stay suppressed after restore
+  state.lastLoopSignature = "";
+  state.lastLoopSteerAt = Date.now();
 }
 
 export function checkAndSendLoopSteer(
