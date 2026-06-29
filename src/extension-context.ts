@@ -15,7 +15,7 @@ import { memoryTopicCount } from "./memory.js";
 import { BUILD_DATE } from "./build-date.js";
 import { logError as logErrorToFile, logWarn } from "./logger.js";
 
-export const AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
+export const AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — READ-ONLY: Do NOT create, modify, move, copy, or delete any files or directories. Only inspect and report findings. Do NOT use bash to write to disk.";
 export const DEFAULT_SIGNATURE = "whatley.xyz";
 export const FORK_COST_STATUS_KEY = "cdev-cost";
 

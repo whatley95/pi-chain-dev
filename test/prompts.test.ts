@@ -45,6 +45,17 @@ describe("buildStage1Prompt", () => {
     const normalPrompt = buildStage1Prompt("explore auth");
     assert.ok(!normalPrompt.includes("QUICK MODE"));
   });
+
+  it("forbids write operations via bash in all scout modes", () => {
+    const prompt = buildStage1Prompt("explore auth");
+    assert.ok(prompt.includes("READ-ONLY AUDIT MODE"));
+    assert.ok(prompt.includes("Never use `bash` to write"));
+    assert.ok(prompt.includes("`echo >`"));
+    assert.ok(prompt.includes("`cat >`"));
+    assert.ok(prompt.includes("`cp`"));
+    assert.ok(prompt.includes("`rm`"));
+    assert.ok(prompt.includes("`mkdir`"));
+  });
 });
 
 describe("buildStage2Prompt", () => {

@@ -1,9 +1,15 @@
 import { appendTaskToSessionJsonl } from "./fork-stage.js";
 import { loadProjectMap, summarizeMapForPrompt, formatSuggestedFiles, type ProjectMap, type ParallelSubTask } from "./project-map.js";
 
-export const STAGE_AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
+export const STAGE_AUDIT_GUARD = `\n\n⚠️ AUDIT ONLY — READ-ONLY AUDIT MODE. YOU MUST NOT CREATE, MODIFY, MOVE, COPY, OR DELETE ANY FILES OR DIRECTORIES.
+- Do NOT run commands that write to disk (e.g., \`echo >\`, \`cat >\`, \`tee\`, \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`chmod\`, \`git add\`, \`git commit\`, \`npm install\`, \`ng generate\`, etc.).
+- Do NOT use \`bash\` to create, modify, move, copy, or delete files or directories.
+- Do NOT run build, install, generate, or scaffold commands that mutate the working directory.
+- Your job is to INSPECT and REPORT only. If the task asks for implementation, describe what files would need to be created or changed and why, but do NOT create or modify them.
+- Any claim that you created, modified, moved, copied, or deleted a file is false and violates these instructions.`;
 
 const EFFICIENCY_RULES = `Efficiency rules (MANDATORY — minimize round-trips):
+- **All \`bash\` commands must be READ-ONLY.** Never use \`bash\` to write, copy, move, delete, generate, or otherwise modify files or directories. No \`echo >\`, \`cat >\`, \`tee\`, \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`chmod\`, \`git add\`, \`npm install\`, \`ng generate\`, etc.
 - **ALWAYS batch file reads. Never read files one at a time.** If you need more than one file, issue multiple \`read\` calls in a single response. Pi executes them in parallel.
 - **Minimum batch size**: Issue at least 3-5 \`read\` calls together whenever you need multiple files. There is no benefit to reading them sequentially.
 - **Prefer\`rg\`for discovery**: \`bash: rg -n "pattern" src/\` is faster than recursive \`grep\` and respects \`.gitignore\`. Use it to locate relevant files FIRST.
@@ -228,7 +234,7 @@ export function buildResearchPrompt(task: string, customPrompt?: string, cwd?: s
   }
 }`;
 
-  const base = `You are in RESEARCH MODE. Investigate the issue thoroughly using available tools (read, bash, ls, grep, rg, find, cat). Prefer \`rg\` for repo-wide search and \`bash: cat ...\` to batch-read files. Do NOT implement, modify, or write any code. Only report findings and a clear decision/recommendation.
+  const base = `You are in RESEARCH MODE. Investigate the issue thoroughly using available tools (read, bash, ls, grep, rg, find, cat). Prefer \`rg\` for repo-wide search and \`bash: cat ...\` to batch-read files. Do NOT implement, modify, or write any code. Do NOT create, modify, move, copy, or delete files or directories. All \`bash\` commands must be READ-ONLY.
 
 Issue: ${task}${mapContext}
 
@@ -257,7 +263,7 @@ Rules:
 
 export function buildAdvisorPrompt(question: string, scoutFindings?: string, customPrompt?: string, cwd?: string): string {
   const mapContext = cwd ? loadMapContext(cwd) : "";
-  const base = `You are an ADVISOR. The main agent is stuck or needs help with a difficult decision. ${scoutFindings ? "A scout has already gathered relevant project data below." : "Use your knowledge and any available tools to investigate if needed."} Do NOT implement or edit code. Give a clear, concise recommendation the main agent can act on.
+  const base = `You are an ADVISOR. The main agent is stuck or needs help with a difficult decision. ${scoutFindings ? "A scout has already gathered relevant project data below." : "Use your knowledge and any available tools to investigate if needed."} Do NOT implement or edit code. Do NOT create, modify, move, copy, or delete any files or directories. All \`bash\` commands must be READ-ONLY. Give a clear, concise recommendation the main agent can act on.
 
 Question: ${question}${mapContext}${scoutFindings ? `\n\n<scout_findings>\n${scoutFindings}\n</scout_findings>` : ""}
 

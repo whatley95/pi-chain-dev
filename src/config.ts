@@ -329,11 +329,11 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (config.prompts && typeof config.prompts === "object") {
       const prompts = config.prompts as Record<string, unknown>;
       const parsedPrompts: Record<string, string> = {};
-    for (const key of ["explore", "synthesize", "plan", "review", "research", "advisor"]) {
-      if (typeof prompts[key] === "string" && (prompts[key] as string).trim()) {
-        parsedPrompts[key] = (prompts[key] as string).trim();
+      for (const key of ["explore", "synthesize", "plan", "review", "research", "advisor"]) {
+        if (typeof prompts[key] === "string" && (prompts[key] as string).trim()) {
+          parsedPrompts[key] = (prompts[key] as string).trim();
+        }
       }
-    }
       if (Object.keys(parsedPrompts).length > 0) {
         parsed.prompts = parsedPrompts as PromptsConfig;
       }

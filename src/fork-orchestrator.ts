@@ -109,6 +109,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     stage1Result = parallelResult;
     stage1Findings = parallelFindings;
   } else {
+    opts.onProgress?.("scout", modelLabel(stage1Profile));
     stage1Result = await runStage1Run("exploration", task);
     details.stage1 = stage1Result;
 
@@ -327,7 +328,7 @@ export function mergeStage1Findings(a: Stage1Findings, b: Stage1Findings): Stage
       }
     }
   }
-  if (b.findings.length > a.findings.length && b.summary.length >= a.summary.length) {
+  if (b.summary.length > a.summary.length) {
     merged.summary = b.summary;
   }
   if (a.coverage && b.coverage) {

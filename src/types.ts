@@ -159,18 +159,6 @@ export function formatYoloStatus(config?: YoloConfig): string {
   return `ON (max ${normalized.maxRounds} rounds, auto-apply ${normalized.autoApply})`;
 }
 
-/** @deprecated No-op kept for config compatibility. */
-export function normalizeConfidenceGates(config?: ConfidenceGateConfig): Required<ConfidenceGateConfig> {
-  return {
-    minFindings: Math.max(0, config?.minFindings ?? 3),
-    maxLowConfidenceRatio: Math.min(1, Math.max(0, config?.maxLowConfidenceRatio ?? 0.5)),
-    minFileAnchors: Math.max(0, config?.minFileAnchors ?? 1),
-    minCommandEvidence: Math.max(0, config?.minCommandEvidence ?? 1),
-    autoReExplore: config?.autoReExplore ?? true,
-    strictValidation: config?.strictValidation ?? false,
-  };
-}
-
 /** @deprecated No-op kept for backward compatibility; always returns pass. */
 export function evaluateConfidenceGates(_findings: Stage1Findings, _gates?: ConfidenceGateConfig): { passed: boolean; reasons: string[] } {
   return { passed: true, reasons: [] };
