@@ -19,6 +19,7 @@ import { clearProgress, withUiDetails, buildReportUiDetails,
 } from "./shared-helpers.js";
 import { computeReportDiff, formatReportDiff } from "../json-extract.js";
 import { safeDisplayText } from "../text-width.js";
+import type { ForkResult } from "../types.js";
 
 export async function handleFullFork(
   p: AutoForkParamsType,
@@ -95,10 +96,12 @@ export async function handleFullFork(
     confidenceGates: config.confidenceGates,
     onProgress,
     onUpdate: (update) => {
-      const icon = update.stage.includes("exploration") || update.stage === "scout" ? "🔍" : isPlan ? "📋" : "⚒️";
-      const label = update.stage.includes("exploration") || update.stage === "scout" ? "Scout" : isPlan ? "Planner" : "Forge";
+      const isScout = update.stage.includes("exploration") || update.stage === "scout";
+      const icon = isScout ? "🔍" : isPlan ? "📋" : "⚒️";
+      const label = isScout ? "Scout" : isPlan ? "Planner" : "Forge";
       const detail = formatProgressDetail(update);
-      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${label} ${update.stage}…${detail ? `  ${detail}` : ""}`)]);
+      const scoutSummary = isScout ? summarizeScoutActivity(result, update.activity) : "";
+      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${label} ${update.stage}…${scoutSummary ? `  ${scoutSummary}` : ""}${detail ? `  · ${detail}` : ""}`)]);
     },
     extensions: config.extensions,
     environment: config.environment,
@@ -181,4 +184,23 @@ export async function handleFullFork(
     })),
     isError,
   };
+}
+
+function summarizeScoutActivity(result: ForkResult, latestActivity?: string): string {
+  const tools = Array.isArray(result.toolExecutions) ? result.toolExecutions as { toolName?: string; status?: string }[] : [];
+  const completedReads = tools.filter((t) => t.toolName === "read" && t.status === "completed").length;
+  const runningReads = tools.filter((t) => t.toolName === "read" && t.status === "running").length;
+  const completedSearches = tools.filter((t) => (t.toolName === "rg" || t.toolName === "grep") && t.status === "completed").length;
+  const parts: string[] = [];
+  if (completedReads > 0 || runningReads > 0) {
+    parts.push(`${completedReads + runningReads} file${completedReads + runningReads === 1 ? "" : "s"}`);
+  }
+  if (completedSearches > 0) {
+    parts.push(`${completedSearches} search`);
+  }
+  if (parts.length === 0 && latestActivity) {
+    // Fall back to a short version of the raw activity if we haven't counted anything yet.
+    return latestActivity;
+  }
+  return parts.join(" · ");
 }

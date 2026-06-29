@@ -28,6 +28,8 @@ import {
 } from "./memory.js";
 import { getErrorCount, clearErrorLog } from "./logger.js";
 import { listSessions } from "./history.js";
+import { generateProjectMap, getMapPath, saveProjectMap } from "./project-map.js";
+import { existsSync, statSync } from "node:fs";
 import {
   registerRealtimeLoopDetection,
   refreshFromSessionEntries,
@@ -57,6 +59,28 @@ export default function (pi: ExtensionAPI) {
       const config = loadConfig(ctx.cwd);
       if (config.auto) resetAutoTurnCounter();
       registerLifecycleHandlers(pi, ctx);
+      // Warm up the project map in the background so the first cdev task doesn't
+      // pay the generation cost. Skip if the map is fresh (≤7 days old).
+      try {
+        const mapPath = getMapPath(ctx.cwd);
+        let stale = true;
+        if (existsSync(mapPath)) {
+          const ageMs = Date.now() - statSync(mapPath).mtimeMs;
+          stale = ageMs > 7 * 24 * 60 * 60 * 1000;
+        }
+        if (stale) {
+          setImmediate(() => {
+            try {
+              const map = generateProjectMap(ctx.cwd);
+              saveProjectMap(ctx.cwd, map);
+            } catch (warmErr) {
+              logError(ctx.cwd, "warm-project-map", warmErr);
+            }
+          });
+        }
+      } catch (warmErr) {
+        logError(ctx.cwd, "warm-project-map-check", warmErr);
+      }
     } catch (err) {
       logError(ctx.cwd, "session_start", err);
     }
