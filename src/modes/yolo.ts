@@ -85,8 +85,9 @@ export async function handleYolo(
     yoloFixTimeoutMs: config.profileTimeouts?.yoloFix ?? config.forgeTimeoutMs,
     onProgress: onYoloProgress,
     onUpdate: (update) => {
-      const detail = formatProgressDetail(update) || update.activity || "working…";
-      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", detail)]);
+      const detail = formatProgressDetail(update);
+      const activity = detail ? ` · ${detail}` : "";
+      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🔧 YOLO ${update.stage}…${activity || " · working…"}`)]);
     },
     extensions: config.extensions,
     environment: config.environment,

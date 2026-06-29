@@ -67,7 +67,9 @@ export async function handleResearch(
     stageTimeoutMs: config.profileTimeouts?.research ?? config.scoutTimeoutMs,
     onProgress,
     onUpdate: (update) => {
-      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `📚 Research ${update.stage}… ${formatProgressDetail(update)}`)]);
+      const detail = formatProgressDetail(update);
+      const activity = detail ? ` · ${detail}` : "";
+      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `📚 Research ${update.stage}…${activity}`)]);
     },
     extensions: config.extensions,
     environment: config.environment,

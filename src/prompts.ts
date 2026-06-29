@@ -11,7 +11,8 @@ const EFFICIENCY_RULES = `Efficiency rules (MANDATORY — minimize round-trips):
 - **Batch reads with\`cat\`when needed**: \`bash: cat src/a.ts src/b.ts src/c.ts\` reads many files in one tool call. Use this when \`read\` batching is inconvenient.
 - **Use\`bash\`with globs for bulk inspection**: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
 - **Single-file\`read\`is a last resort**: Only use \`read\` for exactly one specific, named file. For 2+ files, batch \`read\` calls or use \`bash: cat ...\`.
-- **Search before reading**: Run \`rg\` or \`grep\` first to locate relevant files, then read only the relevant ones in parallel.`;
+- **Search before reading**: Run \`rg\` or \`grep\` first to locate relevant files, then read only the relevant ones in parallel.
+- **Do NOT dump entire large files into evidence**: For files over ~200 lines, read only the relevant section (e.g., \`read path:100-150\`) or use \`bash: rg -n -A 10 -B 5 pattern path\`. Summarize the rest. Giant verbatim pastes waste tokens and may be truncated.`;
 
 export function buildStage1Prompt(task: string, customPrompt?: string, editMode?: boolean, cwd?: string, subTask?: ParallelSubTask, quick?: boolean, map?: ProjectMap | null): string {
   const guard = editMode ? "" : STAGE_AUDIT_GUARD;
@@ -77,8 +78,10 @@ Rules:
 - "summary" is required and must be one sentence.
 - "findings" is required. Each finding must have "observation" and "confidence".
 - "file" and "evidence" are optional but strongly preferred when applicable.
+- "evidence" must be concise: at most 4-6 lines or ~400 characters per finding. Quote only the exact lines that support the observation.
 - "deadEnds", "assumptions", "openQuestions" are optional.
 - "coverage" is required. Provide honest counts.
+- Stop adding findings once you have enough to answer the task. Aim for 5-10 high-quality findings, not dozens.
 - Do NOT write structured sections like "Result", "Output", "Evidence", or "Learnings" outside the JSON.
 - Estimate "coverage" honestly: count files you inspected, files cited in findings, commands you ran, and likely relevant files you did NOT read.
 - "evidence" must be a verbatim snippet or exact command output you actually observed. Do NOT fabricate, guess, or paraphrase evidence.

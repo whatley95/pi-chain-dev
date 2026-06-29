@@ -17,9 +17,10 @@ import { indexFindingsAsync, getMemoryContext } from "../memory.js";
 import { clearProgress, withUiDetails, buildReportUiDetails,
   formatProgressDetail, modelLabel, checkForkBudget,
 } from "./shared-helpers.js";
-import { computeReportDiff, formatReportDiff } from "../json-extract.js";
+import { computeReportDiff, formatReportDiff, parseStage1Findings } from "../json-extract.js";
 import { safeDisplayText } from "../text-width.js";
 import type { ForkResult } from "../types.js";
+import { formatStage1FindingsForStage2 } from "../fork-orchestrator.js";
 
 export async function handleFullFork(
   p: AutoForkParamsType,
@@ -162,7 +163,15 @@ export async function handleFullFork(
   let resultText = formatForkResultOutput(result, details);
 
   if (quick) {
-    resultText = `🔍 cdev quick (read-only) findings\n\n${resultText}\n\n---\nℹ️ Quick mode is read-only. No files were created or modified.`;
+    const findings = parseStage1Findings(finalText);
+    const readable = findings
+      ? formatStage1FindingsForStage2(findings)
+      : resultText || result.errorMessage || result.stderr || "(scout produced no output)";
+    const diagnostics: string[] = [];
+    if (result.stopReason && result.stopReason !== "stop") diagnostics.push(`stop reason: ${result.stopReason}`);
+    if (result.errorMessage) diagnostics.push(`error: ${result.errorMessage}`);
+    const diagnosticLine = diagnostics.length > 0 ? `\n\n⚠️ ${diagnostics.join(" · ")}` : "";
+    resultText = `🔍 cdev quick (read-only) findings\n\n${readable}${diagnosticLine}\n\n---\nℹ️ Quick mode is read-only. No files were created or modified.`;
   }
 
   // Compare to previous report on same task, if available
@@ -192,19 +201,35 @@ export async function handleFullFork(
 }
 
 function summarizeScoutActivity(result: ForkResult | null, latestActivity?: string): string {
-  const tools = result && Array.isArray(result.toolExecutions) ? result.toolExecutions as { toolName?: string; status?: string }[] : [];
+  const tools = result && Array.isArray(result.activities) ? result.activities as { toolName?: string; status?: string; type?: string; displayText?: string }[] : [];
   const completedReads = tools.filter((t) => t.toolName === "read" && t.status === "completed").length;
   const runningReads = tools.filter((t) => t.toolName === "read" && t.status === "running").length;
   const completedSearches = tools.filter((t) => (t.toolName === "rg" || t.toolName === "grep") && t.status === "completed").length;
+  const runningSearches = tools.filter((t) => (t.toolName === "rg" || t.toolName === "grep") && t.status === "running").length;
   const parts: string[] = [];
-  if (completedReads > 0 || runningReads > 0) {
-    parts.push(`${completedReads + runningReads} file${completedReads + runningReads === 1 ? "" : "s"}`);
+
+  if (runningReads > 0) {
+    parts.push(`reading ${runningReads} file${runningReads === 1 ? "" : "s"}`);
+  } else if (completedReads > 0) {
+    parts.push(`read ${completedReads} file${completedReads === 1 ? "" : "s"}`);
   }
-  if (completedSearches > 0) {
+
+  if (runningSearches > 0) {
+    parts.push(`searching ${runningSearches}`);
+  } else if (completedSearches > 0) {
     parts.push(`${completedSearches} search`);
   }
+
+  // Show the most recent running tool call (file path or command) for extra context.
+  const latestRunning = tools.find((t) => t.status === "running" && t.displayText);
+  if (latestRunning?.displayText) {
+    const short = latestRunning.displayText.replace(/\s+/g, " ").trim();
+    if (short && !parts.some((p) => p.includes(short))) {
+      parts.push(short.length > 35 ? `${short.slice(0, 34)}…` : short);
+    }
+  }
+
   if (parts.length === 0 && latestActivity) {
-    // Fall back to a short version of the raw activity if we haven't counted anything yet.
     return latestActivity;
   }
   return parts.join(" · ");

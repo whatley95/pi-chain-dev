@@ -86,7 +86,9 @@ async function handleFileReview(
     stageTimeoutMs: config.profileTimeouts?.review ?? config.forgeTimeoutMs,
     onProgress,
     onUpdate: (update) => {
-      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing ${reviewFile}…  ${formatProgressDetail(update)}`)]);
+      const detail = formatProgressDetail(update);
+      const activity = detail ? ` · ${detail}` : "";
+      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing ${reviewFile}…${activity}`)]);
     },
     extensions: config.extensions,
     environment: config.environment,
@@ -223,7 +225,9 @@ async function handleDiffReviewInternal(
     stageTimeoutMs: config.profileTimeouts?.review ?? config.forgeTimeoutMs,
     onProgress,
     onUpdate: (update) => {
-      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing diff ${diffSpec}…  ${formatProgressDetail(update)}`)]);
+      const detail = formatProgressDetail(update);
+      const activity = detail ? ` · ${detail}` : "";
+      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing diff ${diffSpec}…${activity}`)]);
     },
     extensions: config.extensions,
     environment: config.environment,
@@ -321,7 +325,9 @@ async function handleSessionReviewInternal(
     customReviewPrompt: config.promptsEnabled ? config.prompts?.review : undefined,
     onProgress,
     onUpdate: (update) => {
-      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing…  ${formatProgressDetail(update)}`)]);
+      const detail = formatProgressDetail(update);
+      const activity = detail ? ` · ${detail}` : "";
+      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `⚒️ Forge reviewing…${activity}`)]);
     },
     extensions: config.extensions,
     environment: config.environment,

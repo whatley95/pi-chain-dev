@@ -135,7 +135,11 @@ export function clearProgress(ctx: ExtensionContext): void {
 
 export function formatProgressDetail(update: { activity?: string; cost?: number; tokens?: number }): string {
   const parts: string[] = [];
-  if (update.activity) parts.push(update.activity);
+  if (update.activity) {
+    // Avoid noisy generic labels when the caller already renders a more specific status.
+    const generic = ["assistant responding...", "assistant calling tools...", "assistant writing..."];
+    if (!generic.includes(update.activity)) parts.push(update.activity);
+  }
   if (update.tokens && update.tokens > 0) parts.push(`${(update.tokens / 1000).toFixed(1)}k tok`);
   if (update.cost && update.cost > 0) parts.push(formatCost(update.cost));
   return parts.length > 0 ? parts.join(" · ") : "";

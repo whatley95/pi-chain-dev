@@ -229,12 +229,33 @@ export function summarizePiEvent(event: { type: string; [key: string]: unknown }
     case "tool_execution_end": {
       const toolName = (event.toolName as string) || "";
       const status = (event.status as string) || "";
-      if (toolName) return `${toolName}: ${status || "running"}`;
+      let detail = "";
+      const args = event.args as Record<string, unknown> | undefined;
+      if (args && typeof args === "object") {
+        if (toolName === "read" || toolName === "edit" || toolName === "write") {
+          const fp = (args.path || args.file_path) as string | undefined;
+          detail = fp ? ` ${fp}` : "";
+        } else if (toolName === "grep" || toolName === "rg") {
+          const pat = args.pattern as string | undefined;
+          detail = pat ? ` "${pat.slice(0, 40)}"` : "";
+        } else if (toolName === "bash") {
+          const cmd = args.command as string | undefined;
+          detail = cmd ? ` ${cmd.slice(0, 60)}` : "";
+        } else if (toolName === "cdev") {
+          const t = args.task as string | undefined;
+          detail = t ? ` ${t.slice(0, 40)}` : "";
+        }
+      }
+      if (toolName) return `${toolName}: ${status || "running"}${detail}`;
       return undefined;
     }
     case "message_update": {
-      const msg = event.message as { role?: string; content?: unknown } | undefined;
-      if (msg?.role === "assistant") return "assistant responding...";
+      const msg = event.message as { role?: string; content?: unknown; stopReason?: string } | undefined;
+      if (msg?.role === "assistant") {
+        if (msg?.stopReason === "tool_use") return "assistant calling tools...";
+        if (msg?.stopReason === "end_turn" || msg?.stopReason === "max_tokens") return "assistant writing...";
+        return "assistant responding...";
+      }
       return undefined;
     }
     case "message_end": {
@@ -274,17 +295,3 @@ export function summarizePiEvent(event: { type: string; [key: string]: unknown }
 }
 
 
-/**
- * Update the cdev-progress widget with activity text, cost, and token count.
- */
-export function updateProgress(
-  setWidget: (key: string, value: unknown) => void,
-  themedBg: (token: string, text: string) => string,
-  update: { activity?: string; cost?: number; tokens?: number },
-  prefix: string,
-): void {
-  const parts = [update.activity ?? ""];
-  if (update.cost && update.cost > 0) parts.push(`● ${formatCost(update.cost)}`);
-  if (update.tokens && update.tokens > 0) parts.push(`● ${formatCount(update.tokens)} tok`);
-  setWidget("cdev-progress", [themedBg("toolPendingBg", `${prefix}  ${parts.filter(Boolean).join("  ")}`)]);
-}

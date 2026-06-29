@@ -73,7 +73,9 @@ export async function handleAdvisor(
     includeScout: !askAdvisorOnly,
     onProgress,
     onUpdate: (update) => {
-      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🧭 Advisor ${update.stage}… ${formatProgressDetail(update)}`)]);
+      const detail = formatProgressDetail(update);
+      const activity = detail ? ` · ${detail}` : "";
+      ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `🧭 Advisor ${update.stage}…${activity}`)]);
     },
     extensions: config.extensions,
     environment: config.environment,
