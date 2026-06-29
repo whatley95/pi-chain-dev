@@ -448,7 +448,7 @@ describe("buildPiArgs (fork-stage.ts)", () => {
     const args = buildPiArgs("task", "/tmp/session.jsonl", null, stageProfile, "scout");
     const toolsIndex = args.indexOf("--tools");
     assert.ok(toolsIndex > -1);
-    assert.strictEqual(args[toolsIndex + 1], "read,bash,ls,grep,rg,find,cat,multiRead");
+    assert.strictEqual(args[toolsIndex + 1], "read,bash,ls,grep,rg,find,cat,multiRead,gatherCodeContext");
     assert.ok(!args.includes("--no-tools"));
   });
 

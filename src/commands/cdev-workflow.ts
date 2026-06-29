@@ -1,9 +1,15 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export function handleQuickSubcommand(trimmed: string, _lower: string, _ctx: ExtensionContext, pi: ExtensionAPI): boolean {
-  if (!_lower.startsWith("quick ") && !_lower.startsWith("fast ")) return false;
-  pi.sendUserMessage("Use cdev with quick=true to: " + trimmed.slice(6).trim(), { triggerTurn: true, deliverAs: "steer" });
-  return true;
+  if (_lower.startsWith("quick ")) {
+    pi.sendUserMessage("Use cdev with quick=true to: " + trimmed.slice(6).trim(), { triggerTurn: true, deliverAs: "steer" });
+    return true;
+  }
+  if (_lower.startsWith("fast ")) {
+    pi.sendUserMessage("Use cdev with quick=true to: " + trimmed.slice(5).trim(), { triggerTurn: true, deliverAs: "steer" });
+    return true;
+  }
+  return false;
 }
 export function handleResearchSubcommand(trimmed: string, _lower: string, _ctx: ExtensionContext, pi: ExtensionAPI): boolean {
   if (!_lower.startsWith("research ")) return false;

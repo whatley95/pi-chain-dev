@@ -79,10 +79,10 @@ export function registerCdevCommand(
       const config = loadConfig(ctx.cwd);
 
       // ── Tool subcommands: read, grep, trace, explain ──
-      if (handleReadSubcommand(trimmed, ctx, pi)) return;
-      if (handleGrepSubcommand(trimmed, ctx, pi)) return;
-      if (handleTraceSubcommand(trimmed, ctx, pi)) return;
-      if (handleExplainSubcommand(trimmed, ctx, pi)) return;
+      if (await handleReadSubcommand(trimmed, ctx, pi)) return;
+      if (await handleGrepSubcommand(trimmed, ctx, pi)) return;
+      if (await handleTraceSubcommand(trimmed, ctx, pi)) return;
+      if (await handleExplainSubcommand(trimmed, ctx, pi)) return;
 
       // ── Subcommands: scan, scan deep ──// ── Subcommands: scan, scan deep ──
       if (await handleScan(trimmed, ctx, config, updateAutoStatus)) return;

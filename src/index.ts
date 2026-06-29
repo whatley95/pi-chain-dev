@@ -38,6 +38,7 @@ import {
 import { registerAdvisorPrompt } from "./advisor-prompt.js";
 import { clearStageSemaphores } from "./fork-stage.js";
 import { registerMultiReadTool } from "./multi-read.js";
+import { registerGatherCodeContextTool } from "./gather-code-context.js";
 
 export default function (pi: ExtensionAPI) {
   let autoTurnCounter = 0;
@@ -51,6 +52,7 @@ export default function (pi: ExtensionAPI) {
 
   // Register multiRead in the parent extension so the tool schema is known.
   registerMultiReadTool(pi);
+  registerGatherCodeContextTool(pi);
 
   function resetAutoTurnCounter(): void {
     autoTurnCounter = 0;

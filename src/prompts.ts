@@ -10,6 +10,7 @@ export const STAGE_AUDIT_GUARD = `\n\n⚠️ AUDIT ONLY — READ-ONLY AUDIT MODE
 
 const EFFICIENCY_RULES = `Efficiency rules (MANDATORY — minimize round-trips):
 - **All \`bash\` commands must be READ-ONLY.** Never use \`bash\` to write, copy, move, delete, generate, or otherwise modify files or directories. No \`echo >\`, \`cat >\`, \`tee\`, \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`chmod\`, \`git add\`, \`npm install\`, \`ng generate\`, etc.
+- **Use \`gatherCodeContext\` first for code lookup tasks.** It searches with rg, ranks files, and returns compact line-window snippets in one tool call. Prefer it over doing separate \`rg\` then \`read\` calls.
 - **ALWAYS batch file reads. Never read files one at a time.** If you need more than one file, use the \`multiRead\` tool or issue multiple \`read\` calls in a single response. Pi executes them in parallel.
 - **Minimum batch size**: Issue at least 3-5 files together whenever you need multiple files. Use \`multiRead\` for batches of 2-10 files, or issue multiple \`read\` calls. There is no benefit to reading them sequentially.
 - **Prefer\`rg\`for discovery**: \`bash: rg -n "pattern" src/\` is faster than recursive \`grep\` and respects \`.gitignore\`. Use it to locate relevant files FIRST.
@@ -67,12 +68,32 @@ ${EFFICIENCY_RULES}${guard}${quickGuard}
 - Do NOT invent file paths, command outputs, or configuration values.
 - If uncertain, set confidence to "low" and explain what you did NOT verify in the observation.`;
   }
+  if (quick) {
+    return `${focusTask}${mapContext}${startFiles}${scopeHint}
+
+QUICK EXPLORATION MODE. Read-only. Gather just enough evidence, then stop.
+
+Use the fastest path:
+- Prefer gatherCodeContext for search + snippets in one call.
+- Use multiRead only when full-file context is needed.
+- Use rg for custom searches.
+- Do not modify files or run write/build/install commands.
+
+Return only fenced JSON matching this schema:
+${jsonSchema}
+
+Rules:
+- Keep findings concise: usually 3-6 high-signal findings.
+- Evidence must be exact observed snippets or command output.
+- If uncertain, use confidence "low" and say what was not verified.
+- Do not add prose outside the JSON.${guard}${quickGuard}`;
+  }
   return `${focusTask}${mapContext}${startFiles}${scopeHint}
 
 You are in EXPLORATION MODE. Your job is to gather information, not to write a final report.
 
 Instructions:
-- Explore thoroughly using available tools (read, bash, ls, grep, rg, find, cat, multiRead). Prefer rg, cat, and multiRead for bulk operations.
+- Explore thoroughly using available tools (gatherCodeContext, read, bash, ls, grep, rg, find, cat, multiRead). Prefer gatherCodeContext for search+snippet gathering, then multiRead for full-file follow-up.
 - Gather concrete evidence: file contents, command outputs, config values
 - Return your findings as a single JSON object matching this schema (fenced JSON output, no extra prose):
 ${jsonSchema}
@@ -234,7 +255,7 @@ export function buildResearchPrompt(task: string, customPrompt?: string, cwd?: s
   }
 }`;
 
-  const base = `You are in RESEARCH MODE. Investigate the issue thoroughly using available tools (read, bash, ls, grep, rg, find, cat, multiRead). Prefer \`rg\` for repo-wide search, \`multiRead\` for reading multiple discovered files at once, and \`bash: cat ...\` to batch-read files. Do NOT implement, modify, or write any code. Do NOT create, modify, move, copy, or delete files or directories. All \`bash\` commands must be READ-ONLY.
+  const base = `You are in RESEARCH MODE. Investigate the issue thoroughly using available tools (gatherCodeContext, read, bash, ls, grep, rg, find, cat, multiRead). Prefer \`gatherCodeContext\` for repo search plus compact snippets, \`rg\` for custom searches, \`multiRead\` for reading multiple discovered files at once, and \`bash: cat ...\` to batch-read files. Do NOT implement, modify, or write any code. Do NOT create, modify, move, copy, or delete files or directories. All \`bash\` commands must be READ-ONLY.
 
 Issue: ${task}${mapContext}
 

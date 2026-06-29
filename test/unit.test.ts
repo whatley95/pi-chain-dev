@@ -6,6 +6,9 @@
  */
 
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
 // ── memory.ts imports ──────────────────────────────────
@@ -19,8 +22,74 @@ import { stableStringify } from "../src/runner-events.js";
 
 // ── types.ts imports ──────────────────────────────────
 import { emptyUsage, emptyFailedResult } from "../src/types.js";
+import {
+  handleReadSubcommand,
+  handleGrepSubcommand,
+  handleTraceSubcommand,
+  handleExplainSubcommand,
+} from "../src/commands/cdev-tools.js";
 
 // ── memory.ts: extractFilePaths ───────────────────────────
+
+describe("cdev tool shortcuts", () => {
+  function mockCtx(cwd: string) {
+    const notifications: string[] = [];
+    return {
+      notifications,
+      ctx: {
+        cwd,
+        ui: {
+          notify: (message: string) => {
+            notifications.push(message);
+          },
+        },
+      },
+    };
+  }
+
+  it("directly reads files without spawning a scout", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "cdev-tools-"));
+    try {
+      mkdirSync(join(cwd, "src"), { recursive: true });
+      writeFileSync(join(cwd, "src", "a.ts"), "one\ntwo\nthree\n", "utf-8");
+      const { ctx, notifications } = mockCtx(cwd);
+
+      assert.equal(await handleReadSubcommand("read src/a.ts:2-3", ctx as never, {} as never), true);
+      assert.match(notifications[0] ?? "", /cdev direct read/);
+      assert.match(notifications[0] ?? "", /2: two/);
+      assert.match(notifications[0] ?? "", /3: three/);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("directly searches, traces, and explains with gathered context", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "cdev-tools-"));
+    try {
+      mkdirSync(join(cwd, "src"), { recursive: true });
+      writeFileSync(join(cwd, "src", "prompt.ts"), "export function buildStage1Prompt() {}\n", "utf-8");
+      const grep = mockCtx(cwd);
+      const trace = mockCtx(cwd);
+      const explain = mockCtx(cwd);
+
+      assert.equal(await handleGrepSubcommand("grep buildStage1Prompt src", grep.ctx as never, {} as never), true);
+      assert.equal(await handleTraceSubcommand("trace buildStage1Prompt", trace.ctx as never, {} as never), true);
+      assert.equal(await handleExplainSubcommand("explain src/prompt.ts", explain.ctx as never, {} as never), true);
+      assert.match(grep.notifications[0] ?? "", /cdev direct grep/);
+      assert.match(trace.notifications[0] ?? "", /cdev direct trace/);
+      assert.match(explain.notifications[0] ?? "", /cdev direct read/);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("does not match plural typo forms as shortcuts", async () => {
+    const { ctx } = mockCtx(process.cwd());
+
+    assert.equal(await handleReadSubcommand("reads src/a.ts", ctx as never, {} as never), false);
+    assert.equal(await handleGrepSubcommand("greps pattern", ctx as never, {} as never), false);
+  });
+});
 
 describe("extractFilePaths (memory.ts)", () => {
   it("extracts backtick-enclosed paths", () => {

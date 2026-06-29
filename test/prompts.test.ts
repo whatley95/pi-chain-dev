@@ -36,9 +36,10 @@ describe("buildStage1Prompt", () => {
 
   it("adds explicit read-only guard in quick mode", () => {
     const quickPrompt = buildStage1Prompt("explore auth", undefined, false, undefined, undefined, true);
-    assert.match(quickPrompt, /QUICK MODE/);
-    assert.match(quickPrompt, /READ ONLY/);
-    assert.match(quickPrompt, /Do NOT claim that any files were created/);
+    assert.match(quickPrompt, /QUICK EXPLORATION MODE/);
+    assert.match(quickPrompt, /Read-only/);
+    assert.match(quickPrompt, /gatherCodeContext/);
+    assert.match(quickPrompt, /3-6 high-signal findings/);
   });
 
   it("does not include quick guard when quick is false", () => {
