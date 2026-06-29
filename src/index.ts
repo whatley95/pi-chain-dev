@@ -33,7 +33,7 @@ import {
   refreshFromSessionEntries,
   checkAndSendLoopSteer,
 } from "./loop-detector-runtime.js";
-import { registerAdvisorPrompt } from "./advisor-prompt.js"
+import { registerAdvisorPrompt } from "./advisor-prompt.js";
 import { clearStageSemaphores } from "./fork-stage.js";
 
 export default function (pi: ExtensionAPI) {
@@ -65,8 +65,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("turn_end", async (_event, ctx) => {
     try {
       updateForkCostStatus(ctx);
-    } catch {
-      logError(ctx.cwd, "turn_end", new Error("updateForkCostStatus failed in turn_end"));
+    } catch (err) {
+      logError(ctx.cwd, "turn_end", err);
     }
   });
 
@@ -202,6 +202,7 @@ export default function (pi: ExtensionAPI) {
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const result = await executeCdevTool(params, signal, ctx);
+      if (!result.isError) resetAutoTurnCounter();
       const details = (result.details ?? {}) as { autoCompact?: { tokens: number; limit: number } };
       if (details.autoCompact && !ctx.compact) {
         pi.sendUserMessage("/compact", { triggerTurn: true, deliverAs: "steer" });

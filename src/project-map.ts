@@ -207,20 +207,24 @@ function detectPackageManagers(cwd: string): string[] {
 
 function detectLanguages(cwd: string): string[] {
   const found: string[] = [];
-  if (existsSync(join(cwd, 'pubspec.yaml'))) found.push('Dart');
-  if (existsSync(join(cwd, 'pom.xml')) || existsSync(join(cwd, 'build.gradle')) || existsSync(join(cwd, 'build.gradle.kts'))) found.push('Java');
-  if (existsSync(join(cwd, 'build.gradle.kts'))) found.push('Kotlin');
   const extCounts = countExtensions(cwd);
-  if (existsSync(join(cwd, 'src')) && extCounts.kt > 0) found.push('Kotlin');
+
+  if (existsSync(join(cwd, 'pubspec.yaml'))) found.push('Dart');
+  if (existsSync(join(cwd, 'pom.xml')) || existsSync(join(cwd, 'build.gradle'))) found.push('Java');
+  if (existsSync(join(cwd, 'build.gradle.kts')) || extCounts.kt > 0) found.push('Kotlin');
   if (existsSync(join(cwd, 'requirements.txt')) || existsSync(join(cwd, 'pyproject.toml'))) found.push('Python');
   if (existsSync(join(cwd, 'go.mod'))) found.push('Go');
   if (existsSync(join(cwd, 'Cargo.toml'))) found.push('Rust');
   if (existsSync(join(cwd, 'Gemfile'))) found.push('Ruby');
   if (existsSync(join(cwd, 'composer.json'))) found.push('PHP');
-  if (existsSync(join(cwd, 'tsconfig.json'))) found.push('TypeScript');
-  else if (existsSync(join(cwd, 'package.json'))) found.push('JavaScript');
-  if (extCounts.kt > 0 && !found.includes('Kotlin')) found.push('Kotlin');
-  if (extCounts.js > 0 && !found.includes('TypeScript') && !found.includes('JavaScript')) found.push('JavaScript');
+
+  // TypeScript wins over JavaScript when tsconfig exists OR when .ts files dominate.
+  if (existsSync(join(cwd, 'tsconfig.json')) || extCounts.ts > extCounts.js) {
+    found.push('TypeScript');
+  } else if (existsSync(join(cwd, 'package.json')) && extCounts.js > 0) {
+    found.push('JavaScript');
+  }
+
   if (extCounts.swift > 0) found.push('Swift');
   if (extCounts.cs > 0 || extCounts.csproj > 0) found.push('C#');
   if (extCounts.cpp > 0 || extCounts.hpp > 0) found.push('C++');
@@ -230,7 +234,7 @@ function detectLanguages(cwd: string): string[] {
 
 /** Single-pass tree walk to count file extensions. Avoids re-walking for each extension. */
 function countExtensions(cwd: string): Record<string, number> {
-  const counts: Record<string, number> = { kt: 0, js: 0, swift: 0, cs: 0, csproj: 0, cpp: 0, hpp: 0, c: 0 };
+  const counts: Record<string, number> = { kt: 0, js: 0, ts: 0, swift: 0, cs: 0, csproj: 0, cpp: 0, hpp: 0, c: 0 };
   try {
     function walk(dir: string, depth: number): void {
       if (depth > 5) return;
@@ -240,6 +244,7 @@ function countExtensions(cwd: string): Record<string, number> {
         const st = statSync(full);
         if (st.isDirectory()) walk(full, depth + 1);
         else if (entry.endsWith('.kt')) counts.kt++;
+        else if (entry.endsWith('.ts') || entry.endsWith('.tsx')) counts.ts++;
         else if (entry.endsWith('.js')) counts.js++;
         else if (entry.endsWith('.swift')) counts.swift++;
         else if (entry.endsWith('.cs')) counts.cs++;
@@ -259,8 +264,8 @@ function detectEntryPoints(cwd: string, languages: string[]): string[] {
 
   const checks: Record<string, string[]> = {
     Dart: ["lib/main.dart"],
-    Java: ["src/main/java/Application.java", "src/main/java/com/example/Application.java"],
-    Kotlin: ["src/main/kotlin/Application.kt", "src/main/kotlin/com/example/Application.kt"],
+    Java: ["src/main/java/Application.java"],
+    Kotlin: ["src/main/kotlin/Application.kt"],
     Python: ["main.py", "app.py", "manage.py", "src/__init__.py"],
     Go: ["main.go", "cmd/main.go"],
     Rust: ["src/main.rs"],
@@ -665,7 +670,7 @@ function scanSourceTree(cwd: string, sourceRoots: string[], options?: {
   const {
     maxTreeEntries = 40,
     maxDirEntries = 60,
-    maxDepth = 3,
+    maxDepth = 5,
     generatedDirNames = ["node_modules", ".git", ".pi", "dist", "build", ".next", ".turbo", "coverage", "target", ".dart_tool", ".gradle"],
   } = options ?? {};
 
@@ -738,17 +743,23 @@ function scanSourceTree(cwd: string, sourceRoots: string[], options?: {
     }
   }
 
+  // Detect root-level generated dirs so they are listed even when not under a source root.
+  try {
+    for (const entry of readdirSync(cwd)) {
+      if (generatedDirNames.includes(entry) && !generatedDirs.includes(entry)) {
+        generatedDirs.push(entry);
+      }
+    }
+  } catch { /* ignore */ }
+
   const roots = sourceRoots.length ? sourceRoots : ["."];
   for (const root of roots) {
     if (treeEntriesLeft <= 0 && dirEntriesLeft <= 0) break;
     const fullRoot = join(cwd, root);
     if (!existsSync(fullRoot)) continue;
     const displayRoot = root.replace(/\\/g, "/");
-    if (dirEntriesLeft > 0) {
-      dirs.push({ path: displayRoot, depth: 0, fileCount: 0, dirCount: 0 });
-      dirEntriesLeft--;
-    }
-    walk(fullRoot, displayRoot, `  ${displayRoot}/`, 1);
+    // walk() records the root dir at depth 0 with real stats; no empty pre-entry needed.
+    walk(fullRoot, displayRoot, `  ${displayRoot}/`, 0);
   }
 
   const sortedExtensions = Object.entries(fileCountsByExtension)
@@ -1025,8 +1036,27 @@ function inferType(languages: string[], framework: string[]): string {
   return "generic";
 }
 
-function inferConventions(_cwd: string, languages: string[], framework: string[]): ProjectMap["conventions"] {
+function inferConventions(cwd: string, languages: string[], framework: string[]): ProjectMap["conventions"] {
   const conventions: ProjectMap["conventions"] = {};
+
+  // Read AGENTS.md for project-specific guidance if present.
+  const agentsMd = tryReadText(join(cwd, "AGENTS.md"));
+  if (agentsMd) {
+    const firstPara = agentsMd.split(/\n\s*\n/)[0]?.replace(/^[#\s]+/, "").trim();
+    if (firstPara) conventions.projectGuide = firstPara.slice(0, 200);
+
+    const qualityMatch = agentsMd.match(/quality gates?[^\n]*/i)?.[0];
+    if (qualityMatch) conventions.qualityGates = qualityMatch.trim();
+
+    const sourceMatch = agentsMd.match(/Source files live in [`']([^`']+)[`']/i)?.[1];
+    const testMatch = agentsMd.match(/Tests live in [`']([^`']+)[`']/i)?.[1];
+    if (sourceMatch || testMatch) {
+      conventions.folderStructure = `Source: ${sourceMatch ?? "src/"}; Tests: ${testMatch ?? "test/"}`;
+    }
+
+    const neverCommit = agentsMd.match(/NEVER commit[^.]+/i)?.[0];
+    if (neverCommit) conventions.commitPolicy = neverCommit.trim();
+  }
 
   if (framework.includes("Flutter")) {
     conventions.folderStructure = "Feature-first or layer-first under lib/";
@@ -1046,8 +1076,8 @@ function inferConventions(_cwd: string, languages: string[], framework: string[]
   }
 
   if (languages.includes("TypeScript") || languages.includes("JavaScript")) {
-    conventions.folderStructure = "Check src/, app/, or packages/";
-    conventions.naming = "camelCase/ts files, PascalCase components";
+    if (!conventions.folderStructure) conventions.folderStructure = "Source in src/, tests in test/";
+    conventions.naming = "camelCase files, PascalCase types/classes, named exports";
   }
 
   if (languages.includes("Go")) {
@@ -1063,7 +1093,7 @@ function inferConventions(_cwd: string, languages: string[], framework: string[]
   return conventions;
 }
 
-function inferArchitecture(framework: string[], _languages: string[]): ProjectMap["architecture"] {
+function inferArchitecture(framework: string[], languages: string[], cwd: string): ProjectMap["architecture"] {
   const patterns: string[] = [];
   const layers: Record<string, string[]> = {};
 
@@ -1087,6 +1117,19 @@ function inferArchitecture(framework: string[], _languages: string[]): ProjectMa
     layers.controllers = ["src/**/*.controller.ts"];
     layers.services = ["src/**/*.service.ts"];
     layers.modules = ["src/**/*.module.ts"];
+  }
+
+  // Generic TypeScript extension/tool projects (e.g., pi-chain-dev itself)
+  if (languages.includes("TypeScript") && patterns.length === 0) {
+    const hasTool = existsSync(join(cwd, "src/tool.ts")) || existsSync(join(cwd, "src/index.ts"));
+    const hasCommands = existsSync(join(cwd, "src/commands"));
+    const hasModes = existsSync(join(cwd, "src/modes"));
+    if (hasTool) patterns.push("Extension/plugin architecture");
+    if (hasCommands) patterns.push("Command dispatch pattern");
+    if (hasModes) patterns.push("Mode-based workflow dispatch");
+    if (existsSync(join(cwd, "src/fork-orchestrator.ts"))) patterns.push("Two-stage runner");
+    if (existsSync(join(cwd, "test"))) layers.tests = ["test/**/*.test.ts"];
+    layers.source = ["src/**/*.ts"];
   }
 
   return { patterns, layers };
