@@ -38,6 +38,8 @@ export interface RunAutoForkOptions {
   environment?: Record<string, string>;
   offline?: boolean;
   signal?: AbortSignal;
+  /** Pre-loaded project map to avoid a second disk read. */
+  map?: ProjectMap | null;
 }
 
 export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
@@ -50,6 +52,8 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
           quick = false, plan = false, editMode = false,
           confidenceGates,
           extensions = null, environment = {}, offline = true, signal } = opts;
+
+  const providedMap = opts.map ?? undefined;
 
   const scoutTimeoutMs = Number.isFinite(opts.scoutTimeoutMs) && (opts.scoutTimeoutMs as number) > 0
     ? (opts.scoutTimeoutMs as number)
@@ -68,7 +72,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     return prof.thinking ? `${prof.provider}:${prof.id} • ${prof.thinking}` : `${prof.provider}:${prof.id}`;
   }
 
-  let _cachedMap: ProjectMap | null | undefined;
+  let _cachedMap: ProjectMap | null | undefined = providedMap === null ? null : providedMap;
   function getMap(): ProjectMap | null {
     if (_cachedMap === undefined) _cachedMap = loadProjectMap(cwd);
     return _cachedMap;

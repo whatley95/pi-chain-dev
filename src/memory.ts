@@ -680,6 +680,10 @@ export function memoryClear(cwd: string): void {
   return withMemoryLock(cwd, () => {
   saveMemory(cwd, { version: 1, topics: {} });
   _topicCountCache = null;
+  // Memory context cache is tied to topic content; clear it when memory is wiped.
+  for (const key of _memoryContextCache.keys()) {
+    if (key.startsWith(`${cwd}::`)) _memoryContextCache.delete(key);
+  }
   });
 }
 
@@ -690,6 +694,10 @@ export function memoryForget(cwd: string, topic: string): boolean {
   delete memory.topics[topic];
   saveMemory(cwd, memory);
   _topicCountCache = null;
+  // Topic content changed; clear cached context for this cwd.
+  for (const key of _memoryContextCache.keys()) {
+    if (key.startsWith(`${cwd}::`)) _memoryContextCache.delete(key);
+  }
   return true;
   });
 }
@@ -874,10 +882,26 @@ export function memoryTopicCount(cwd: string): number {
   return count;
 }
 
+/** TTL cache for memory context to avoid rescoring all topics on every fork. */
+const _memoryContextCache = new Map<string, { task: string; result: string | null; ts: number }>();
+const MEMORY_CONTEXT_CACHE_TTL_MS = 5_000;
+
 /** Search memory for findings relevant to a task.
  *  Returns formatted context to prepend to the task, or null if nothing relevant found.
  *  Used to provide project context to child Pi processes that start with clean sessions. */
 export function getMemoryContext(task: string, cwd: string): string | null {
+  const cacheKey = `${cwd}::${task}`;
+  const cached = _memoryContextCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < MEMORY_CONTEXT_CACHE_TTL_MS) {
+    return cached.result;
+  }
+
+  const result = buildMemoryContext(task, cwd);
+  _memoryContextCache.set(cacheKey, { task, result, ts: Date.now() });
+  return result;
+}
+
+function buildMemoryContext(task: string, cwd: string): string | null {
   const memory = loadMemory(cwd);
   const topicEntries = Object.entries(memory.topics);
   if (topicEntries.length === 0) return null;

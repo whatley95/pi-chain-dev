@@ -35,7 +35,10 @@ export async function handleFullFork(
   const auditedTask = withAuditGuard(task);
 
   // Prepend relevant past findings as context — compensates for clean child sessions
-  const memoryContext = config.memory ? getMemoryContext(task, ctx.cwd) : null;
+  // Load project map and memory context in parallel since they are independent.
+  const mapPromise = config.memory ? import("../project-map.js").then((m) => m.loadProjectMap(ctx.cwd)) : Promise.resolve(null);
+  const memoryContextPromise = config.memory ? Promise.resolve(getMemoryContext(task, ctx.cwd)) : Promise.resolve(null);
+  const [map, memoryContext] = await Promise.all([mapPromise, memoryContextPromise]);
   const enrichedTask = memoryContext ? `${memoryContext}\n---\n${auditedTask}` : auditedTask;
 
   const budget = checkForkBudget(config, ctx.cwd, enrichedTask,
@@ -101,6 +104,7 @@ export async function handleFullFork(
     environment: config.environment,
     offline: config.offline,
     signal,
+    map,
   });
   clearProgress(ctx);
 
