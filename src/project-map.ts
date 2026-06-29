@@ -165,7 +165,15 @@ export function suggestFilesForTask(map: ProjectMap | null, task: string, limit 
   }
 
   const scored = Array.from(candidates)
-    .map((p) => ({ path: p, score: scorePathRelevance(p, task) }))
+    .map((p) => {
+      let score = scorePathRelevance(p, task);
+      // Deprioritize tests/fixtures and generated/config artifacts relative to source files.
+      const lower = p.toLowerCase();
+      if (lower.includes("test") || lower.includes("__tests__") || lower.includes(".test.") || lower.includes(".spec.")) score *= 0.6;
+      if (lower.includes("fixture") || lower.includes("mock")) score *= 0.5;
+      if (lower.includes("node_modules") || lower.includes("dist/") || lower.includes(".pi/")) score *= 0.1;
+      return { path: p, score };
+    })
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score);
 
@@ -317,7 +325,7 @@ function countExtensions(cwd: string): Record<string, number> {
         if (st.isDirectory()) walk(full, depth + 1);
         else if (entry.endsWith('.kt')) counts.kt++;
         else if (entry.endsWith('.ts') || entry.endsWith('.tsx')) counts.ts++;
-        else if (entry.endsWith('.js')) counts.js++;
+        else if (entry.endsWith('.js') || entry.endsWith('.jsx') || entry.endsWith('.mjs') || entry.endsWith('.cjs')) counts.js++;
         else if (entry.endsWith('.swift')) counts.swift++;
         else if (entry.endsWith('.cs')) counts.cs++;
         else if (entry.endsWith('.csproj')) counts.csproj++;
@@ -331,27 +339,48 @@ function countExtensions(cwd: string): Record<string, number> {
   return counts;
 }
 
+function matchSimpleGlob(basePath: string, pattern: string): string | null {
+  // Supports single-segment wildcard `*` only (e.g., "cmd/*/main.go").
+  const star = pattern.indexOf("*");
+  if (star === -1) {
+    const full = join(basePath, pattern);
+    return existsSync(full) ? pattern.replace(/\\/g, "/") : null;
+  }
+  const prefix = pattern.slice(0, star);
+  const suffix = pattern.slice(star + 1);
+  const dir = join(basePath, prefix);
+  if (!existsSync(dir)) return null;
+  try {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry, suffix);
+      if (existsSync(full)) return `${prefix}${entry}${suffix}`.replace(/\\/g, "/");
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
 function detectEntryPoints(cwd: string, languages: string[]): string[] {
   const candidates: string[] = [];
 
   const checks: Record<string, string[]> = {
     Dart: ["lib/main.dart"],
-    Java: ["src/main/java/Application.java"],
-    Kotlin: ["src/main/kotlin/Application.kt"],
+    Java: ["src/main/java/Application.java", "src/main/java/**/Application.java"],
+    Kotlin: ["src/main/kotlin/Application.kt", "src/main/kotlin/**/Application.kt"],
     Python: ["main.py", "app.py", "manage.py", "src/__init__.py"],
-    Go: ["main.go", "cmd/main.go"],
+    Go: ["main.go", "cmd/*/main.go", "cmd/main.go"],
     Rust: ["src/main.rs"],
     Ruby: ["config.ru", "app.rb"],
     PHP: ["public/index.php", "index.php"],
     TypeScript: ["src/index.ts", "src/main.ts", "index.ts"],
-    JavaScript: ["src/index.js", "src/main.js", "index.js"],
+    JavaScript: ["src/index.js", "src/main.js", "index.js", "src/index.jsx"],
     Swift: ["Sources/main.swift"],
     "C#": ["Program.cs", "src/Program.cs"],
   };
 
   for (const lang of languages) {
     for (const check of checks[lang] ?? []) {
-      if (existsSync(join(cwd, check))) candidates.push(check);
+      const match = matchSimpleGlob(cwd, check);
+      if (match) candidates.push(match);
     }
   }
 
@@ -756,7 +785,8 @@ function scanSourceTree(cwd: string, sourceRoots: string[], options?: {
   let nestingDepth = 0;
 
   function walk(dirPath: string, displayPath: string, prefix: string, depth: number): void {
-    if (treeEntriesLeft <= 0 || depth > maxDepth) return;
+    if (depth > maxDepth) return;
+  if (treeEntriesLeft <= 0 && dirEntriesLeft <= 0) return;
     let entries: string[];
     try {
       entries = readdirSync(dirPath);
@@ -768,6 +798,13 @@ function scanSourceTree(cwd: string, sourceRoots: string[], options?: {
     for (const e of entries) {
       if (e.startsWith(".") && e !== ".env") continue;
       if (skipDirs.has(e)) {
+        const genPath = join(displayPath, e).replace(/\\/g, "/");
+        if (!generatedDirs.includes(genPath)) generatedDirs.push(genPath);
+        continue;
+      }
+      // Treat common tool-generated directory names as generated even if they are
+      // nested under source roots (e.g., __pycache__, .expo, bin/obj).
+      if (e === "__pycache__" || e === ".pytest_cache" || e === ".mypy_cache" || e === ".expo" || e === "bin" || e === "obj" || e === "out") {
         const genPath = join(displayPath, e).replace(/\\/g, "/");
         if (!generatedDirs.includes(genPath)) generatedDirs.push(genPath);
         continue;
@@ -1117,8 +1154,14 @@ function inferConventions(cwd: string, languages: string[], framework: string[])
     const firstPara = agentsMd.split(/\n\s*\n/)[0]?.replace(/^[#\s]+/, "").trim();
     if (firstPara) conventions.projectGuide = firstPara.slice(0, 200);
 
-    const qualityMatch = agentsMd.match(/quality gates?[^\n]*/i)?.[0];
-    if (qualityMatch) conventions.qualityGates = qualityMatch.trim();
+    // Try to capture a multi-line "Quality gates" section up to the next heading.
+    const qualitySection = agentsMd.match(/#+\s*[Qq]uality\s*[Gg]ates[\s\S]*?(?=\n#+\s|\n{2,}(?=\n#+\s|$))/);
+    if (qualitySection) {
+      conventions.qualityGates = qualitySection[0].replace(/^#+\s*/, "").trim().slice(0, 400);
+    } else {
+      const qualityMatch = agentsMd.match(/quality gates?[^\n]*/i)?.[0];
+      if (qualityMatch) conventions.qualityGates = qualityMatch.trim();
+    }
 
     const sourceMatch = agentsMd.match(/Source files live in [`']([^`']+)[`']/i)?.[1];
     const testMatch = agentsMd.match(/Tests live in [`']([^`']+)[`']/i)?.[1];
@@ -1131,35 +1174,35 @@ function inferConventions(cwd: string, languages: string[], framework: string[])
   }
 
   if (framework.includes("Flutter")) {
-    conventions.folderStructure = "Feature-first or layer-first under lib/";
-    conventions.naming = "snake_case files, PascalCase widgets/classes";
-    conventions.stateManagement = "Check for Riverpod, Bloc, Provider, or GetX";
+    if (!conventions.folderStructure) conventions.folderStructure = "Feature-first or layer-first under lib/";
+    if (!conventions.naming) conventions.naming = "snake_case files, PascalCase widgets/classes";
+    if (!conventions.stateManagement) conventions.stateManagement = "Check for Riverpod, Bloc, Provider, or GetX";
   }
 
   if (framework.includes("Spring Boot")) {
-    conventions.folderStructure = "Package-by-feature under src/main/java/";
-    conventions.naming = "PascalCase classes, camelCase methods/fields";
-    conventions.layering = "Controller → Service → Repository";
+    if (!conventions.folderStructure) conventions.folderStructure = "Package-by-feature under src/main/java/";
+    if (!conventions.naming) conventions.naming = "PascalCase classes, camelCase methods/fields";
+    if (!conventions.layering) conventions.layering = "Controller → Service → Repository";
   }
 
   if (framework.includes("NestJS")) {
-    conventions.folderStructure = "Module-based under src/";
-    conventions.layering = "Controller → Service → Repository/Provider";
+    if (!conventions.folderStructure) conventions.folderStructure = "Module-based under src/";
+    if (!conventions.layering) conventions.layering = "Controller → Service → Repository/Provider";
   }
 
   if (languages.includes("TypeScript") || languages.includes("JavaScript")) {
     if (!conventions.folderStructure) conventions.folderStructure = "Source in src/, tests in test/";
-    conventions.naming = "camelCase files, PascalCase types/classes, named exports";
+    if (!conventions.naming) conventions.naming = "camelCase files, PascalCase types/classes, named exports";
   }
 
   if (languages.includes("Go")) {
-    conventions.folderStructure = "Package-based, cmd/ and internal/ common";
-    conventions.naming = "PascalCase exported, camelCase internal";
+    if (!conventions.folderStructure) conventions.folderStructure = "Package-based, cmd/ and internal/ common";
+    if (!conventions.naming) conventions.naming = "PascalCase exported, camelCase internal";
   }
 
   if (languages.includes("Python")) {
-    conventions.folderStructure = "Check src/, app/, or flat module files";
-    conventions.naming = "snake_case modules, PascalCase classes";
+    if (!conventions.folderStructure) conventions.folderStructure = "Check src/, app/, or flat module files";
+    if (!conventions.naming) conventions.naming = "snake_case modules, PascalCase classes";
   }
 
   return conventions;
@@ -1200,8 +1243,10 @@ function inferArchitecture(framework: string[], languages: string[], cwd: string
     if (hasCommands) patterns.push("Command dispatch pattern");
     if (hasModes) patterns.push("Mode-based workflow dispatch");
     if (existsSync(join(cwd, "src/fork-orchestrator.ts"))) patterns.push("Two-stage runner");
-    if (existsSync(join(cwd, "test"))) layers.tests = ["test/**/*.test.ts"];
-    layers.source = ["src/**/*.ts"];
+    if (patterns.length > 0 || existsSync(join(cwd, "src"))) {
+      if (existsSync(join(cwd, "test"))) layers.tests = ["test/**/*.test.ts"];
+      layers.source = ["src/**/*.ts"];
+    }
   }
 
   return { patterns, layers };
@@ -1275,7 +1320,7 @@ function extractFileExports(cwd: string, sourceRoots: string[]): Record<string, 
 
 function extractFileImports(cwd: string, sourceRoots: string[]): Record<string, string[]> {
   const result: Record<string, string[]> = {};
-    const importRe = /import\s+(?:type\s+)?(?:\{[^}]+\}|\*\s+as\s+\w+|\w+\s+(?:,\s*\{[^}]+\})?)\s+from\s+['"]([^'"]+)['"]/g;
+    const importRe = /import\s+(?:type\s+)?(?:\{[^}]+\}|\*\s+as\s+\w+|\w+\s*(?:,\s*\{[^}]+\})?)\s+from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"]/g;
   for (const root of sourceRoots) {
     const rootPath = join(cwd, root);
     if (!existsSync(rootPath)) continue;
@@ -1293,7 +1338,8 @@ function extractFileImports(cwd: string, sourceRoots: string[]): Record<string, 
           const sources: string[] = [];
           let m;
           while ((m = importRe.exec(text)) !== null) {
-            if (m[1] && !sources.includes(m[1])) sources.push(m[1]);
+            const src = m[1] || m[2];
+            if (src && !sources.includes(src)) sources.push(src);
           }
           if (sources.length) result[relativePath] = sources;
         }
@@ -1431,7 +1477,7 @@ function isValidProjectMap(value: unknown): value is ProjectMap {
   return true;
 }
 
-const _mapCache = new Map<string, { mtime: number; map: ProjectMap }>();
+const _mapCache = new Map<string, { mtime: number; map: ProjectMap; at: number }>();
 const MAX_MAP_CACHE_SIZE = 10;
 
 export function loadProjectMap(cwd: string): ProjectMap | null {
@@ -1439,15 +1485,26 @@ export function loadProjectMap(cwd: string): ProjectMap | null {
   if (!existsSync(path)) return null;
   try {
     const stats = statSync(path);
+    const now = Date.now();
     const cached = _mapCache.get(cwd);
-    if (cached && cached.mtime === stats.mtimeMs) return cached.map;
+    if (cached && cached.mtime === stats.mtimeMs) {
+      cached.at = now;
+      return cached.map;
+    }
     if (_mapCache.size >= MAX_MAP_CACHE_SIZE) {
-      const firstKey = _mapCache.keys().next().value;
-      if (firstKey !== undefined) _mapCache.delete(firstKey);
+      let lruKey: string | undefined;
+      let lruAt = Number.POSITIVE_INFINITY;
+      for (const [key, entry] of _mapCache) {
+        if (entry.at < lruAt) {
+          lruAt = entry.at;
+          lruKey = key;
+        }
+      }
+      if (lruKey !== undefined) _mapCache.delete(lruKey);
     }
     const parsed = parseYaml(readFileSync(path, "utf-8"));
     if (!isValidProjectMap(parsed)) return null;
-    _mapCache.set(cwd, { mtime: stats.mtimeMs, map: parsed });
+    _mapCache.set(cwd, { mtime: stats.mtimeMs, map: parsed, at: now });
     return parsed;
   } catch {
     return null;
