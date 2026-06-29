@@ -9,7 +9,7 @@ This repo is the **pi-chain-dev** Pi extension: a two-stage scout→forge runner
 Use the simplest cdev mode that fits the task.
 
 - **Small question / single file check** → `/cdev quick <task>` or `/cdev fast <task>`
-- **Code change / feature / investigation** → `/cdev <task>` (parallel scouts → forge, 2 by default)
+- **Code change / feature / investigation** → `/cdev <task>` (scout → forge, parallel=N optional)
 - **Cross-check** → `/cdev <task>` (use plan for thoroughness)
 - **After code changes** → `/cdev review` or `/cdev review changes`
 - **Before big refactor** → `/cdev plan <task>`

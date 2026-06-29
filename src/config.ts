@@ -47,7 +47,7 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   memory: true,
   memoryAutoRefresh: false,
   themed: true,
-  parallel: 2,
+  parallel: 1,
   parallelBackup: false,
   maxConcurrentStages: 3,
   scoutTimeoutMs: 600_000,
