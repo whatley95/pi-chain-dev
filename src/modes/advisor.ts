@@ -5,20 +5,14 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AutoForkParamsType } from "../tool.js";
 import { runCdevAdvisor } from "../runner.js";
-import { writeReportFile } from "../report.js";
 import { getFinalAssistantText } from "../runner-events.js";
-import { saveSession, findPreviousSession } from "../history.js";
-import { indexFindingsAsync } from "../memory.js";
 import {
-  logError, recordForkCost, maybeNotifyCostAlert, maybeWarnSessionSize,
-  formatForkResultOutput,
   makeThemedBg, resolveStageProfiles,
 } from "../extension-context.js";
 import {
-  clearProgress, withUiDetails, buildReportUiDetails, modelLabel,
+  clearProgress, modelLabel,
   formatProgressDetail, checkForkBudget,
 } from "./shared-helpers.js";
-import { computeReportDiff, formatReportDiff } from "../json-extract.js";
 import { safeDisplayText } from "../text-width.js";
 
 export async function handleAdvisor(
@@ -84,64 +78,45 @@ export async function handleAdvisor(
   });
   clearProgress(ctx);
 
-  const current = saveSession(ctx.cwd, task, false, startTime, advisorDetails, result);
   const advisorText = getFinalAssistantText(result.messages) || "";
   const advisorCost = (advisorDetails.stage1?.usage?.cost ?? 0) + (advisorDetails.stage2?.usage?.cost ?? 0);
-  recordForkCost(ctx.cwd, advisorCost);
-  maybeNotifyCostAlert(ctx, config);
-  maybeWarnSessionSize(ctx);
-  if (result.errorMessage) {
-    logError(ctx.cwd, "advisor-stage2", new Error(result.errorMessage));
-  }
-  if (config.memory && advisorText) {
-    indexFindingsAsync({
-      task,
-      resultText: advisorText,
+  const slug = task
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase()
+    .slice(0, 60);
+  const { finalizeForkResult } = await import("./shared-helpers.js");
+  const forkRes = await finalizeForkResult({
+    ctx,
+    config,
+    task,
+    result,
+    details: advisorDetails,
+    startTime,
+    mode: "advisor",
+    isReview: false,
+    memory: config.memory && !!advisorText,
+    cost: advisorCost,
+    report: advisorText
+      ? {
+          fileName: `advisor-${slug}-${Date.now().toString(36)}.md`,
+          title: `Advisor: ${task.slice(0, 80)}`,
+          reviewer: advisorProfile.id,
+          body: advisorText,
+        }
+      : undefined,
+    suffix: scoutText ? "\n\n---\n🔍 Scout evidence was included in the advisor prompt." : undefined,
+    memoryOptions: {
       stage1Model: askAdvisorOnly ? undefined : profiles.stage1.id,
       stage2Model: advisorProfile.id,
       isReview: false,
       quick: askAdvisorOnly,
-      cost: advisorCost,
-      cwd: ctx.cwd,
-    });
-  }
-
-  let reportRelPath = "";
-  if (advisorText && !result.errorMessage) {
-    const slug = task
-      .replace(/[^a-zA-Z0-9]+/g, "-")
-      .replace(/^-|-$/g, "")
-      .toLowerCase()
-      .slice(0, 60);
-    const { reportRelPath: savedPath } = writeReportFile({
-      cwd: ctx.cwd,
-      fileName: `advisor-${slug}-${Date.now().toString(36)}.md`,
-      title: `Advisor: ${task.slice(0, 80)}`,
-      reviewer: advisorProfile.id,
-      body: advisorText,
-    });
-    reportRelPath = savedPath;
-  }
-
-  const scoutNote = scoutText ? "\n\n---\n🔍 Scout evidence was included in the advisor prompt." : "";
-  const reportNote = reportRelPath ? `\n\n---\n📄 Advisor report saved: ${reportRelPath}` : "";
-  let resultText = formatForkResultOutput(result, advisorDetails) + scoutNote + reportNote;
-
-  const previous = findPreviousSession(ctx.cwd, task);
-  if (previous?.resultText && previous.id !== current.id) {
-    const diff = computeReportDiff(previous.resultText, advisorText);
-    if (diff.added.length > 0 || diff.removed.length > 0) {
-      resultText += "\n\n---\n📊 Changes vs previous advisor run\n\n" + formatReportDiff(diff);
-    }
-  }
+    },
+  });
 
   return {
-    content: [{ type: "text" as const, text: safeDisplayText(resultText) }],
-    details: withUiDetails(advisorDetails, buildReportUiDetails(advisorText, {
-      mode: "advisor",
-      task,
-      reportPath: reportRelPath || undefined,
-    })),
-    isError: result.exitCode > 0 && !advisorText,
+    content: [{ type: "text" as const, text: safeDisplayText(forkRes.resultText) }],
+    details: forkRes.details,
+    isError: forkRes.isError,
   };
 }

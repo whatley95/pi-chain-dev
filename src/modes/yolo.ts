@@ -5,13 +5,9 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AutoForkParamsType } from "../tool.js";
 import { runYoloLoop } from "../runner.js";
-import { getFinalAssistantText } from "../runner-events.js";
 import {
-  logError, recordForkCost, maybeNotifyCostAlert, maybeWarnSessionSize,
-  formatCost, makeThemedBg, resolveStageProfiles,
+  logError, formatCost, makeThemedBg, resolveStageProfiles,
 } from "../extension-context.js";
-import { saveSession } from "../history.js";
-import { indexFindingsAsync } from "../memory.js";
 import {
   clearProgress, withUiDetails,
   formatProgressDetail, checkForkBudget,
@@ -96,8 +92,6 @@ export async function handleYolo(
   });
   clearProgress(ctx);
 
-  saveSession(ctx.cwd, task, false, startTime, yoloResult.initial.details, yoloResult.initial.result);
-
   if (yoloResult.initial.result.errorMessage) {
     logError(ctx.cwd, "yolo-initial", new Error(yoloResult.initial.result.errorMessage));
   }
@@ -107,21 +101,25 @@ export async function handleYolo(
     }
   }
 
-  recordForkCost(ctx.cwd, yoloResult.totalCost);
-  maybeNotifyCostAlert(ctx, config);
-  maybeWarnSessionSize(ctx);
-  if (config.memory) {
-    indexFindingsAsync({
-      task,
-      resultText: getFinalAssistantText(yoloResult.initial.result.messages) || "",
+  const { finalizeForkResult } = await import("./shared-helpers.js");
+  await finalizeForkResult({
+    ctx,
+    config,
+    task,
+    result: yoloResult.initial.result,
+    details: yoloResult.initial.details,
+    startTime,
+    mode: "yolo",
+    isReview: false,
+    cost: yoloResult.totalCost,
+    memory: config.memory,
+    memoryOptions: {
       stage1Model: config.stage1.id,
       stage2Model: config.stage2.id,
       isReview: false,
       quick: false,
-      cost: yoloResult.totalCost,
-      cwd: ctx.cwd,
-    });
-  }
+    },
+  });
 
   const verdictLabel = yoloResult.finalVerdict === "pass" ? "✅ pass" : yoloResult.finalVerdict === "blocked" ? "❌ blocked" : "⚠️ needs-work";
   const summary = `YOLO loop complete.\n\nRounds used: ${yoloResult.rounds.length} / ${yolo.maxRounds}\nTotal cost: ${formatCost(yoloResult.totalCost)}\nFinal verdict: ${verdictLabel}\nFinal report: ${yoloResult.finalReportPath}\n\nInitial report: ${yoloResult.initial.reportPath}`;

@@ -353,7 +353,7 @@ export function buildPiArgs(
   if (toolMode === "forge") {
     args.push("--no-tools");
   } else if (toolMode === "scout") {
-    args.push("--tools", "read,bash,ls,grep,rg,find,cat");
+    args.push("--tools", "read,bash,ls,grep,rg,find,cat,multiRead");
   } else if (!stageProfile.id) {
     if (inheritedCliArgs.fallbackTools) {
       args.push("--tools", inheritedCliArgs.fallbackTools);

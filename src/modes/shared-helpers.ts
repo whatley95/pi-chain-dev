@@ -8,9 +8,16 @@ import { loadConfig } from "../config.js";
 import { parsePlanReport, parseStage2Report } from "../json-extract.js";
 import {
   cachedBuildSessionSnapshot, estimateForkCost, checkCostBudget, formatCost,
-  estimateTokens,
+  estimateTokens, recordForkCost, maybeNotifyCostAlert, maybeWarnSessionSize,
+  formatForkResultOutput,
 } from "../extension-context.js";
-import type { AutoForkDetails, AutoForkUiDetails, StageProfile } from "../types.js";
+import { saveSession, findPreviousSession, type SessionRecord } from "../history.js";
+import { writeReportFile } from "../report.js";
+import { indexFindingsAsync } from "../memory.js";
+import { getFinalAssistantText } from "../runner-events.js";
+import { computeReportDiff, formatReportDiff } from "../json-extract.js";
+import type { AutoForkConfig } from "../config.js";
+import type { AutoForkDetails, AutoForkUiDetails, ForkResult, StageProfile } from "../types.js";
 
 // ── Snapshot types ──
 
@@ -130,7 +137,11 @@ export function modelLabel(prof: { provider: string; id: string; thinking?: stri
 }
 
 export function clearProgress(ctx: ExtensionContext): void {
-  ctx.ui.setWidget("cdev-progress", undefined);
+  try {
+    ctx.ui.setWidget("cdev-progress", []);
+  } catch {
+    ctx.ui?.setWidget("cdev-progress", undefined);
+  }
 }
 
 export function formatProgressDetail(update: { activity?: string; cost?: number; tokens?: number }): string {
@@ -167,6 +178,129 @@ export function runDiff(cwd: string, diffSpec: string, vcs: "git" | "svn"): { st
 }
 
 // ── Budget check helper (shared by advisor, research, yolo, full-fork) ──
+
+// ── Finalization pipeline (shared by all cdev mode handlers) ──
+
+export interface FinalizeForkOptions {
+  ctx: ExtensionContext;
+  config: AutoForkConfig;
+  task: string;
+  result: ForkResult;
+  details: AutoForkDetails;
+  startTime: number;
+  mode: AutoForkUiDetails["mode"];
+  isReview: boolean;
+  /** If true, saves findings to memory. */
+  memory?: boolean;
+  /** If set, writes a report file using this title/body. */
+  report?: {
+    fileName: string;
+    title: string;
+    reviewer?: string;
+    body: string;
+  };
+  /** Extra text appended after the formatted output. */
+  suffix?: string;
+  /** Override the cost recorded (defaults to result.usage.cost). */
+  cost?: number;
+  /** Memory indexing overrides. */
+  memoryOptions?: {
+    stage1Model?: string;
+    stage2Model?: string;
+    stage1bModel?: string;
+    stage1cModel?: string;
+    stage1BackupModel?: string;
+    isReview?: boolean;
+    quick?: boolean;
+  };
+}
+
+export interface FinalizeForkResult {
+  content: Array<{ type: string; text: string }>;
+  details: AutoForkDetails;
+  isError: boolean;
+  record: SessionRecord;
+  reportPath: string;
+  resultText: string;
+}
+
+export async function finalizeForkResult(opts: FinalizeForkOptions): Promise<FinalizeForkResult> {
+  const { ctx, config, task, result, details, startTime, mode, isReview, cost } = opts;
+  const finalText = getFinalAssistantText(result.messages) || "";
+  const forkCost = cost ?? result.usage?.cost ?? 0;
+
+  const record = saveSession(ctx.cwd, task, isReview, startTime, details, result);
+
+  let reportPath = "";
+  if (opts.report && finalText && !result.errorMessage) {
+    const { reportRelPath: savedPath, written } = writeReportFile({
+      cwd: ctx.cwd,
+      fileName: opts.report.fileName,
+      title: opts.report.title,
+      reviewer: opts.report.reviewer,
+      body: opts.report.body,
+    });
+    if (written) reportPath = savedPath;
+  }
+
+  if (result.errorMessage) {
+    // Derive a stable error label from the mode for logging.
+    const label = mode === "review" ? "review" : mode;
+    const { logError } = await import("../extension-context.js");
+    logError(ctx.cwd, `${label}-stage2`, new Error(result.errorMessage));
+  }
+
+  recordForkCost(ctx.cwd, forkCost);
+  maybeNotifyCostAlert(ctx, config);
+  maybeWarnSessionSize(ctx);
+
+  if (opts.memory && finalText) {
+    await indexFindingsAsync({
+      task,
+      resultText: finalText,
+      stage1Model: opts.memoryOptions?.stage1Model ?? (details.stage1 ? config.stage1.id : undefined),
+      stage2Model: opts.memoryOptions?.stage2Model,
+      stage1bModel: opts.memoryOptions?.stage1bModel ?? config.stage1b?.id ?? undefined,
+      stage1cModel: opts.memoryOptions?.stage1cModel ?? config.stage1c?.id ?? undefined,
+      stage1BackupModel: opts.memoryOptions?.stage1BackupModel ?? config.stage1Backup?.id ?? undefined,
+      isReview: opts.memoryOptions?.isReview ?? isReview,
+      quick: opts.memoryOptions?.quick ?? false,
+      cost: forkCost,
+      cwd: ctx.cwd,
+    });
+  }
+
+  let resultText = formatForkResultOutput(result, details);
+  if (reportPath) {
+    resultText += `\n\n---\n📄 Report saved: ${reportPath}`;
+  }
+  if (opts.suffix) {
+    resultText += opts.suffix;
+  }
+
+  const previous = findPreviousSession(ctx.cwd, task);
+  if (previous?.resultText && previous.id !== record.id) {
+    const diff = computeReportDiff(previous.resultText, finalText);
+    if (diff.added.length > 0 || diff.removed.length > 0) {
+      resultText += "\n\n---\n📊 Changes vs previous report\n\n" + formatReportDiff(diff);
+    }
+  }
+
+  const isError = result.exitCode > 0 && !finalText;
+
+  return {
+    content: [{ type: "text" as const, text: resultText }],
+    details: withUiDetails(details, buildReportUiDetails(finalText, {
+      mode,
+      task,
+      reportPath: reportPath || undefined,
+    })),
+    isError,
+    record,
+    reportPath,
+    resultText,
+  };
+}
 
 export function checkForkBudget(
   config: Awaited<ReturnType<typeof import("../config.js").loadConfig>>,

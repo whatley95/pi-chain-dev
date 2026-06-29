@@ -37,6 +37,7 @@ import {
 } from "./loop-detector-runtime.js";
 import { registerAdvisorPrompt } from "./advisor-prompt.js";
 import { clearStageSemaphores } from "./fork-stage.js";
+import { registerMultiReadTool } from "./multi-read.js";
 
 export default function (pi: ExtensionAPI) {
   let autoTurnCounter = 0;
@@ -47,6 +48,9 @@ export default function (pi: ExtensionAPI) {
 
   // Prompt to use /cdev advisor when stuck or facing difficult decisions.
   registerAdvisorPrompt(pi);
+
+  // Register multiRead in the parent extension so the tool schema is known.
+  registerMultiReadTool(pi);
 
   function resetAutoTurnCounter(): void {
     autoTurnCounter = 0;
@@ -162,6 +166,7 @@ export default function (pi: ExtensionAPI) {
       "Use the full cdev two-stage fork by default (quick is NOT the default). Only use cdev with quick:true for lightweight, read-only follow-ups where raw scout findings are enough.",
       "When you need synthesis, planning, a structured report, or any code changes, use cdev without quick:true so the forge stage can produce actionable output.",
       "RULE: For reading source files, verifying current code state, tracing symbols, or searching the codebase, prefer calling cdev with quick:true instead of using direct read/grep tools. Use /cdev read <path>[:start-end] or cdev({ quick:true, task: 'read src/foo.ts lines 10-50' }). Only use direct read for tiny snippets (under ~30 lines) when cdev is unavailable or slower.",
+      "When running inside a cdev scout, prefer the multiRead tool over multiple separate read calls to fetch several files in one round-trip.",
       "Use cdev with research:true to delegate issue investigation to a selected model. The model reports findings and a decision, but never edits code. The main agent owns any changes.",
       "Use cdev with advisor:true when you are stuck, looping, or facing a difficult decision. A scout gathers evidence, then an advisor model gives a concrete recommendation. Use askAdvisor:true to skip the scout and ask the advisor directly.",
       "Prefer cdev over bash/grep when you need to understand file relationships, not just find text matches.",

@@ -10,13 +10,13 @@ export const STAGE_AUDIT_GUARD = `\n\n⚠️ AUDIT ONLY — READ-ONLY AUDIT MODE
 
 const EFFICIENCY_RULES = `Efficiency rules (MANDATORY — minimize round-trips):
 - **All \`bash\` commands must be READ-ONLY.** Never use \`bash\` to write, copy, move, delete, generate, or otherwise modify files or directories. No \`echo >\`, \`cat >\`, \`tee\`, \`cp\`, \`mv\`, \`rm\`, \`mkdir\`, \`touch\`, \`chmod\`, \`git add\`, \`npm install\`, \`ng generate\`, etc.
-- **ALWAYS batch file reads. Never read files one at a time.** If you need more than one file, issue multiple \`read\` calls in a single response. Pi executes them in parallel.
-- **Minimum batch size**: Issue at least 3-5 \`read\` calls together whenever you need multiple files. There is no benefit to reading them sequentially.
+- **ALWAYS batch file reads. Never read files one at a time.** If you need more than one file, use the \`multiRead\` tool or issue multiple \`read\` calls in a single response. Pi executes them in parallel.
+- **Minimum batch size**: Issue at least 3-5 files together whenever you need multiple files. Use \`multiRead\` for batches of 2-10 files, or issue multiple \`read\` calls. There is no benefit to reading them sequentially.
 - **Prefer\`rg\`for discovery**: \`bash: rg -n "pattern" src/\` is faster than recursive \`grep\` and respects \`.gitignore\`. Use it to locate relevant files FIRST.
-- **Read discovered files in parallel**: After locating files with \`rg\` / \`find\` / \`grep\`, issue all needed \`read\` calls in the SAME response.
+- **Read discovered files in parallel**: After locating files with \`rg\` / \`find\` / \`grep\`, use \`multiRead\` or issue all needed \`read\` calls in the SAME response.
 - **Batch reads with\`cat\`when needed**: \`bash: cat src/a.ts src/b.ts src/c.ts\` reads many files in one tool call. Use this when \`read\` batching is inconvenient.
 - **Use\`bash\`with globs for bulk inspection**: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
-- **Single-file\`read\`is a last resort**: Only use \`read\` for exactly one specific, named file. For 2+ files, batch \`read\` calls or use \`bash: cat ...\`.
+- **Single-file\`read\`is a last resort**: Only use \`read\` for exactly one specific, named file. For 2+ files, use \`multiRead\`, batch \`read\` calls, or use \`bash: cat ...\`.
 - **Search before reading**: Run \`rg\` or \`grep\` first to locate relevant files, then read only the relevant ones in parallel.
 - **Do NOT dump entire large files into evidence**: For files over ~200 lines, read only the relevant section (e.g., \`read path:100-150\`) or use \`bash: rg -n -A 10 -B 5 pattern path\`. Summarize the rest. Giant verbatim pastes waste tokens and may be truncated.`;
 
@@ -72,7 +72,7 @@ ${EFFICIENCY_RULES}${guard}${quickGuard}
 You are in EXPLORATION MODE. Your job is to gather information, not to write a final report.
 
 Instructions:
-- Explore thoroughly using available tools (read, bash, ls, grep, rg, find, cat). Prefer rg and cat for bulk operations.
+- Explore thoroughly using available tools (read, bash, ls, grep, rg, find, cat, multiRead). Prefer rg, cat, and multiRead for bulk operations.
 - Gather concrete evidence: file contents, command outputs, config values
 - Return your findings as a single JSON object matching this schema (fenced JSON output, no extra prose):
 ${jsonSchema}
@@ -234,7 +234,7 @@ export function buildResearchPrompt(task: string, customPrompt?: string, cwd?: s
   }
 }`;
 
-  const base = `You are in RESEARCH MODE. Investigate the issue thoroughly using available tools (read, bash, ls, grep, rg, find, cat). Prefer \`rg\` for repo-wide search and \`bash: cat ...\` to batch-read files. Do NOT implement, modify, or write any code. Do NOT create, modify, move, copy, or delete files or directories. All \`bash\` commands must be READ-ONLY.
+  const base = `You are in RESEARCH MODE. Investigate the issue thoroughly using available tools (read, bash, ls, grep, rg, find, cat, multiRead). Prefer \`rg\` for repo-wide search, \`multiRead\` for reading multiple discovered files at once, and \`bash: cat ...\` to batch-read files. Do NOT implement, modify, or write any code. Do NOT create, modify, move, copy, or delete files or directories. All \`bash\` commands must be READ-ONLY.
 
 Issue: ${task}${mapContext}
 

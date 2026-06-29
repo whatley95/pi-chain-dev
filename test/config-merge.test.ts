@@ -6,9 +6,8 @@ import { describe, it } from "node:test";
 
 import {
   normalizeYoloConfig,
-  evaluateConfidenceGates,
 } from "../src/types.js";
-import type { Stage1Findings, StageProfile } from "../src/types.js";
+import type { StageProfile } from "../src/types.js";
 
 // ── normalizeYoloConfig ──────────────────────────────────
 
@@ -84,29 +83,4 @@ describe("formatYoloStatus", () => {
 
 // ── evaluateConfidenceGates (deprecated no-op) ───────────
 
-const makeFindings = (overrides?: Partial<Stage1Findings>): Stage1Findings => ({
-  summary: "test findings",
-  findings: [
-    { observation: "bug in auth", confidence: "high", file: "src/auth.ts", evidence: "`grep -r` found" },
-    { observation: "slow query", confidence: "medium", file: "src/db.ts", evidence: "output shows 5s" },
-    { observation: "missing test", confidence: "high", file: "src/auth.test.ts" },
-  ],
-  ...overrides,
-});
 
-describe("evaluateConfidenceGates", () => {
-  it("is a deprecated no-op that always passes", () => {
-    assert.deepEqual(evaluateConfidenceGates(makeFindings()), { passed: true, reasons: [] });
-    assert.deepEqual(evaluateConfidenceGates(makeFindings({ findings: [] })), { passed: true, reasons: [] });
-    assert.deepEqual(
-      evaluateConfidenceGates(makeFindings({
-        findings: [
-          { observation: "maybe bug", confidence: "low" },
-          { observation: "maybe perf", confidence: "low" },
-          { observation: "maybe style", confidence: "low" },
-        ],
-      })),
-      { passed: true, reasons: [] },
-    );
-  });
-});

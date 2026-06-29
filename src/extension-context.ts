@@ -14,8 +14,8 @@ import type { AutoForkDetails, ForkResult, StageProfile } from "./types.js";
 import { memoryTopicCount } from "./memory.js";
 import { BUILD_DATE } from "./build-date.js";
 import { logError as logErrorToFile, logWarn } from "./logger.js";
+import { STAGE_AUDIT_GUARD } from "./prompts.js";
 
-export const AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — READ-ONLY: Do NOT create, modify, move, copy, or delete any files or directories. Only inspect and report findings. Do NOT use bash to write to disk.";
 export const DEFAULT_SIGNATURE = "whatley.xyz";
 export const FORK_COST_STATUS_KEY = "cdev-cost";
 
@@ -302,7 +302,7 @@ function hashSessionEntries(entries: unknown[]): string {
 }
 
 export function withAuditGuard(t: string): string {
-  return t + AUDIT_GUARD;
+  return t + STAGE_AUDIT_GUARD;
 }
 
 export function makeThemedBg(ctx: ExtensionContext, themed: boolean) {

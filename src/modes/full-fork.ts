@@ -5,19 +5,16 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AutoForkParamsType } from "../tool.js";
 import { runAutoFork } from "../runner.js";
-import { writeReportFile } from "../report.js";
 import { getFinalAssistantText } from "../runner-events.js";
-import { saveSession, findPreviousSession } from "../history.js";
 import {
-  logError, recordForkCost, maybeNotifyCostAlert, maybeWarnSessionSize,
   formatForkResultOutput, formatCost, makeThemedBg,
   withAuditGuard, resolveStageProfiles, getSessionForkCost,
 } from "../extension-context.js";
-import { indexFindingsAsync, getMemoryContext } from "../memory.js";
-import { clearProgress, withUiDetails, buildReportUiDetails,
+import { getMemoryContext } from "../memory.js";
+import { clearProgress,
   formatProgressDetail, modelLabel, checkForkBudget,
 } from "./shared-helpers.js";
-import { computeReportDiff, formatReportDiff, parseStage1Findings } from "../json-extract.js";
+import { parseStage1Findings } from "../json-extract.js";
 import { safeDisplayText } from "../text-width.js";
 import type { ForkResult } from "../types.js";
 import { formatStage1FindingsForStage2 } from "../fork-orchestrator.js";
@@ -100,7 +97,8 @@ export async function handleFullFork(
     forgeTimeoutMs: config.profileTimeouts?.forge ?? config.forgeTimeoutMs,
     onProgress,
     onUpdate: (update) => {
-      const isScout = update.stage.includes("exploration") || update.stage === "scout";
+      if (!update || typeof update !== "object") return;
+      const isScout = update.stage?.includes("exploration") || update.stage === "scout";
       const icon = isScout ? "🔍" : isPlan ? "📋" : "⚒️";
       const label = isScout ? "Scout" : isPlan ? "Planner" : "Forge";
       const detail = formatProgressDetail(update);
@@ -116,49 +114,7 @@ export async function handleFullFork(
   resultRef.current = result;
   clearProgress(ctx);
 
-  const current = saveSession(ctx.cwd, task, false, startTime, details, result);
   const finalText = getFinalAssistantText(result.messages) || "";
-
-  let reportRelPath = "";
-  if (!quick && details.stage2 && !result.errorMessage) {
-    const reportText = finalText;
-    if (reportText) {
-      const slugBase = task
-        .replace(/[^a-zA-Z0-9]+/g, "-")
-        .replace(/^-|-$/g, "")
-        .toLowerCase()
-        .slice(0, 60);
-      const slug = `${slugBase}-${Date.now().toString(36)}`;
-      const { reportRelPath: savedPath } = writeReportFile({
-        cwd: ctx.cwd,
-        fileName: `${slug}.md`,
-        title: isPlan ? "cdev plan" : "cdev report",
-        body: reportText,
-      });
-      reportRelPath = savedPath;
-    }
-  }
-  if (result.errorMessage) logError(ctx.cwd, "full-mode", new Error(result.errorMessage));
-  const forkCost = result.usage?.cost ?? 0;
-  recordForkCost(ctx.cwd, forkCost);
-  maybeNotifyCostAlert(ctx, config);
-  if (config.memory) {
-    indexFindingsAsync({
-      task,
-      resultText: finalText,
-      stage1Model: config.stage1.id,
-      stage2Model: p.quick ? undefined : config.stage2.id,
-      stage1bModel: config.stage1b?.id || undefined,
-      stage1cModel: config.stage1c?.id || undefined,
-      stage1BackupModel: config.stage1Backup?.id || undefined,
-      isReview: false,
-      quick: p.quick ?? false,
-      cost: result.usage?.cost ?? 0,
-      cwd: ctx.cwd,
-    });
-  }
-
-  const isError = result.exitCode > 0 && !finalText;
   let resultText = formatForkResultOutput(result, details);
 
   if (quick) {
@@ -173,29 +129,47 @@ export async function handleFullFork(
     resultText = `🔍 cdev quick (read-only) findings\n\n${readable}${diagnosticLine}\n\n---\nℹ️ Quick mode is read-only. No files were created or modified.`;
   }
 
-  // Compare to previous report on same task, if available
-  const previous = findPreviousSession(ctx.cwd, task);
-  if (previous?.resultText && previous.id !== current.id) {
-    const diff = computeReportDiff(previous.resultText, finalText);
-    if (diff.added.length > 0 || diff.removed.length > 0) {
-      resultText += "\n\n---\n📊 Changes vs previous report\n\n" + formatReportDiff(diff);
-    }
-  }
+  const { finalizeForkResult } = await import("./shared-helpers.js");
+  const reportBody = quick ? "" : finalText;
+  const slugBase = task
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase()
+    .slice(0, 60);
+  const forkRes = await finalizeForkResult({
+    ctx,
+    config,
+    task,
+    result,
+    details,
+    startTime,
+    mode: isPlan ? "plan" : quick ? "quick" : useParallel ? "parallel" : "fork",
+    isReview: false,
+    memory: config.memory,
+    report: !quick && details.stage2 && reportBody
+      ? {
+          fileName: `${slugBase}-${Date.now().toString(36)}.md`,
+          title: isPlan ? "cdev plan" : "cdev report",
+          body: reportBody,
+        }
+      : undefined,
+    suffix: quick ? undefined : "",
+    memoryOptions: {
+      stage1Model: config.stage1.id,
+      stage2Model: p.quick ? undefined : config.stage2.id,
+      isReview: false,
+      quick: p.quick ?? false,
+    },
+  });
 
-  maybeWarnSessionSize(ctx);
-
-  const reportNote = reportRelPath
-    ? `\n\n---\n📄 ${isPlan ? "Plan" : "Report"} saved: ${reportRelPath}\n${isPlan ? "Review the plan before implementing." : "After implementing findings, update this file to track what was done (check off items, add notes). Use /cdev review ${reportRelPath} to get a second opinion."}`
+  const reportNote = forkRes.reportPath
+    ? `\n\n---\n📄 ${isPlan ? "Plan" : "Report"} saved: ${forkRes.reportPath}\n${isPlan ? "Review the plan before implementing." : "After implementing findings, update this file to track what was done (check off items, add notes). Use /cdev review ${forkRes.reportPath} to get a second opinion."}`
     : "";
 
   return {
     content: [{ type: "text" as const, text: safeDisplayText(resultText + reportNote) }],
-    details: withUiDetails(details, buildReportUiDetails(finalText, {
-      mode: isPlan ? "plan" : quick ? "quick" : useParallel ? "parallel" : "fork",
-      task,
-      reportPath: reportRelPath || undefined,
-    })),
-    isError,
+    details: forkRes.details,
+    isError: forkRes.isError,
   };
 }
 

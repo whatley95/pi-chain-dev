@@ -159,11 +159,6 @@ export function formatYoloStatus(config?: YoloConfig): string {
   return `ON (max ${normalized.maxRounds} rounds, auto-apply ${normalized.autoApply})`;
 }
 
-/** @deprecated No-op kept for backward compatibility; always returns pass. */
-export function evaluateConfidenceGates(_findings: Stage1Findings, _gates?: ConfidenceGateConfig): { passed: boolean; reasons: string[] } {
-  return { passed: true, reasons: [] };
-}
-
 export interface UsageStats {
   input: number;
   output: number;

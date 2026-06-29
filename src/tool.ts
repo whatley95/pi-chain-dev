@@ -148,7 +148,11 @@ export async function executeCdevTool(
     // ── Default: full two-stage fork ──
     return handleFullFork(p, ctx, config, signal, themedBg, snapshot);
   } catch (err) {
-    ctx.ui.setWidget("cdev-progress", undefined);
+    try {
+      ctx.ui.setWidget("cdev-progress", []);
+    } catch {
+      ctx.ui?.setWidget("cdev-progress", undefined);
+    }
     logError(ctx.cwd, "tool", err);
     return {
       content: [{ type: "text" as const, text: safeDisplayText(`cdev error: ${err instanceof Error ? err.message : String(err)}`) }],

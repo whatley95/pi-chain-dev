@@ -18,7 +18,7 @@ import { buildChildEnv } from "../src/env.js";
 import { stableStringify } from "../src/runner-events.js";
 
 // ── types.ts imports ──────────────────────────────────
-import { emptyUsage, emptyFailedResult, evaluateConfidenceGates } from "../src/types.js";
+import { emptyUsage, emptyFailedResult } from "../src/types.js";
 
 // ── memory.ts: extractFilePaths ───────────────────────────
 
@@ -267,14 +267,18 @@ describe("emptyFailedResult()", () => {
   });
 });
 
-describe("evaluateConfidenceGates()", () => {
-  it("is a deprecated no-op that always passes", () => {
-    const result = evaluateConfidenceGates({
-      summary: "explored auth",
-      findings: [{ observation: "JWT is used", confidence: "high" }],
-    });
-    assert.equal(result.passed, true);
-    assert.deepEqual(result.reasons, []);
+describe("emptyUsage()", () => {
+  it("returns all zeros", () => {
+    assert.deepEqual(emptyUsage(), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 });
+  });
+});
+
+describe("emptyFailedResult()", () => {
+  it("creates a failed result with the given message", () => {
+    const result = emptyFailedResult("test", "something went wrong");
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.errorMessage, "something went wrong");
+    assert.equal(result.stopReason, "error");
   });
 });
 

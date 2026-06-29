@@ -6,17 +6,13 @@ import { join, isAbsolute } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isPathUnderCwd } from "../path-guards.js";
 import { runCdevReview, runFileReview, runDiffReview } from "../runner.js";
-import { writeReportFile } from "../report.js";
 import { getFinalAssistantText } from "../runner-events.js";
-import { saveSession } from "../history.js";
 import {
-  logError, recordForkCost, maybeNotifyCostAlert, maybeWarnSessionSize,
   formatForkResultOutput, makeThemedBg,
 } from "../extension-context.js";
 import type { AutoForkConfig } from "../config.js";
 import type { StageProfile } from "../types.js";
-import { indexFindingsAsync } from "../memory.js";
-import { formatProgressDetail, clearProgress, withUiDetails, buildReportUiDetails, checkSessionSnapshot, isCompactTrigger, formatCompactMessage, detectVcs, runDiff } from "./shared-helpers.js";
+import { formatProgressDetail, clearProgress, checkSessionSnapshot, isCompactTrigger, formatCompactMessage, detectVcs, runDiff } from "./shared-helpers.js";
 import type { AutoForkParamsType } from "../tool.js";
 
 interface ReviewContext {
@@ -100,36 +96,30 @@ async function handleFileReview(
   const reviewText = getFinalAssistantText(result.messages);
   const reviewSlug = `review-${reviewFile.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 40)}-${Date.now().toString(36)}.md`;
 
-  const { reportRelPath } = writeReportFile({
-    cwd: ctx.cwd,
-    fileName: reviewSlug,
-    title: `Review: ${reviewFile}`,
-    reviewer: details.stage2?.model ?? "?",
-    body: reviewText || "(no review output)",
-  });
-
-  saveSession(ctx.cwd, `review ${reviewFile}`, true, startTime, details, result);
-  if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
-
-  const reviewCost = result.usage?.cost ?? 0;
-  recordForkCost(ctx.cwd, reviewCost);
-  maybeNotifyCostAlert(ctx, config);
-  maybeWarnSessionSize(ctx);
-
-  if (config.memory) {
-    indexFindingsAsync({
-      task: `review ${reviewFile}`,
-      resultText: reviewText || "",
+  const { finalizeForkResult } = await import("./shared-helpers.js");
+  const forkRes = await finalizeForkResult({
+    ctx,
+    config,
+    task: `review ${reviewFile}`,
+    result,
+    details,
+    startTime,
+    mode: "review",
+    isReview: true,
+    memory: config.memory,
+    report: {
+      fileName: reviewSlug,
+      title: `Review: ${reviewFile}`,
+      reviewer: details.stage2?.model ?? "?",
+      body: reviewText || "(no review output)",
+    },
+    memoryOptions: {
       stage2Model: reviewProfile.id,
       isReview: true,
       quick: false,
-      cost: result.usage?.cost ?? 0,
-      cwd: ctx.cwd,
-    });
-  }
+    },
+  });
 
-  const isError = result.exitCode > 0 && !reviewText;
-  const reviewOutput = formatForkResultOutput(result, details);
   const hasIssues = reviewText && (
     reviewText.includes("❌ missing") ||
     reviewText.includes("⚠️ partial") ||
@@ -139,20 +129,16 @@ async function handleFileReview(
     reviewText.includes("## Issues Found") ||
     reviewText.includes("# Issues")
   );
-  const actionNote = isError
-    ? `\n\n---\n⚠️  Review failed. Report saved at ${reportRelPath}`
+  const actionNote = forkRes.isError
+    ? `\n\n---\n⚠️  Review failed. Report saved at ${forkRes.reportPath}`
     : hasIssues
-      ? `\n\n---\n⚠️  Review found issues. Read the report at ${reportRelPath}\nand address the new Action Items. Check them off in the report file when done.`
-      : `\n\n---\n✅ Review passed. Report saved at ${reportRelPath}`;
+      ? `\n\n---\n⚠️  Review found issues. Read the report at ${forkRes.reportPath}\nand address the new Action Items. Check them off in the report file when done.`
+      : `\n\n---\n✅ Review passed. Report saved at ${forkRes.reportPath}`;
 
   return {
-    content: [{ type: "text" as const, text: reviewOutput + actionNote }],
-    details: withUiDetails(details, buildReportUiDetails(reviewText, {
-      mode: "review",
-      task: `review ${reviewFile}`,
-      reportPath: reportRelPath,
-    })),
-    isError,
+    content: [{ type: "text" as const, text: formatForkResultOutput(result, details) + actionNote }],
+    details: forkRes.details,
+    isError: forkRes.isError,
   };
 }
 
@@ -241,48 +227,38 @@ async function handleDiffReviewInternal(
   const reportFileName = `diff-${diffSlug}-${ts}.md`;
   const reviewText = getFinalAssistantText(result.messages);
 
-  const { reportRelPath } = writeReportFile({
-    cwd: ctx.cwd,
-    fileName: reportFileName,
-    title: `Diff Review: ${diffSpec}`,
-    reviewer: details.stage2?.model ?? "?",
-    body: reviewText || "(no review output)",
-  });
-
-  saveSession(ctx.cwd, `review diff ${diffSpec}`, true, startTime, details, result);
-  if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
-
-  const diffReviewCost = result.usage?.cost ?? 0;
-  recordForkCost(ctx.cwd, diffReviewCost);
-  maybeNotifyCostAlert(ctx, config);
-  maybeWarnSessionSize(ctx);
-
-  if (config.memory) {
-    indexFindingsAsync({
-      task: `review diff ${diffSpec}`,
-      resultText: reviewText || "",
+  const { finalizeForkResult } = await import("./shared-helpers.js");
+  const forkRes = await finalizeForkResult({
+    ctx,
+    config,
+    task: `review diff ${diffSpec}`,
+    result,
+    details,
+    startTime,
+    mode: "review",
+    isReview: true,
+    memory: config.memory,
+    report: {
+      fileName: reportFileName,
+      title: `Diff Review: ${diffSpec}`,
+      reviewer: details.stage2?.model ?? "?",
+      body: reviewText || "(no review output)",
+    },
+    memoryOptions: {
       stage2Model: reviewProfile.id,
       isReview: true,
       quick: false,
-      cost: result.usage?.cost ?? 0,
-      cwd: ctx.cwd,
-    });
-  }
+    },
+  });
 
-  const isError = result.exitCode > 0 && !reviewText;
-  const reviewOutput = formatForkResultOutput(result, details);
-  const actionNote = isError
-    ? `\n\n---\n⚠️ Diff review failed. Report saved at ${reportRelPath}`
-    : `\n\n---\n✅ Diff review complete. Report saved at ${reportRelPath}`;
+  const actionNote = forkRes.isError
+    ? `\n\n---\n⚠️ Diff review failed. Report saved at ${forkRes.reportPath}`
+    : `\n\n---\n✅ Diff review complete. Report saved at ${forkRes.reportPath}`;
 
   return {
-    content: [{ type: "text" as const, text: reviewOutput + actionNote }],
-    details: withUiDetails(details, buildReportUiDetails(reviewText, {
-      mode: "review",
-      task: `review diff ${diffSpec}`,
-      reportPath: reportRelPath,
-    })),
-    isError,
+    content: [{ type: "text" as const, text: formatForkResultOutput(result, details) + actionNote }],
+    details: forkRes.details,
+    isError: forkRes.isError,
   };
 }
 
@@ -339,47 +315,38 @@ async function handleSessionReviewInternal(
   const reviewText = getFinalAssistantText(result.messages);
   const reviewSlug = `session-review-${Date.now().toString(36)}.md`;
 
-  const { reportRelPath: reviewReportPath } = reviewText && !result.errorMessage
-    ? writeReportFile({
-        cwd: ctx.cwd,
-        fileName: reviewSlug,
-        title: "Session Review",
-        reviewer: details.stage2?.model ?? "?",
-        body: reviewText,
-      })
-    : { reportRelPath: "" };
-
-  saveSession(ctx.cwd, reviewTask, true, startTime, details, result);
-  if (result.errorMessage) logError(ctx.cwd, "review-stage2", new Error(result.errorMessage));
-
-  const sessionReviewCost = result.usage?.cost ?? 0;
-  recordForkCost(ctx.cwd, sessionReviewCost);
-  maybeNotifyCostAlert(ctx, config);
-  maybeWarnSessionSize(ctx);
-
-  if (config.memory) {
-    indexFindingsAsync({
-      task: reviewTask,
-      resultText: getFinalAssistantText(result.messages) || "",
+  const { finalizeForkResult } = await import("./shared-helpers.js");
+  const forkRes = await finalizeForkResult({
+    ctx,
+    config,
+    task: reviewTask,
+    result,
+    details,
+    startTime,
+    mode: "review",
+    isReview: true,
+    memory: config.memory,
+    report: reviewText
+      ? {
+          fileName: reviewSlug,
+          title: "Session Review",
+          reviewer: details.stage2?.model ?? "?",
+          body: reviewText,
+        }
+      : undefined,
+    memoryOptions: {
       stage2Model: reviewProfile.id,
       isReview: true,
       quick: false,
-      cost: result.usage?.cost ?? 0,
-      cwd: ctx.cwd,
-    });
-  }
+    },
+  });
 
-  const isError = result.exitCode > 0 && !getFinalAssistantText(result.messages);
-  const suffix = reviewReportPath ? `\n\n---\n📄 Review report saved: ${reviewReportPath}` : "";
+  const suffix = forkRes.reportPath ? `\n\n---\n📄 Review report saved: ${forkRes.reportPath}` : "";
 
   return {
     content: [{ type: "text" as const, text: formatForkResultOutput(result, details) + suffix }],
-    details: withUiDetails(details, buildReportUiDetails(reviewText, {
-      mode: "review",
-      task: reviewTask,
-      reportPath: reviewReportPath || undefined,
-    })),
-    isError,
+    details: forkRes.details,
+    isError: forkRes.isError,
   };
 }
 
