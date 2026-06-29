@@ -9,8 +9,8 @@ import { writeReportFile } from "./report.js";
 import { loadProjectMap, splitTaskByMap, type ParallelSubTask, type ProjectMap } from "./project-map.js";
 import { fmtDuration, slugFromTask } from "./format.js";
 import { addUsage } from "./usage.js";
-import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, AutoForkConfig, YoloConfig, ConfidenceGateConfig, ReviewVerdict } from "./types.js";
-import { emptyUsage, emptyFailedResult, evaluateConfidenceGates } from "./types.js";
+import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, AutoForkConfig, YoloConfig, ReviewVerdict } from "./types.js";
+import { emptyUsage, emptyFailedResult } from "./types.js";
 
 export interface RunAutoForkOptions {
   cwd: string;
@@ -31,7 +31,6 @@ export interface RunAutoForkOptions {
   scoutTimeoutMs?: number;
   forgeTimeoutMs?: number;
   editMode?: boolean;
-  confidenceGates?: ConfidenceGateConfig;
   onProgress?: (stage: string, model: string) => void;
   onUpdate?: (update: { stage: string; activity?: string; cost?: number; tokens?: number }) => void;
   extensions?: string[] | null;
@@ -50,7 +49,6 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
           stage1cProfile, stage1BackupProfile, stage2Profile, customExplorePrompt,
           customSynthesizePrompt, customPlanPrompt,
           quick = false, plan = false, editMode = false,
-          confidenceGates,
           extensions = null, environment = {}, offline = true, signal } = opts;
 
   const providedMap = opts.map ?? undefined;
@@ -110,52 +108,12 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     );
     stage1Result = parallelResult;
     stage1Findings = parallelFindings;
-    if (stage1Result.exitCode !== 0 && !stage1Findings) {
-      return { result: stage1Result, details };
-    }
   } else {
     stage1Result = await runStage1Run("exploration", task);
     details.stage1 = stage1Result;
 
     const stage1Text = getFinalAssistantText(stage1Result.messages) || "";
     stage1Findings = parseStage1Findings(stage1Text);
-    const stage1Usage: UsageStats = stage1Result.usage ? { ...stage1Result.usage } : emptyUsage();
-
-    const reExploreCheck = shouldReExplore(stage1Findings);
-    const gateCheck = stage1Findings ? evaluateConfidenceGates(stage1Findings, confidenceGates) : { passed: false, reasons: ["no valid findings"] };
-    const gateAutoReExplore = confidenceGates?.autoReExplore ?? true;
-    const strictValidation = confidenceGates?.strictValidation ?? false;
-    const needsMoreExploration = strictValidation && (reExploreCheck.should || (!gateCheck.passed && gateAutoReExplore));
-    if (!gateCheck.passed && !gateAutoReExplore) {
-      stage1Result.stderr += `\n[cdev] confidence gate failed but autoReExplore is off: ${gateCheck.reasons.join("; ")}\n`;
-    }
-
-    let secondRun: ForkResult | undefined;
-
-    if (needsMoreExploration) {
-      const reason = gateCheck.passed ? reExploreCheck.reason : `confidence gate failed: ${gateCheck.reasons.join("; ")}`;
-      secondRun = await runStage1Run("exploration (coverage pass)", task);
-      const secondText = getFinalAssistantText(secondRun.messages) || "";
-      const secondFindings = parseStage1Findings(secondText);
-      const secondValidation = secondFindings ? validateStage1Findings(secondFindings, "coverage pass") : { valid: false, reason: "coverage pass output was not valid JSON findings" };
-      if (secondValidation.valid && secondFindings && stage1Findings) {
-        addUsage(stage1Usage, secondRun.usage);
-        stage1Findings = mergeStage1Findings(stage1Findings, secondFindings);
-        stage1Result = {
-          ...stage1Result,
-          usage: stage1Usage,
-          stderr: [stage1Result.stderr, secondRun.stderr].filter(Boolean).join("\n"),
-        };
-        stage1Result.stderr += `\n[cdev] ${reason}; merged second pass: ${stage1Findings.findings.length} total findings`;
-        const finalGate = evaluateConfidenceGates(stage1Findings, confidenceGates);
-        if (!finalGate.passed) {
-          stage1Result.stderr += `\n[cdev] confidence gates still not met after second pass: ${finalGate.reasons.join("; ")}`;
-        }
-      } else {
-        stage1Result.stderr += `\n[cdev] coverage pass invalid (${secondValidation.reason}); using first pass`;
-        stage1Result.usage = stage1Usage;
-      }
-    }
   }
 
   if (stage1Result.exitCode > 0 && !getFinalAssistantText(stage1Result.messages) && !stage1Findings) {
@@ -323,41 +281,6 @@ export function formatStage1FindingsForStage2(findings: Stage1Findings): string 
     if (c.unreadLikelyFiles !== undefined) lines.push(`- Unread likely files: ${c.unreadLikelyFiles}`);
   }
   return lines.join("\n");
-}
-
-export function countLowConfidenceFindings(findings: Stage1Findings): number {
-  return findings.findings.filter((f) => f.confidence === "low").length;
-}
-
-export function shouldReExplore(findings: Stage1Findings | null): { should: boolean; reason?: string } {
-  if (!findings) return { should: true, reason: "stage 1 produced no valid structured findings" };
-  if (findings.findings.length === 0) return { should: true, reason: "stage 1 returned zero findings" };
-  if (findings.findings.length < 3) return { should: true, reason: `only ${findings.findings.length} finding(s); likely insufficient coverage` };
-  const lowConfidenceCount = countLowConfidenceFindings(findings);
-  const meaningfulFindings = findings.findings.filter(f => f.observation && f.observation.trim().length > 0);
-  const denominator = Math.max(1, meaningfulFindings.length || findings.findings.length);
-  if (lowConfidenceCount / denominator > 0.5) return { should: true, reason: `${Math.round((lowConfidenceCount / denominator) * 100)}% of findings are low confidence` };
-  if (findings.openQuestions?.some((q) => /critical|blocker|unknown/i.test(q))) return { should: true, reason: "open questions contain critical/blocker unknowns" };
-  return { should: false };
-}
-
-export function validateStage1Findings(findings: Stage1Findings, source: string): { valid: boolean; reason?: string } {
-  if (!findings.summary || findings.summary.trim().length < 5) {
-    return { valid: false, reason: `${source}: summary missing or too short` };
-  }
-  if (findings.findings.length === 0) {
-    return { valid: false, reason: `${source}: no findings returned` };
-  }
-  const withObservations = findings.findings.filter(f => f.observation && f.observation.trim().length > 0);
-  if (withObservations.length === 0) {
-    return { valid: false, reason: `${source}: findings lack observations` };
-  }
-  // Reject if all findings are low-confidence -- not actionable regardless of count
-  const allLowConfidence = findings.findings.every(f => f.confidence === 'low');
-  if (allLowConfidence) {
-    return { valid: false, reason: `${source}: all ${findings.findings.length} findings are low confidence; insufficient quality` };
-  }
-  return { valid: true };
 }
 
 function normalizeObservation(text: string): string {

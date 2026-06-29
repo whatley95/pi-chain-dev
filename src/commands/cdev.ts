@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig, invalidateConfigCache, type AutoForkConfig } from "../config.js";
+import { loadConfig, type AutoForkConfig } from "../config.js";
 import { listSessions, getSession, formatHistory, formatSessionRecord, purgeOldSessions, getLastSession } from "../history.js";
 import { memoryClear } from "../memory.js";
 import { getErrorCount, clearErrorLog } from "../logger.js";
@@ -38,7 +38,7 @@ export function registerCdevCommand(
   updateAutoStatus: (ctx: ExtensionContext) => void,
 ): void {
   pi.registerCommand("cdev", {
-    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, read <paths>, grep <pattern>, trace <symbol>, explain <path|symbol>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, quality on|off, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic|--all|--stale>, themed on|off, todo <name>",
+    description: "Two-stage chain dev. Subcommands: auto on|off, review [path], quick <task>, read <paths>, grep <pattern>, trace <symbol>, explain <path|symbol>, research <issue>, advisor <question>, ask-advisor <question>, plan <task>, status, prompts on|off, history, scan [deep], recall [topic], memory refresh <topic|--all|--stale>, themed on|off, todo <name>",
     handler: async (args, ctx) => {
       const trimmed = (args || "").trim();
       const lower = trimmed.toLowerCase();
@@ -238,41 +238,6 @@ export function registerCdevCommand(
       // ── Subcommand: status ──
       if (lower === "status" || lower === "info") {
         ctx.ui.notify(formatCdevStatus(ctx, config), "info");
-        return;
-      }
-
-      // ── Subcommand: quality ──
-      if (lower === "quality" || lower.startsWith("quality ")) {
-        const arg = lower.slice("quality".length).trim();
-        const current = config.confidenceGates?.strictValidation ?? false;
-        if (!arg) {
-          ctx.ui.notify(`Quality gates: ${current ? "strict (coverage passes enabled)" : "relaxed (no coverage passes)"}`, "info");
-          ctx.ui.notify(`Usage: /cdev quality on|off`, "info");
-          return;
-        }
-        let isQualityProject = false;
-        let valueArg = arg;
-        if (arg.startsWith("project ")) {
-          isQualityProject = true;
-          valueArg = arg.slice("project ".length).trim();
-        }
-        const bool = valueArg === "on" || valueArg === "true" || valueArg === "1" ? true : valueArg === "off" || valueArg === "false" || valueArg === "0" ? false : null;
-        if (bool === null) {
-          ctx.ui.notify(`Invalid value "${valueArg}". Use /cdev quality on or /cdev quality off (or /cdev quality project on|off).`, "warn");
-          return;
-        }
-        if (isQualityProject) {
-          const projSettings = readProjectSettings(ctx.cwd);
-          const projGates = (projSettings.confidenceGates as Record<string, unknown>) ?? {};
-          writeProjectSetting(ctx.cwd, "confidenceGates", { ...projGates, strictValidation: bool });
-          invalidateConfigCache(ctx.cwd);
-        } else {
-          const agentSettings = readAgentSettings();
-          const existingGates = (agentSettings.confidenceGates as Record<string, unknown>) ?? {};
-          writeAgentSetting("confidenceGates", { ...existingGates, strictValidation: bool });
-          invalidateConfigCache();
-        }
-        ctx.ui.notify(`Quality gates: ${bool ? "strict (coverage passes enabled)" : "relaxed (no coverage passes)"}${isQualityProject ? " (project)" : " (global)"}`, "info");
         return;
       }
 

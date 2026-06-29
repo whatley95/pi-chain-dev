@@ -457,13 +457,15 @@ Instructions:
 - Do NOT edit files. The main agent will apply changes.`;
 }
 
-const SCOUT_MAP_MAX_CHARS = 6_000;
+const SCOUT_MAP_MAX_CHARS = 8_000;
 
 function loadMapContext(cwd: string, map?: ProjectMap | null): string {
   try {
     const resolved = map ?? loadProjectMap(cwd);
     if (resolved) {
       const summary = summarizeMapForPrompt(resolved);
+      // summarizeMapForPrompt already applies a tiered 12k truncation; we only
+      // apply a small extra cap here to keep token costs predictable.
       const maxChars = SCOUT_MAP_MAX_CHARS;
       return summary.length > maxChars
         ? `\n\n${summary.slice(0, maxChars)}\n... (project map truncated)`

@@ -1,13 +1,11 @@
 /**
- * Tests for config merge logic: normalizeYoloConfig, normalizeConfidenceGates,
- * evaluateConfidenceGates, and config deep-merge behavior.
+ * Tests for config merge logic: normalizeYoloConfig and config deep-merge behavior.
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
   normalizeYoloConfig,
-  normalizeConfidenceGates,
   evaluateConfidenceGates,
 } from "../src/types.js";
 import type { Stage1Findings, StageProfile } from "../src/types.js";
@@ -84,37 +82,7 @@ describe("formatYoloStatus", () => {
   });
 });
 
-// ── normalizeConfidenceGates ─────────────────────────────
-
-describe("normalizeConfidenceGates", () => {
-  it("uses defaults when config is undefined", () => {
-    const result = normalizeConfidenceGates();
-    assert.equal(result.minFindings, 3);
-    assert.equal(result.maxLowConfidenceRatio, 0.5);
-    assert.equal(result.minFileAnchors, 1);
-    assert.equal(result.minCommandEvidence, 1);
-    assert.equal(result.autoReExplore, true);
-  });
-
-  it("clamps minFindings to non-negative", () => {
-    assert.equal(normalizeConfidenceGates({ minFindings: -5 }).minFindings, 0);
-  });
-
-  it("clamps maxLowConfidenceRatio to [0, 1]", () => {
-    assert.equal(normalizeConfidenceGates({ maxLowConfidenceRatio: 5 }).maxLowConfidenceRatio, 1);
-    assert.equal(normalizeConfidenceGates({ maxLowConfidenceRatio: -1 }).maxLowConfidenceRatio, 0);
-  });
-
-  it("preserves partial overrides", () => {
-    const result = normalizeConfidenceGates({ minFindings: 5 });
-    assert.equal(result.minFindings, 5);
-    assert.equal(result.maxLowConfidenceRatio, 0.5); // default
-    assert.equal(result.minFileAnchors, 1);           // default
-    assert.equal(result.autoReExplore, true);          // default
-  });
-});
-
-// ── evaluateConfidenceGates ──────────────────────────────
+// ── evaluateConfidenceGates (deprecated no-op) ───────────
 
 const makeFindings = (overrides?: Partial<Stage1Findings>): Stage1Findings => ({
   summary: "test findings",
@@ -127,59 +95,18 @@ const makeFindings = (overrides?: Partial<Stage1Findings>): Stage1Findings => ({
 });
 
 describe("evaluateConfidenceGates", () => {
-  it("passes with good findings", () => {
-    const result = evaluateConfidenceGates(makeFindings());
-    assert.equal(result.passed, true);
-    assert.deepEqual(result.reasons, []);
-  });
-
-  it("fails when too few findings", () => {
-    const result = evaluateConfidenceGates(makeFindings({ findings: [] }));
-    assert.equal(result.passed, false);
-    assert.ok(result.reasons.some(r => r.includes("finding")));
-  });
-
-  it("fails when too many low-confidence findings", () => {
-    const result = evaluateConfidenceGates(makeFindings({
-      findings: [
-        { observation: "maybe bug", confidence: "low" },
-        { observation: "maybe perf", confidence: "low" },
-        { observation: "maybe style", confidence: "low" },
-      ],
-    }));
-    assert.equal(result.passed, false);
-    assert.ok(result.reasons.some(r => r.includes("low confidence")));
-  });
-
-  it("fails when no file anchors", () => {
-    const result = evaluateConfidenceGates(makeFindings({
-      findings: [
-        { observation: "general thought", confidence: "high" },
-        { observation: "another thought", confidence: "high" },
-        { observation: "third thought", confidence: "high" },
-      ],
-    }));
-    assert.equal(result.passed, false);
-    assert.ok(result.reasons.some(r => r.includes("file anchor")));
-  });
-
-  it("fails when no command evidence", () => {
-    const result = evaluateConfidenceGates(makeFindings({
-      findings: [
-        { observation: "bug in auth", confidence: "high", file: "src/auth.ts" },
-        { observation: "slow query", confidence: "high", file: "src/db.ts" },
-        { observation: "missing test", confidence: "high", file: "src/auth.test.ts" },
-      ],
-    }));
-    assert.equal(result.passed, false);
-    assert.ok(result.reasons.some(r => r.includes("command evidence")));
-  });
-
-  it("passes with custom generous gates", () => {
-    const result = evaluateConfidenceGates(
-      makeFindings({ findings: [{ observation: "only one", confidence: "low" }] }),
-      { minFindings: 0, maxLowConfidenceRatio: 1, minFileAnchors: 0, minCommandEvidence: 0 },
+  it("is a deprecated no-op that always passes", () => {
+    assert.deepEqual(evaluateConfidenceGates(makeFindings()), { passed: true, reasons: [] });
+    assert.deepEqual(evaluateConfidenceGates(makeFindings({ findings: [] })), { passed: true, reasons: [] });
+    assert.deepEqual(
+      evaluateConfidenceGates(makeFindings({
+        findings: [
+          { observation: "maybe bug", confidence: "low" },
+          { observation: "maybe perf", confidence: "low" },
+          { observation: "maybe style", confidence: "low" },
+        ],
+      })),
+      { passed: true, reasons: [] },
     );
-    assert.equal(result.passed, true);
   });
 });

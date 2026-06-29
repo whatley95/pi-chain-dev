@@ -268,15 +268,13 @@ describe("emptyFailedResult()", () => {
 });
 
 describe("evaluateConfidenceGates()", () => {
-  it("flags sparse findings without file anchors or command evidence", () => {
+  it("is a deprecated no-op that always passes", () => {
     const result = evaluateConfidenceGates({
       summary: "explored auth",
       findings: [{ observation: "JWT is used", confidence: "high" }],
     });
-    assert.equal(result.passed, false);
-    assert.ok(result.reasons.some((reason) => reason.includes("finding")));
-    assert.ok(result.reasons.some((reason) => reason.includes("file anchor")));
-    assert.ok(result.reasons.some((reason) => reason.includes("command evidence")));
+    assert.equal(result.passed, true);
+    assert.deepEqual(result.reasons, []);
   });
 });
 

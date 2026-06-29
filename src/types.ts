@@ -27,19 +27,19 @@ export interface PromptsConfig {
   advisor?: string;
 }
 
-/** Gate thresholds for deciding whether scout evidence is strong enough for forge. */
+/** Deprecated: kept for config backward compatibility but no longer enforced. */
 export interface ConfidenceGateConfig {
-  /** Minimum number of findings required. Default 3. */
+  /** @deprecated No longer enforced. */
   minFindings?: number;
-  /** Maximum ratio of low-confidence findings (0.0-1.0). Default 0.5. */
+  /** @deprecated No longer enforced. */
   maxLowConfidenceRatio?: number;
-  /** Minimum number of findings with file anchors. Default 1. */
+  /** @deprecated No longer enforced. */
   minFileAnchors?: number;
-  /** Minimum number of findings with command/output evidence. Default 1. */
+  /** @deprecated No longer enforced. */
   minCommandEvidence?: number;
-  /** If true, gate failures trigger an automatic re-explore. Default true. */
+  /** @deprecated No longer enforced. */
   autoReExplore?: boolean;
-  /** If true, re-explore when quality/confidence gates fail. Default false (relaxed — no coverage passes). */
+  /** @deprecated No longer enforced. */
   strictValidation?: boolean;
 }
 
@@ -85,8 +85,6 @@ export interface AutoForkConfig {
   parallel?: number;
   /** If true, a backup scout takes over failed parallel sub-tasks. Default false. */
   parallelBackup?: boolean;
-  /** If true, allow a second scout coverage pass when confidence is low. Default true. */
-  autoReExplore?: boolean;
   /** Max concurrent child Pi processes cdev will spawn at once. Default 3. */
   maxConcurrentStages?: number;
   /** Per-scout stage timeout in milliseconds. Default 600000 (10 minutes). */
@@ -107,7 +105,7 @@ export interface AutoForkConfig {
   maxForkCost?: number;
   /** Maximum total cost (USD) for cdev in the current session. 0 = unlimited. */
   maxSessionCost?: number;
-  /** Confidence gate thresholds before forge runs. */
+  /** @deprecated No longer enforced. Kept for config compatibility. */
   confidenceGates?: ConfidenceGateConfig;
   /** YOLO mode: auto review → fix loops. */
   yolo?: YoloConfig;
@@ -161,6 +159,7 @@ export function formatYoloStatus(config?: YoloConfig): string {
   return `ON (max ${normalized.maxRounds} rounds, auto-apply ${normalized.autoApply})`;
 }
 
+/** @deprecated No-op kept for config compatibility. */
 export function normalizeConfidenceGates(config?: ConfidenceGateConfig): Required<ConfidenceGateConfig> {
   return {
     minFindings: Math.max(0, config?.minFindings ?? 3),
@@ -172,26 +171,9 @@ export function normalizeConfidenceGates(config?: ConfidenceGateConfig): Require
   };
 }
 
-export function evaluateConfidenceGates(findings: Stage1Findings, gates?: ConfidenceGateConfig): { passed: boolean; reasons: string[] } {
-  const g = normalizeConfidenceGates(gates);
-  const reasons: string[] = [];
-  if (findings.findings.length < g.minFindings) {
-    reasons.push(`only ${findings.findings.length} finding(s) (min ${g.minFindings})`);
-  }
-  const lowCount = findings.findings.filter((f) => f.confidence === "low").length;
-  const lowRatio = findings.findings.length > 0 ? lowCount / findings.findings.length : 0;
-  if (lowRatio > g.maxLowConfidenceRatio) {
-    reasons.push(`${Math.round(lowRatio * 100)}% low confidence (max ${Math.round(g.maxLowConfidenceRatio * 100)}%)`);
-  }
-  const fileAnchors = new Set(findings.findings.map((f) => f.file).filter(Boolean)).size;
-  if (fileAnchors < g.minFileAnchors) {
-    reasons.push(`${fileAnchors} file anchor(s) (min ${g.minFileAnchors})`);
-  }
-  const commandEvidence = findings.findings.filter((f) => f.evidence && /\$\s*\w+|`[^`]+`|output|stdout|stderr|command/i.test(f.evidence)).length;
-  if (commandEvidence < g.minCommandEvidence) {
-    reasons.push(`${commandEvidence} command evidence item(s) (min ${g.minCommandEvidence})`);
-  }
-  return { passed: reasons.length === 0, reasons };
+/** @deprecated No-op kept for backward compatibility; always returns pass. */
+export function evaluateConfidenceGates(_findings: Stage1Findings, _gates?: ConfidenceGateConfig): { passed: boolean; reasons: string[] } {
+  return { passed: true, reasons: [] };
 }
 
 export interface UsageStats {

@@ -98,7 +98,6 @@ export async function handleFullFork(
     parallelBackup,
     scoutTimeoutMs: config.profileTimeouts?.scout ?? config.scoutTimeoutMs,
     forgeTimeoutMs: config.profileTimeouts?.forge ?? config.forgeTimeoutMs,
-    confidenceGates: config.confidenceGates,
     onProgress,
     onUpdate: (update) => {
       const isScout = update.stage.includes("exploration") || update.stage === "scout";

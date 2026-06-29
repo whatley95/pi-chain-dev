@@ -8,8 +8,8 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
-import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig, YoloConfig, ConfidenceGateConfig, ProfileTimeoutsConfig } from "./types.js";
-import { normalizeYoloConfig, normalizeConfidenceGates } from "./types.js";
+import type { AutoForkConfig, StageProfile, ForkThinkingLevel, PromptsConfig, YoloConfig, ProfileTimeoutsConfig } from "./types.js";
+import { normalizeYoloConfig } from "./types.js";
 import { logError } from "./logger.js";
 
 let getAgentDirImpl: () => string;
@@ -59,16 +59,8 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
   signature: undefined,
   maxForkCost: 0,
   maxSessionCost: 0,
-  confidenceGates: {
-    minFindings: 3,
-    maxLowConfidenceRatio: 0.5,
-    minFileAnchors: 1,
-    minCommandEvidence: 1,
-    autoReExplore: true,
-    strictValidation: false,
-  },
-  /** Allow a second scout coverage pass when confidence is low. */
-  autoReExplore: true,
+  confidenceGates: {},
+
   yolo: {
     enabled: false,
     maxRounds: 3,
@@ -183,12 +175,12 @@ export function loadConfig(cwd: string): AutoForkConfig {
       ...globalConfig.prompts,
       ...projectConfig.prompts,
     },
-    // Deep-merge confidence gates so project can tune thresholds without losing defaults
-    confidenceGates: normalizeConfidenceGates({
+    // Confidence gates are deprecated and no longer enforced; keep the raw object for compatibility.
+    confidenceGates: {
       ...DEFAULT_CONFIG.confidenceGates,
       ...globalConfig.confidenceGates,
       ...projectConfig.confidenceGates,
-    }),
+    },
     // Deep-merge yolo config so project can toggle enabled without losing global profiles
     yolo: normalizeYoloConfig({
       ...DEFAULT_CONFIG.yolo,
@@ -313,17 +305,9 @@ function readNamespacedConfig(cwd: string, settingsPath: string): Partial<AutoFo
     if (typeof config.maxForkCost === "number") parsed.maxForkCost = Math.max(0, Number.isFinite(config.maxForkCost) ? config.maxForkCost : 0);
     if (typeof config.maxSessionCost === "number") parsed.maxSessionCost = Math.max(0, Number.isFinite(config.maxSessionCost) ? config.maxSessionCost : 0);
 
-    // Parse confidence gates
+    // Confidence gates are deprecated and no longer enforced.
     if (config.confidenceGates && typeof config.confidenceGates === "object") {
-      const gates = config.confidenceGates as Record<string, unknown>;
-      const parsedGates: ConfidenceGateConfig = {};
-      if (typeof gates.minFindings === "number") parsedGates.minFindings = gates.minFindings;
-      if (typeof gates.maxLowConfidenceRatio === "number") parsedGates.maxLowConfidenceRatio = gates.maxLowConfidenceRatio;
-      if (typeof gates.minFileAnchors === "number") parsedGates.minFileAnchors = gates.minFileAnchors;
-      if (typeof gates.minCommandEvidence === "number") parsedGates.minCommandEvidence = gates.minCommandEvidence;
-      if (typeof gates.autoReExplore === "boolean") parsedGates.autoReExplore = gates.autoReExplore;
-      if (typeof gates.strictValidation === "boolean") parsedGates.strictValidation = gates.strictValidation;
-      parsed.confidenceGates = parsedGates;
+      parsed.confidenceGates = config.confidenceGates as Record<string, unknown>;
     }
 
     // Parse yolo config

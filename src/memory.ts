@@ -884,7 +884,7 @@ export function memoryTopicCount(cwd: string): number {
 
 /** TTL cache for memory context to avoid rescoring all topics on every fork. */
 const _memoryContextCache = new Map<string, { task: string; result: string | null; ts: number }>();
-const MEMORY_CONTEXT_CACHE_TTL_MS = 5_000;
+const MEMORY_CONTEXT_CACHE_TTL_MS = 60_000;
 
 /** Search memory for findings relevant to a task.
  *  Returns formatted context to prepend to the task, or null if nothing relevant found.
