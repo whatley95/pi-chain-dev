@@ -134,23 +134,19 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
     if (needsMoreExploration) {
       const reason = gateCheck.passed ? reExploreCheck.reason : `confidence gate failed: ${gateCheck.reasons.join("; ")}`;
-      stage1Result.stderr += `\n[cdev] ${reason}; running a second exploration pass\n`;
       secondRun = await runStage1Run("exploration (coverage pass)", task);
-    }
-
-    if (secondRun && stage1Findings) {
-      addUsage(stage1Usage, secondRun.usage);
       const secondText = getFinalAssistantText(secondRun.messages) || "";
       const secondFindings = parseStage1Findings(secondText);
       const secondValidation = secondFindings ? validateStage1Findings(secondFindings, "coverage pass") : { valid: false, reason: "coverage pass output was not valid JSON findings" };
-      if (secondValidation.valid && secondFindings) {
+      if (secondValidation.valid && secondFindings && stage1Findings) {
+        addUsage(stage1Usage, secondRun.usage);
         stage1Findings = mergeStage1Findings(stage1Findings, secondFindings);
         stage1Result = {
           ...stage1Result,
           usage: stage1Usage,
           stderr: [stage1Result.stderr, secondRun.stderr].filter(Boolean).join("\n"),
         };
-        stage1Result.stderr += `\n[cdev] merged second pass: ${stage1Findings.findings.length} total findings`;
+        stage1Result.stderr += `\n[cdev] ${reason}; merged second pass: ${stage1Findings.findings.length} total findings`;
         const finalGate = evaluateConfidenceGates(stage1Findings, confidenceGates);
         if (!finalGate.passed) {
           stage1Result.stderr += `\n[cdev] confidence gates still not met after second pass: ${finalGate.reasons.join("; ")}`;
@@ -536,7 +532,7 @@ async function runParallelScouts(
     stderr: stderrLines.filter(Boolean).join("\n"),
     durationMs: totalDuration,
   };
-  details.stage1 = successful[0].result;
+  details.stage1 = stage1Result;
   details.stage1b = workerRuns.length > 1 ? workerRuns[1].result : null;
   details.stage1c = workerRuns.length > 2 ? workerRuns[2].result : null;
   details.stage1Backup = backupRuns?.[0]?.result ?? null;
@@ -596,6 +592,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
     yoloConfig, reviewProfile, fixProfile, customExplorePrompt, customSynthesizePrompt, customReviewPrompt,
     scoutTimeoutMs, forgeTimeoutMs, yoloReviewTimeoutMs, yoloFixTimeoutMs,
     extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate,
+    map,
   } = opts;
 
   const baseSlug = slugFromTask(task);
@@ -608,7 +605,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
     if (maxForkCost > 0 && nextEstimate > maxForkCost) {
       return { allowed: false, reason: `next fork estimate ${formatCost(nextEstimate)} exceeds maxForkCost ${formatCost(maxForkCost)}` };
     }
-    const sessionCost = getSessionForkCost(cwd);
+    const sessionCost = getSessionForkCost(cwd) + totalUsage.cost;
     if (maxSessionCost > 0 && sessionCost + nextEstimate > maxSessionCost) {
       return { allowed: false, reason: `YOLO session cost would reach ${formatCost(sessionCost + nextEstimate)}, exceeding maxSessionCost ${formatCost(maxSessionCost)}` };
     }
@@ -634,6 +631,7 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
     environment,
     offline,
     signal,
+    map,
   });
   addUsage(totalUsage, initialResult.usage);
 
@@ -813,6 +811,9 @@ export async function runYoloLoop(opts: RunYoloLoopOptions): Promise<YoloLoopRes
     };
     rounds.push(roundResult);
 
+    // Update latestReport for the next review round. If the fix round produced no
+    // usable text, continue reviewing the last known report so the loop terminates
+    // cleanly rather than re-reviewing stale output.
     if (fixText) {
       latestReport = fixText;
     }

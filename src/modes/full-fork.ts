@@ -63,7 +63,11 @@ export async function handleFullFork(
   const isPlan = p.plan === true;
   const parallel = Math.max(1, Math.min(3, Number.isFinite(p.parallel) ? (p.parallel as number) : (config.parallel ?? 1)));
   const parallelBackup = typeof p.parallelBackup === "boolean" ? p.parallelBackup : (config.parallelBackup ?? false);
-  const useParallel = parallel > 1 && !quick ;
+  const useParallel = parallel > 1 && !quick;
+
+  // Holder for the result object, populated once runAutoFork returns.
+  // onUpdate is invoked before that, so it must read through a mutable ref.
+  const resultRef: { current: ForkResult | null } = { current: null };
 
   const onProgress = (stage: string, model: string) => {
     if (stage === "scout") {
@@ -100,7 +104,7 @@ export async function handleFullFork(
       const icon = isScout ? "🔍" : isPlan ? "📋" : "⚒️";
       const label = isScout ? "Scout" : isPlan ? "Planner" : "Forge";
       const detail = formatProgressDetail(update);
-      const scoutSummary = isScout ? summarizeScoutActivity(result, update.activity) : "";
+      const scoutSummary = isScout ? summarizeScoutActivity(resultRef.current, update.activity) : "";
       ctx.ui.setWidget("cdev-progress", [themedBg("toolPendingBg", `${icon} ${label} ${update.stage}…${scoutSummary ? `  ${scoutSummary}` : ""}${detail ? `  · ${detail}` : ""}`)]);
     },
     extensions: config.extensions,
@@ -109,6 +113,7 @@ export async function handleFullFork(
     signal,
     map,
   });
+  resultRef.current = result;
   clearProgress(ctx);
 
   const current = saveSession(ctx.cwd, task, false, startTime, details, result);
@@ -186,8 +191,8 @@ export async function handleFullFork(
   };
 }
 
-function summarizeScoutActivity(result: ForkResult, latestActivity?: string): string {
-  const tools = Array.isArray(result.toolExecutions) ? result.toolExecutions as { toolName?: string; status?: string }[] : [];
+function summarizeScoutActivity(result: ForkResult | null, latestActivity?: string): string {
+  const tools = result && Array.isArray(result.toolExecutions) ? result.toolExecutions as { toolName?: string; status?: string }[] : [];
   const completedReads = tools.filter((t) => t.toolName === "read" && t.status === "completed").length;
   const runningReads = tools.filter((t) => t.toolName === "read" && t.status === "running").length;
   const completedSearches = tools.filter((t) => (t.toolName === "rg" || t.toolName === "grep") && t.status === "completed").length;

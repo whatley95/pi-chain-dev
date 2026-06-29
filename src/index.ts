@@ -42,6 +42,9 @@ export default function (pi: ExtensionAPI) {
   let autoTurnCounter = 0;
   const loopState = registerRealtimeLoopDetection(pi);
 
+  const MEMORY_STATUS_KEY = "cdev-memory";
+  const PROGRESS_WIDGET_KEY = "cdev-progress";
+
   // Prompt to use /cdev advisor when stuck or facing difficult decisions.
   registerAdvisorPrompt(pi);
 
@@ -56,8 +59,10 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     try {
       updateForkCostStatus(ctx);
-      const config = loadConfig(ctx.cwd);
-      if (config.auto) resetAutoTurnCounter();
+      // Reset the auto-mode reminder counter for every new session, regardless of
+      // whether auto mode is currently enabled, so stale counters don't leak across
+      // sessions when the setting is toggled.
+      resetAutoTurnCounter();
       registerLifecycleHandlers(pi, ctx);
       // Warm up the project map in the background so the first cdev task doesn't
       // pay the generation cost. Skip if the map is fresh (≤7 days old).
@@ -69,14 +74,14 @@ export default function (pi: ExtensionAPI) {
           stale = ageMs > 7 * 24 * 60 * 60 * 1000;
         }
         if (stale) {
-          setImmediate(() => {
+          setTimeout(() => {
             try {
               const map = generateProjectMap(ctx.cwd);
               saveProjectMap(ctx.cwd, map);
             } catch (warmErr) {
               logError(ctx.cwd, "warm-project-map", warmErr);
             }
-          });
+          }, 0);
         }
       } catch (warmErr) {
         logError(ctx.cwd, "warm-project-map-check", warmErr);
@@ -96,9 +101,9 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async (_event, ctx) => {
     try {
-      ctx.ui.setStatus(FORK_COST_STATUS_KEY, undefined);
-      ctx.ui.setStatus("cdev-memory", undefined);
-      ctx.ui.setWidget("cdev-progress", undefined);
+      ctx.ui?.setStatus(FORK_COST_STATUS_KEY, undefined);
+      ctx.ui?.setStatus(MEMORY_STATUS_KEY, undefined);
+      ctx.ui?.setWidget(PROGRESS_WIDGET_KEY, undefined);
       clearStageSemaphores();
     } catch (err) {
       logError(ctx.cwd, "session_shutdown", err);
