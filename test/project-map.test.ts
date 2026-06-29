@@ -79,7 +79,7 @@ describe("project-map", () => {
     writeFileSync(join(cwd, "src", "components", "App.tsx"), "export {}\n", "utf-8");
 
     const map = generateProjectMap(cwd);
-    assert.ok(map.project.languages.includes("JavaScript"));
+    assert.ok(map.project.languages.includes("TypeScript"));
     assert.ok(map.dependencies.node?.includes("react"));
     assert.ok(map.dependencies.nodeDev?.includes("vite"));
     assert.ok(map.files.tree.some((l) => l.includes("components/")));

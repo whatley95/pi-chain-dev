@@ -67,6 +67,8 @@ export const DEFAULT_CONFIG: AutoForkConfig = {
     autoReExplore: true,
     strictValidation: false,
   },
+  /** Allow a second scout coverage pass when confidence is low. */
+  autoReExplore: true,
   yolo: {
     enabled: false,
     maxRounds: 3,

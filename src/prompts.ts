@@ -1,11 +1,22 @@
 import { appendTaskToSessionJsonl } from "./fork-stage.js";
-import { loadProjectMap, summarizeMapForPrompt, type ParallelSubTask } from "./project-map.js";
+import { loadProjectMap, summarizeMapForPrompt, formatSuggestedFiles, type ProjectMap, type ParallelSubTask } from "./project-map.js";
 
 export const STAGE_AUDIT_GUARD = "\n\n⚠️ AUDIT ONLY — DO NOT implement, modify, or write any code. Only report findings and suggestions.";
 
-export function buildStage1Prompt(task: string, customPrompt?: string, editMode?: boolean, cwd?: string, subTask?: ParallelSubTask, quick?: boolean): string {
+const EFFICIENCY_RULES = `Efficiency rules (MANDATORY — minimize round-trips):
+- **ALWAYS batch file reads. Never read files one at a time.** If you need more than one file, issue multiple \`read\` calls in a single response. Pi executes them in parallel.
+- **Minimum batch size**: Issue at least 3-5 \`read\` calls together whenever you need multiple files. There is no benefit to reading them sequentially.
+- **Prefer\`rg\`for discovery**: \`bash: rg -n "pattern" src/\` is faster than recursive \`grep\` and respects \`.gitignore\`. Use it to locate relevant files FIRST.
+- **Read discovered files in parallel**: After locating files with \`rg\` / \`find\` / \`grep\`, issue all needed \`read\` calls in the SAME response.
+- **Batch reads with\`cat\`when needed**: \`bash: cat src/a.ts src/b.ts src/c.ts\` reads many files in one tool call. Use this when \`read\` batching is inconvenient.
+- **Use\`bash\`with globs for bulk inspection**: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
+- **Single-file\`read\`is a last resort**: Only use \`read\` for exactly one specific, named file. For 2+ files, batch \`read\` calls or use \`bash: cat ...\`.
+- **Search before reading**: Run \`rg\` or \`grep\` first to locate relevant files, then read only the relevant ones in parallel.`;
+
+export function buildStage1Prompt(task: string, customPrompt?: string, editMode?: boolean, cwd?: string, subTask?: ParallelSubTask, quick?: boolean, map?: ProjectMap | null): string {
   const guard = editMode ? "" : STAGE_AUDIT_GUARD;
-  const mapContext = cwd ? loadMapContext(cwd) : "";
+  const mapContext = cwd ? loadMapContext(cwd, map) : "";
+  const startFiles = map ? formatSuggestedFiles(map, subTask ? subTask.focus : task) : "";
   const scopeHint = subTask?.scope?.length
     ? `\n\nFocus your exploration on these areas: ${subTask.scope.join(", ")}`
     : "";
@@ -34,18 +45,14 @@ export function buildStage1Prompt(task: string, customPrompt?: string, editMode?
   }
 }`;
   if (customPrompt) {
-    return `${customPrompt}${mapContext}${scopeHint}
+    return `${customPrompt}${mapContext}${startFiles}${scopeHint}
 
 Task: ${focusTask}
 
 Return your findings as a single JSON object matching this schema (fenced JSON output, no extra prose):
 ${jsonSchema}
 
-Efficiency rules:
-- Batch reads: use \`bash\`, \`cat\`, \`grep\`, \`find\`, \`ls\`, or globs instead of many individual \`read\` calls.
-- Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
-- **Parallel tool calls**: You can issue multiple \`read\`, \`bash\`, \`grep\`, or \`find\` calls in a single response. Pi executes them simultaneously — use this to read many files at once.
-- Read a file individually only when you need the full content of a specific, named file.${guard}${quickGuard}
+${EFFICIENCY_RULES}${guard}${quickGuard}
 
 ⚠️ ANTI-HALLUCINATION:
 - "evidence" must be a verbatim snippet or exact command output you actually observed. Do NOT fabricate, guess, or paraphrase evidence.
@@ -53,21 +60,17 @@ Efficiency rules:
 - Do NOT invent file paths, command outputs, or configuration values.
 - If uncertain, set confidence to "low" and explain what you did NOT verify in the observation.`;
   }
-  return `${focusTask}${mapContext}${scopeHint}
+  return `${focusTask}${mapContext}${startFiles}${scopeHint}
 
 You are in EXPLORATION MODE. Your job is to gather information, not to write a final report.
 
 Instructions:
-- Explore thoroughly using available tools (read, bash, ls, grep, find, etc.)
+- Explore thoroughly using available tools (read, bash, ls, grep, rg, find, cat). Prefer rg and cat for bulk operations.
 - Gather concrete evidence: file contents, command outputs, config values
 - Return your findings as a single JSON object matching this schema (fenced JSON output, no extra prose):
 ${jsonSchema}
 
-Efficiency rules:
-- Batch reads: use \`bash\`, \`cat\`, \`grep\`, \`find\`, \`ls\`, or globs instead of many individual \`read\` calls.
-- Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
-- **Parallel tool calls**: You can issue multiple \`read\`, \`bash\`, \`grep\`, or \`find\` calls in a single response. Pi executes them simultaneously — use this to read many files at once.
-- Read a file individually only when you need the full content of a specific, named file.
+${EFFICIENCY_RULES}
 - Stop exploring once you have enough evidence to answer the task.
 
 Rules:
@@ -222,18 +225,14 @@ export function buildResearchPrompt(task: string, customPrompt?: string, cwd?: s
   }
 }`;
 
-  const base = `You are in RESEARCH MODE. Investigate the issue thoroughly using available tools (read, bash, ls, grep, find, etc.). Do NOT implement, modify, or write any code. Only report findings and a clear decision/recommendation.
+  const base = `You are in RESEARCH MODE. Investigate the issue thoroughly using available tools (read, bash, ls, grep, rg, find, cat). Prefer \`rg\` for repo-wide search and \`bash: cat ...\` to batch-read files. Do NOT implement, modify, or write any code. Only report findings and a clear decision/recommendation.
 
 Issue: ${task}${mapContext}
 
 Return your findings as a single JSON object matching this schema (fenced JSON output, no extra prose):
 ${jsonSchema}
 
-Efficiency rules:
-- Batch reads: use \`bash\`, \`cat\`, \`grep\`, \`find\`, \`ls\`, or globs instead of many individual \`read\` calls.
-- Example: \`bash: cat src/**/*.ts | grep -n "pattern"\` reads many files in one tool call.
-- **Parallel tool calls**: You can issue multiple \`read\`, \`bash\`, \`grep\`, or \`find\` calls in a single response. Pi executes them simultaneously — use this to read many files at once.
-- Read a file individually only when you need the full content of a specific, named file.
+${EFFICIENCY_RULES}
 
 Rules:
 - "summary" is required and must be one sentence.
@@ -455,11 +454,11 @@ Instructions:
 - Do NOT edit files. The main agent will apply changes.`;
 }
 
-function loadMapContext(cwd: string): string {
+function loadMapContext(cwd: string, map?: ProjectMap | null): string {
   try {
-    const map = loadProjectMap(cwd);
-    if (map) {
-      const summary = summarizeMapForPrompt(map);
+    const resolved = map ?? loadProjectMap(cwd);
+    if (resolved) {
+      const summary = summarizeMapForPrompt(resolved);
       const maxChars = 12_000;
       return summary.length > maxChars
         ? `\n\n${summary.slice(0, maxChars)}\n... (project map truncated)`

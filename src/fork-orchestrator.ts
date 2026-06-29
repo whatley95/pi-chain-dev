@@ -6,7 +6,7 @@ import { runCdevReview } from "./review.js";
 import { withAuditGuard, formatCost, estimateForkCost, getSessionForkCost } from "./extension-context.js";
 import { saveSession } from "./history.js";
 import { writeReportFile } from "./report.js";
-import { loadProjectMap, splitTaskByMap, type ParallelSubTask } from "./project-map.js";
+import { loadProjectMap, splitTaskByMap, type ParallelSubTask, type ProjectMap } from "./project-map.js";
 import { fmtDuration, slugFromTask } from "./format.js";
 import { addUsage } from "./usage.js";
 import type { StageProfile, ForkResult, UsageStats, AutoForkDetails, Stage1Findings, AutoForkConfig, YoloConfig, ConfidenceGateConfig, ReviewVerdict } from "./types.js";
@@ -68,8 +68,15 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
     return prof.thinking ? `${prof.provider}:${prof.id} • ${prof.thinking}` : `${prof.provider}:${prof.id}`;
   }
 
+  let _cachedMap: ProjectMap | null | undefined;
+  function getMap(): ProjectMap | null {
+    if (_cachedMap === undefined) _cachedMap = loadProjectMap(cwd);
+    return _cachedMap;
+  }
+
   async function runStage1Run(label: string, stageTask: string, profile?: StageProfile, subTask?: ParallelSubTask): Promise<ForkResult> {
-    const prompt = buildStage1Prompt(stageTask, customExplorePrompt, editMode, cwd, subTask, quick);
+    const map = getMap();
+    const prompt = buildStage1Prompt(stageTask, customExplorePrompt, editMode, cwd, subTask, quick, map);
     return runStageWithRetry({
       cwd,
       task: prompt,
@@ -92,7 +99,7 @@ export async function runAutoFork(opts: RunAutoForkOptions): Promise<{
 
   if (useParallel) {
     const { stage1Result: parallelResult, stage1Findings: parallelFindings } = await runParallelScouts(
-      { cwd, task, parallel, parallelBackup: opts.parallelBackup === true, stage1Profile, stage1bProfile, stage1cProfile, stage1BackupProfile, onProgress: opts.onProgress },
+      { cwd, task, parallel, parallelBackup: opts.parallelBackup === true, stage1Profile, stage1bProfile, stage1cProfile, stage1BackupProfile, onProgress: opts.onProgress, map: getMap() },
       runStage1Run,
       modelLabel,
       details,
@@ -433,6 +440,7 @@ interface ParallelScoutContext {
   stage1cProfile?: StageProfile;
   stage1BackupProfile?: StageProfile;
   onProgress?: (stage: string, model: string) => void;
+  map?: ProjectMap | null;
 }
 
 async function runParallelScouts(
@@ -442,7 +450,8 @@ async function runParallelScouts(
   details: AutoForkDetails,
 ): Promise<{ stage1Result: ForkResult; stage1Findings: Stage1Findings | null }> {
   const { cwd, task, parallel, parallelBackup, stage1Profile, stage1bProfile, stage1cProfile, stage1BackupProfile, onProgress } = ctx;
-  const map = loadProjectMap(cwd);
+  // Map is already loaded once by the caller; avoid a second disk read + YAML parse.
+  const map = ctx.map ?? loadProjectMap(cwd);
   const subTasks = splitTaskByMap(task, map, parallel);
   const workerProfiles: (StageProfile | undefined)[] = [stage1Profile, stage1bProfile, stage1cProfile];
   const activeProfiles = workerProfiles.slice(0, subTasks.length).map((p) => p || stage1Profile);

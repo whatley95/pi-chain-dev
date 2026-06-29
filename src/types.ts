@@ -81,11 +81,12 @@ export interface AutoForkConfig {
   memoryAutoRefresh?: boolean;
   /** Use theme.bg() for richer TUI rendering (progress, results). Default true. */
   themed: boolean;
-  /** Run scout twice automatically for higher accuracy. */
   /** Split scout into N parallel sub-task scouts (1-3). Default 1. */
   parallel?: number;
   /** If true, a backup scout takes over failed parallel sub-tasks. Default false. */
   parallelBackup?: boolean;
+  /** If true, allow a second scout coverage pass when confidence is low. Default true. */
+  autoReExplore?: boolean;
   /** Max concurrent child Pi processes cdev will spawn at once. Default 3. */
   maxConcurrentStages?: number;
   /** Per-scout stage timeout in milliseconds. Default 600000 (10 minutes). */

@@ -114,6 +114,72 @@ export interface ParallelSubTask {
   scope: string[];
 }
 
+/**
+ * Score how relevant a project map file path is to the user's task.
+ * Simple keyword overlap: split task into words/paths and match against the
+ * lowercase file/directory tokens. Returns a number >= 0 (higher = more relevant).
+ */
+export function scorePathRelevance(path: string, task: string): number {
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9/_.-]+/g, " ");
+  const taskWords = new Set(normalize(task).split(/\s+/).filter((w) => w.length > 2 && !["the", "and", "for", "with", "from", "that", "this", "you", "use", "can", "how", "what", "when", "where", "which", "why", "who", "are", "was", "were", "been", "have", "has", "had", "will", "would", "could", "should", "may", "might", "must", "shall", "into", "over", "than", "then", "now", "only", "just", "also", "very", "well", "each", "some", "many", "more", "most", "other", "such", "only", "own", "same", "few", "all", "any", "both", "either", "neither", "one", "two", "get", "set", "add", "new", "old", "but", "not", "too", "its", "his", "her", "our", "out", "off", "up", "down", "on", "in", "at", "to", "of", "is", "it", "as", "be", "by", "do", "go", "if", "no", "so", "or", "an", "my", "we", "us", "me", "he", "she", "them", "they"].includes(w)));
+  const pathTokens = normalize(path).split(/[\s/.-_]+/).filter(Boolean);
+  let score = 0;
+  for (const token of pathTokens) {
+    for (const word of taskWords) {
+      if (token === word) score += 3;
+      else if (word.length >= 4 && token.includes(word)) score += 2;
+      else if (token.length >= 4 && word.includes(token)) score += 1;
+    }
+  }
+  return score;
+}
+
+/**
+ * Return a ranked list of likely-relevant file paths for a task based on the project map.
+ * Useful for pre-seeding scouts so they read key files immediately instead of searching.
+ */
+export function suggestFilesForTask(map: ProjectMap | null, task: string, limit = 15): string[] {
+  if (!map) return [];
+  const candidates = new Set<string>([
+    ...map.files.keyFiles,
+    ...map.project.entryPoints,
+    ...map.structure.configFiles,
+    ...Object.keys(map.files.fileExports),
+  ]);
+
+  // Include representative files from architecture layers when task matches layer names.
+  const taskLower = task.toLowerCase();
+  if (map.architecture.layers) {
+    for (const [layerName, globs] of Object.entries(map.architecture.layers)) {
+      if (taskLower.includes(layerName.toLowerCase())) {
+        for (const glob of globs) {
+          if (!glob.includes("*")) candidates.add(glob);
+        }
+      }
+    }
+  }
+
+  // Include module directory paths as candidate anchors; scouts can expand them.
+  for (const mod of map.structure.modules.slice(0, 20)) {
+    candidates.add(mod.path);
+  }
+
+  const scored = Array.from(candidates)
+    .map((p) => ({ path: p, score: scorePathRelevance(p, task) }))
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const { path } of scored) {
+    if (seen.has(path)) continue;
+    seen.add(path);
+    result.push(path);
+    if (result.length >= limit) break;
+  }
+  return result;
+}
+
 export function splitTaskByMap(task: string, map: ProjectMap | null, parallel: number): ParallelSubTask[] {
   const n = Math.max(1, Math.min(3, Number.isFinite(parallel) ? parallel : 1));
   if (n <= 1 || !map) return [{ label: "full", focus: task, scope: [] }];
@@ -219,9 +285,15 @@ function detectLanguages(cwd: string): string[] {
   if (existsSync(join(cwd, 'composer.json'))) found.push('PHP');
 
   // TypeScript wins over JavaScript when tsconfig exists OR when .ts files dominate.
+  const hasPackageJson = existsSync(join(cwd, 'package.json'));
   if (existsSync(join(cwd, 'tsconfig.json')) || extCounts.ts > extCounts.js) {
     found.push('TypeScript');
-  } else if (existsSync(join(cwd, 'package.json')) && extCounts.js > 0) {
+  } else if (hasPackageJson && extCounts.js > 0) {
+    found.push('JavaScript');
+  }
+
+  // A Node project with neither .ts nor .js files still gets JavaScript as its default language.
+  if (hasPackageJson && !found.includes('TypeScript') && !found.includes('JavaScript')) {
     found.push('JavaScript');
   }
 
@@ -1249,7 +1321,7 @@ export function generateProjectMap(cwd: string): ProjectMap {
   const envFiles = detectEnvFiles(cwd);
   const commands = detectCommands(cwd, packageManager, languages);
   const conventions = inferConventions(cwd, languages, framework);
-  const architecture = inferArchitecture(framework, languages);
+  const architecture = inferArchitecture(framework, languages, cwd);
   const scan = scanSourceTree(cwd, sourceRoots, { maxTreeEntries: 40, maxDirEntries: 80, maxDepth: 5 });
   const { modules, boundaries } = inferModulesAndBoundaries(cwd, sourceRoots, framework, languages);
   const generatedDirs = scan.generatedDirs;
@@ -1412,6 +1484,15 @@ export function formatMapReport(map: ProjectMap): string {
   lines.push("  Tip: `/cdev map refresh` to regenerate via scout+forge.");
   lines.push("──────────────────────────────────────────────────");
   return lines.join("\n");
+}
+
+export function formatSuggestedFiles(map: ProjectMap | null, task: string): string {
+  const files = suggestFilesForTask(map, task, 15);
+  if (files.length === 0) return "";
+  return `
+
+Start by reading these likely-relevant files in parallel (ranked by relevance to the task):
+${files.map((f) => `- ${f}`).join("\n")}`;
 }
 
 export function summarizeMapForPrompt(map: ProjectMap): string {

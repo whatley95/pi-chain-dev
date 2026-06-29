@@ -353,7 +353,7 @@ export function buildPiArgs(
   if (toolMode === "forge") {
     args.push("--no-tools");
   } else if (toolMode === "scout") {
-    args.push("--tools", "read,bash,ls,grep,find,cat");
+    args.push("--tools", "read,bash,ls,grep,rg,find,cat");
   } else if (!stageProfile.id) {
     if (inheritedCliArgs.fallbackTools) {
       args.push("--tools", inheritedCliArgs.fallbackTools);
@@ -453,7 +453,8 @@ export async function runStageCore(opts: RunStageOptions): Promise<ForkResult> {
     usage: emptyUsage(),
   };
 
-  const sanitized = sanitizedSessionJsonl ?? sanitizeSessionJsonl(forkSessionJsonl);
+  const sanitized = sanitizedSessionJsonl
+    ?? (forkSessionJsonl ? sanitizeSessionJsonl(forkSessionJsonl) : { jsonl: "", stripped: 0 });
   if (sanitized.stripped > 0) {
     result.stderr += `[cdev] stripped ${sanitized.stripped} orphaned tool message(s) from session snapshot\n`;
   }
