@@ -25,7 +25,7 @@ async function runReviewStage(
   opts: RunReviewOptions,
   errorContext: string,
 ): Promise<{ result: ForkResult; details: AutoForkDetails }> {
-  const { cwd, task, stageProfile, forkSessionJsonl = JSON.stringify({}) + "\n",
+  const { cwd, task, stageProfile, forkSessionJsonl = "",
           stageTimeoutMs = 180_000,
           extensions = null, environment = {}, offline = true, signal, onProgress, onUpdate } = opts;
 

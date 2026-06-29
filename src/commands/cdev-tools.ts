@@ -15,8 +15,13 @@ interface ReadTarget {
 const MAX_DIRECT_READ_CHARS = 60_000;
 const MAX_DIRECT_READ_FILES = 10;
 
+const MAX_NOTIFY_CHARS = 60_000;
+
 function notifyInfo(ctx: ExtensionContext, text: string): void {
-  ctx.ui.notify(safeDisplayText(text), "info");
+  const truncated = text.length > MAX_NOTIFY_CHARS
+    ? text.slice(0, MAX_NOTIFY_CHARS) + "\n\n... (truncated)"
+    : text;
+  ctx.ui.notify(safeDisplayText(truncated), "info");
 }
 
 function parseReadTarget(raw: string): ReadTarget {

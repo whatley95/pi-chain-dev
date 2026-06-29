@@ -18,6 +18,7 @@ const MAX_CONTEXT_LINES = 20;
 const MAX_MATCHES = 80;
 const MAX_OUTPUT_CHARS = 60_000;
 const FALLBACK_MAX_FILES_SCANNED = 2000;
+const FALLBACK_MAX_TOTAL_BYTES = 32 * 1024 * 1024; // 32 MB read budget when rg is unavailable
 
 const SKIP_DIRS = new Set([
   ".git",
@@ -180,8 +181,9 @@ function isLikelyTextFile(filePath: string): boolean {
 
 function listFallbackFiles(cwd: string, paths: string[]): string[] {
   const files: string[] = [];
+  let totalBytes = 0;
   const visit = (abs: string) => {
-    if (files.length >= FALLBACK_MAX_FILES_SCANNED) return;
+    if (files.length >= FALLBACK_MAX_FILES_SCANNED || totalBytes >= FALLBACK_MAX_TOTAL_BYTES) return;
     let stats;
     try {
       stats = statSync(abs);
@@ -196,6 +198,7 @@ function listFallbackFiles(cwd: string, paths: string[]): string[] {
     }
     if (!stats.isFile() || stats.size > 512_000 || !isLikelyTextFile(abs)) return;
     files.push(abs);
+    totalBytes += stats.size;
   };
   for (const relPath of paths) visit(resolve(cwd, relPath));
   return files;
@@ -213,6 +216,7 @@ function fallbackSearch(cwd: string, input: GatherCodeContextInput, paths: strin
     }
   }
   const matches: Match[] = [];
+  let scannedBytes = 0;
   for (const abs of listFallbackFiles(cwd, paths)) {
     if (matches.length >= MAX_MATCHES) break;
     let content: string;
@@ -221,6 +225,8 @@ function fallbackSearch(cwd: string, input: GatherCodeContextInput, paths: strin
     } catch {
       continue;
     }
+    scannedBytes += Buffer.byteLength(content, "utf-8");
+    if (scannedBytes > FALLBACK_MAX_TOTAL_BYTES) break;
     const lines = content.split(/\r?\n/);
     for (let i = 0; i < lines.length && matches.length < MAX_MATCHES; i++) {
       const line = lines[i];

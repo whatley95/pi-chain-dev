@@ -444,7 +444,7 @@ ${normalizedDiff}
 }
 
 export function buildYoloReviewSnapshot(forkSessionSnapshotJsonl: string, reportContent: string, round: number): string {
-  const base = forkSessionSnapshotJsonl || JSON.stringify({}) + "\n";
+  const base = forkSessionSnapshotJsonl || "";
   const reportSection = `\n\nPrevious implementation report (YOLO review-fix round ${round}):\n${reportContent}`;
   return appendTaskToSessionJsonl(base, `Review the implementation report from YOLO review-fix round ${round}. Decide if it passes, needs work, or is blocked. Be specific about issues and fixes.` + reportSection);
 }
